@@ -267,3 +267,46 @@ func TestConcurrentPuts(t *testing.T) {
 		t.Fatalf("expected non-empty after concurrent puts")
 	}
 }
+
+func TestRangeQueriesWithNegativeInts(t *testing.T) {
+	mm := New[int]()
+	mm.PutValue(FromInt64(-3), -3)
+	mm.PutValue(FromInt64(-1), -1)
+	mm.PutValue(FromInt64(0), 0)
+	mm.PutValue(FromInt64(2), 2)
+
+	// between -2 and 1 inclusive => should include -1 and 0
+	res := mm.GetValuesBetweenInclusive(FromInt64(-2), FromUint64(1))
+	want := set3.From(-1, 0)
+	if !res.Equals(want) {
+		t.Fatalf("BetweenInclusive(-2,1) expected %v got %v", want, res)
+	}
+
+	// to 0 inclusive => -3, -1, 0
+	res = mm.GetValuesToInclusive(FromInt64(0))
+	want = set3.From(-3, -1, 0)
+	if !res.Equals(want) {
+		t.Fatalf("ToInclusive(int64(0)) expected %v got %v", want, res)
+	}
+
+	// to 0 inclusive => -3, -1, 0
+	res = mm.GetValuesToInclusive(FromUint64(0))
+	want = set3.From(-3, -1, 0)
+	if !res.Equals(want) {
+		t.Fatalf("ToInclusive(uint64(0)) expected %v got %v", want, res)
+	}
+
+	// from 0 exclusive => 2
+	res = mm.GetValuesFromExclusive(FromInt64(0))
+	want = set3.From(2)
+	if !res.Equals(want) {
+		t.Fatalf("FromExclusive(0) expected %v got %v", want, res)
+	}
+
+	// from -4 inclusive => all values
+	res = mm.GetValuesFromInclusive(FromInt64(-4))
+	want = set3.From(-3, -1, 0, 2)
+	if !res.Equals(want) {
+		t.Fatalf("FromInclusive(-4) expected %v got %v", want, res)
+	}
+}
