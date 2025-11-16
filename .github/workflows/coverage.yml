@@ -1,0 +1,36 @@
+name: Test Coverage
+
+on: [push]
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests and generate coverage report
+        run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+
+      - name: Generate coverage badge
+        uses: vladopajic/go-test-coverage@d35073ff1b8c1a0c4e9b8e03e8617e5dc64c5006 # v2.17.1
+        with:
+          profile: cover.out
+          local-prefix: github.com/TomTonic/levenshtein
+          threshold-total: 80
+          git-branch: badges
+          git-token: ${{ github.ref_name == 'main' && secrets.GITHUB_TOKEN || '' }}
