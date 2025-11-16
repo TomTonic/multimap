@@ -189,3 +189,81 @@ func TestRangeWithNonexistentBoundaries(t *testing.T) {
 		t.Fatalf("FromInclusive(z) expected empty set")
 	}
 }
+
+func TestRemoveValueAndGetValuesForClone(t *testing.T) {
+	mm := New[int]()
+	k := FromString("key")
+	mm.PutValue(k, 1)
+	mm.PutValue(k, 2)
+
+	// remove one value
+	mm.RemoveValue(k, 1)
+	res := mm.GetValuesFor(k)
+	want := set3.From(2)
+	if !res.Equals(want) {
+		t.Fatalf("after RemoveValue expected {2}, got unexpected set")
+	}
+
+	// returned set is a clone: modifying it should not affect stored data
+	res.Add(999)
+	res2 := mm.GetValuesFor(k)
+	if res2.Equals(set3.From(2, 999)) {
+		t.Fatalf("modifying returned set should not affect stored set")
+	}
+
+	// removing a non-existent value should be no-op
+	mm.RemoveValue(k, 42)
+	if !mm.GetValuesFor(k).Equals(want) {
+		t.Fatalf("RemoveValue non-existent mutated set")
+	}
+}
+
+func TestGetAllValuesAggregates(t *testing.T) {
+	mm := New[int]()
+	mm.PutValue(FromString("a"), 1)
+	mm.PutValue(FromString("b"), 2)
+	mm.PutValue(FromString("a"), 3)
+
+	all := mm.GetAllValues()
+	want := set3.From(1, 2, 3)
+	if !all.Equals(want) {
+		t.Fatalf("GetAllValues expected %v, got unexpected set", "{1,2,3}")
+	}
+}
+
+func TestPutClonesKey(t *testing.T) {
+	mm := New[int]()
+	k := Key([]byte{0x61})
+	mm.PutValue(k, 7)
+	// mutate original key
+	k[0] = 0x62
+	keys := mm.Keys()
+	if len(keys) != 1 {
+		t.Fatalf("expected one key")
+	}
+	if keys[0].Bytes()[0] != 0x61 {
+		t.Fatalf("stored key was mutated when original key changed")
+	}
+}
+
+func TestConcurrentPuts(t *testing.T) {
+	mm := New[int]()
+	done := make(chan struct{})
+	// spawn writers
+	for i := 0; i < 10; i++ {
+		go func(i int) {
+			for j := 0; j < 100; j++ {
+				mm.PutValue(FromString("k"), i*100+j)
+			}
+			done <- struct{}{}
+		}(i)
+	}
+	// wait
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+	// ensure no panic and some values present
+	if mm.Size() == 0 {
+		t.Fatalf("expected non-empty after concurrent puts")
+	}
+}
