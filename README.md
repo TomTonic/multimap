@@ -29,18 +29,22 @@ String keys
 - `Key` ordering (`LessThan`) is a byte-wise lexicographic comparison of the UTF-8 bytes —
 		it is neither locale-aware nor rune-aware.
 
-Numeric keys
+**Numeric keys**
 
-- You can build keys from integers using the `FromInt*` / `FromUint*` helpers.
-- Integer keys are encoded as fixed-width big-endian byte sequences (most-significant
-	byte first). This makes unsigned integer keys sort in the natural numeric order when
-	compared lexicographically.
-- Signed integers are stored using their raw two's-complement bit pattern. Because
-	lexicographic byte-wise comparison treats the bytes as unsigned values, ordering of
-	signed keys does not correspond to mathematical order (negative values will not
-	necessarily compare "less than" positive values). If you need a lexicographic
-	representation that preserves signed numeric ordering, convert/encode the value
-	accordingly before creating a `Key`.
+- Use `FromInt*` / `FromUint*` helpers to build integer keys.
+- All integer keys are encoded as fixed-width 8-byte big-endian sequences (MSB first).
+- To ensure consistent ordering across signed/unsigned types and across widths, all
+	integer constructors add an offset of `1<<63` before encoding. Signed values are
+	converted to `int64` first; unsigned values are treated as `uint64` and the same
+	offset is added. This maps signed and unsigned values into a single uint64 namespace
+	so that lexicographic comparison matches numeric ordering.
+
+Examples / consequences:
+- `FromInt64(0)` equals `FromUint64(0)` because both are encoded as `0 + (1<<63)`.
+- The smallest `int64` (`-2^63`) maps to `[00,00,00,00,00,00,00,00]` after encoding;
+    negative signed values compare before zero/positive values as expected for numeric order.
+- Values encoded from different widths are comparable — for example `FromInt32(x)` is
+	identical to `FromInt64(x)` for the same numeric `x`.
 
 Behavior and semantics
 

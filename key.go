@@ -10,9 +10,32 @@ import (
 // Key is an alias for a byte slice used as a map key representation.
 // Use the provided constructors to build Keys from primitive types or
 // normalized strings.
+//
+// Integer encoding policy
+// -----------------------
+// All integer constructors produce an 8-byte big-endian representation
+// (most-significant byte first). To ensure consistent, order-preserving
+// comparisons across signed and unsigned types and across different
+// integer widths, every integer constructor adds an offset of `1<<63`
+// before encoding the numeric value. For signed constructors the value
+// is first converted to `int64`, for unsigned constructors it is treated
+// as `uint64`; in both cases the offset is added and the resulting
+// unsigned 64-bit value is written big-endian into the Key.
+//
+// This mapping has two useful properties:
+//   - Lexicographic byte-wise comparison of Keys corresponds to numeric
+//     ordering of the original values (taking signedness into account).
+//   - Values produced from different source widths are comparable (for
+//     example `FromInt32(x)` equals `FromInt64(x)` for the same numeric x).
+//
+// Note: Because both signed and unsigned constructors add the same
+// offset, `FromInt64(0)` equals `FromUint64(0)`. The smallest `int64`
+// value (`math.MinInt64`) maps to `0` and negative signed values compare
+// before zero/positive values as expected for numeric ordering.
 type Key []byte
 
-// FromBytes returns a copy of the provided byte slice as a Key.
+// FromBytes returns a copy of the provided byte slice as a Key. If b is
+// nil this returns an empty (zero-length) Key (not nil).
 func FromBytes(b []byte) Key {
 	if b == nil {
 		return []byte{}
@@ -23,79 +46,110 @@ func FromBytes(b []byte) Key {
 }
 
 // FromString returns a Key produced from the provided string after
-// normalizing it to NFC.
+// normalizing it to Unicode NFC. The resulting Key contains the UTF-8
+// encoding of the normalized string. (FromString does not alter case or
+// trim spaces.)
 func FromString(s string) Key {
 	s = norm.NFC.String(s) // normalize to NFC
 	return FromBytes([]byte(s))
 }
 
+// FromInt converts an `int` to an 8-byte big-endian Key. The signed integer
+// range is shifted by adding 1<<63 so that negative values compare before
+// positive values when Keys are compared lexicographically.
 func FromInt(i int) Key {
 	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(int64(i)))
-	return FromBytes(b[:])
-}
-
-// FromInt64 converts an int64 to an 8-byte big-endian representation (MSB first).
-func FromInt64(i int64) Key {
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(i))
-	return FromBytes(b[:])
-}
-
-// FromInt32 converts an int32 to a 4-byte big-endian representation (MSB first).
-func FromInt32(i int32) Key {
-	var b [4]byte
-	binary.BigEndian.PutUint32(b[:], uint32(i))
-	return FromBytes(b[:])
-}
-
-// FromInt16 converts an int16 to a 2-byte big-endian representation (MSB first).
-func FromInt16(i int16) Key {
-	var b [2]byte
-	binary.BigEndian.PutUint16(b[:], uint16(i))
-	return FromBytes(b[:])
-}
-
-// FromInt8 converts an int8 to a single byte representation.
-func FromInt8(i int8) Key {
-	return FromBytes([]byte{byte(i)})
-}
-
-// FromUint converts a uint to an 8-byte big-endian representation (MSB first).
-func FromUint(u uint) Key {
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(u))
-	return FromBytes(b[:])
-}
-
-// FromUint64 converts a uint64 to an 8-byte big-endian representation (MSB first).
-func FromUint64(u uint64) Key {
-	var b [8]byte
+	const offset = uint64(1) << 63
+	u := uint64(int64(i)) + offset
 	binary.BigEndian.PutUint64(b[:], u)
 	return FromBytes(b[:])
 }
 
-// FromUint32 converts a uint32 to a 4-byte big-endian representation (MSB first).
+// FromInt64 converts an int64 to an 8-byte big-endian Key. The value is
+// shifted by 1<<63 so that lexicographic key order matches numeric order.
+func FromInt64(i int64) Key {
+	var b [8]byte
+	const offset = uint64(1) << 63
+	u := uint64(i) + offset
+	binary.BigEndian.PutUint64(b[:], u)
+	return FromBytes(b[:])
+}
+
+// FromInt32 converts an int32 to an 8-byte big-endian Key (value is encoded
+// into 64 bits). The signed value is shifted by 1<<63 for order-preserving
+// behavior across widths.
+func FromInt32(i int32) Key {
+	var b [8]byte
+	const offset = uint64(1) << 63
+	u := uint64(int64(i)) + offset
+	binary.BigEndian.PutUint64(b[:], u)
+	return FromBytes(b[:])
+}
+
+// FromInt16 converts an int16 to an 8-byte big-endian Key (value is encoded
+// into 64 bits). The signed value is shifted by 1<<63 for order-preserving
+// behavior across widths.
+func FromInt16(i int16) Key {
+	var b [8]byte
+	const offset = uint64(1) << 63
+	u := uint64(int64(i)) + offset
+	binary.BigEndian.PutUint64(b[:], u)
+	return FromBytes(b[:])
+}
+
+// FromInt8 converts an int8 to an 8-byte big-endian Key (value is encoded
+// into 64 bits). The signed value is shifted by 1<<63 for order-preserving
+// behavior across widths.
+func FromInt8(i int8) Key {
+	var b [8]byte
+	const offset = uint64(1) << 63
+	u := uint64(int64(i)) + offset
+	binary.BigEndian.PutUint64(b[:], u)
+	return FromBytes(b[:])
+}
+
+// FromUint converts a uint to an 8-byte big-endian Key (MSB first).
+func FromUint(u uint) Key {
+	var b [8]byte
+	const offset = uint64(1) << 63
+	binary.BigEndian.PutUint64(b[:], uint64(u)+offset)
+	return FromBytes(b[:])
+}
+
+// FromUint64 converts a uint64 to an 8-byte big-endian Key (MSB first).
+func FromUint64(u uint64) Key {
+	var b [8]byte
+	const offset = uint64(1) << 63
+	binary.BigEndian.PutUint64(b[:], u+offset)
+	return FromBytes(b[:])
+}
+
+// FromUint32 converts a uint32 to an 8-byte big-endian Key (value encoded into 64 bits).
 func FromUint32(u uint32) Key {
-	var b [4]byte
-	binary.BigEndian.PutUint32(b[:], u)
+	var b [8]byte
+	const offset = uint64(1) << 63
+	binary.BigEndian.PutUint64(b[:], uint64(u)+offset)
 	return FromBytes(b[:])
 }
 
-// FromUint16 converts a uint16 to a 2-byte big-endian representation (MSB first).
+// FromUint16 converts a uint16 to an 8-byte big-endian Key (value encoded into 64 bits).
 func FromUint16(u uint16) Key {
-	var b [2]byte
-	binary.BigEndian.PutUint16(b[:], u)
+	var b [8]byte
+	const offset = uint64(1) << 63
+	binary.BigEndian.PutUint64(b[:], uint64(u)+offset)
 	return FromBytes(b[:])
 }
 
-// FromUint8 converts a uint8 to a single byte representation.
+// FromUint8 converts a uint8 to an 8-byte big-endian Key (value encoded into 64 bits).
 func FromUint8(u uint8) Key {
-	return FromBytes([]byte{byte(u)})
+	var b [8]byte
+	const offset = uint64(1) << 63
+	binary.BigEndian.PutUint64(b[:], uint64(u)+offset)
+	return FromBytes(b[:])
 }
 
-// FromByte is an alias for FromUint8.
-func FromByte(b byte) Key { return FromBytes([]byte{b}) }
+// FromByte is an alias for FromUint8 and produces an 8-byte representation.
+func FromByte(b byte) Key { return FromUint8(uint8(b)) }
 
 // FromRune converts a rune to its UTF-8 encoding as a Key.
 func FromRune(r rune) Key {
@@ -126,7 +180,7 @@ func (k Key) Clone() Key {
 }
 
 // String returns the Key as a string consisting of uppercase hex tuples per byte,
-// separated by comma and surrounded by [].
+// separated by commas and surrounded by `[]` (e.g. `[01,AB,00]`).
 func (k Key) String() string {
 	if len(k) == 0 {
 		return "[]"
