@@ -1,3 +1,10 @@
+// Package multimap provides a simple, thread-safe multi-map keyed by Key objects.
+// Each key maps to a set of values of one type (must be comparable). Keys are compared
+// byte-wise, in case of strings lexicographically using bytewise UTF-8 order. The
+// implementation clones Keys on Put and returns cloned sets from Get methods so callers
+// cannot mutate internal state.
+//
+// Concurrency: all exported methods are safe for concurrent use by multiple goroutines.
 package multimap
 
 import (
@@ -28,7 +35,9 @@ func New[T comparable]() *MultiMap[T] {
 	}
 }
 
-// PutValue adds value v to the set of values at key. If the key does not exist it will be created.
+// PutValue adds value v to the set at key. If the key does not exist it will be created.
+// The provided Key is cloned before insertion; changes to the caller's Key after calling
+// PutValue will not affect the stored key.
 func (m *MultiMap[T]) PutValue(key Key, v T) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -68,7 +77,7 @@ func (m *MultiMap[T]) RemoveValue(key Key, v T) {
 	}
 }
 
-// ContainsKey checks whether the multi-map contains the specified key.
+// ContainsKey checks whether the MultiMap contains the specified key.
 func (m *MultiMap[T]) ContainsKey(key Key) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -124,6 +133,10 @@ func (m *MultiMap[T]) GetAllValues() *set3.Set3[T] {
 }
 
 // GetValuesBetweenInclusive returns a set with all values whose keys are between from and to, including values stored for from and to.
+// If a key is equal to from, its values are included.
+// If a key is equal to to, its values are included.
+// If no keys are between or equal to from and to, an empty set is returned.
+// It is irrelevant whether the from and to keys exist in the MultiMap or not.
 func (m *MultiMap[T]) GetValuesBetweenInclusive(from, to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -139,6 +152,10 @@ func (m *MultiMap[T]) GetValuesBetweenInclusive(from, to Key) *set3.Set3[T] {
 }
 
 // GetValuesBetweenExclusive returns a set with all values whose keys are between from and to, excluding values stored for from and to.
+// If a key is equal to from, its values are not included.
+// If a key is equal to to, its values are not included.
+// If no keys are between from and to, an empty set is returned.
+// It is irrelevant whether the from and to keys exist in the MultiMap or not.
 func (m *MultiMap[T]) GetValuesBetweenExclusive(from, to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -154,6 +171,9 @@ func (m *MultiMap[T]) GetValuesBetweenExclusive(from, to Key) *set3.Set3[T] {
 }
 
 // GetValuesFromInclusive returns a set with all values whose keys are greater than or equal to from.
+// If a key is equal to from, its values are included.
+// If no keys are greater than or equal to from, an empty set is returned.
+// It is irrelevant whether the from key exists in the MultiMap or not.
 func (m *MultiMap[T]) GetValuesFromInclusive(from Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -169,6 +189,9 @@ func (m *MultiMap[T]) GetValuesFromInclusive(from Key) *set3.Set3[T] {
 }
 
 // GetValuesToInclusive returns a set with all values whose keys are less than or equal to to.
+// If a key is equal to to, its values are included.
+// If no keys are less than or equal to to, an empty set is returned.
+// It is irrelevant whether the to key exists in the MultiMap or not.
 func (m *MultiMap[T]) GetValuesToInclusive(to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -184,6 +207,9 @@ func (m *MultiMap[T]) GetValuesToInclusive(to Key) *set3.Set3[T] {
 }
 
 // GetValuesFromExclusive returns a set with all values whose keys are actually greater than from.
+// If a key is equal to from, its values are not included.
+// If no keys are greater than from, an empty set is returned.
+// It is irrelevant whether the from key exists in the MultiMap or not.
 func (m *MultiMap[T]) GetValuesFromExclusive(from Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -199,6 +225,9 @@ func (m *MultiMap[T]) GetValuesFromExclusive(from Key) *set3.Set3[T] {
 }
 
 // GetValuesToExclusive returns a set with all values whose keys are actually less than to.
+// If a key is equal to to, its values are not included.
+// If no keys are less than to, an empty set is returned.
+// It is irrelevant whether the to key exists in the MultiMap or not.
 func (m *MultiMap[T]) GetValuesToExclusive(to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

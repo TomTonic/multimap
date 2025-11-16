@@ -23,7 +23,7 @@ func FromBytes(b []byte) Key {
 }
 
 // FromString returns a Key produced from the provided string after
-// normalizing it (trim spaces and convert to lower-case).
+// normalizing it to NFC.
 func FromString(s string) Key {
 	s = norm.NFC.String(s) // normalize to NFC
 	return FromBytes([]byte(s))
