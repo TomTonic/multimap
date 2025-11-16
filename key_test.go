@@ -173,7 +173,7 @@ func TestLessThan(t *testing.T) {
 		}
 	} else {
 		// exactly one should be less
-		if !(s1.LessThan(s2) || s2.LessThan(s1)) {
+		if !s1.LessThan(s2) && !s2.LessThan(s1) {
 			t.Fatalf("expected one of %v or %v to be less", s1.Bytes(), s2.Bytes())
 		}
 	}
