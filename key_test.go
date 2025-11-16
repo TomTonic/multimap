@@ -38,37 +38,61 @@ func TestFromStringNormalization(t *testing.T) {
 }
 
 func TestIntBigEndianLayouts(t *testing.T) {
-	// Int32
+	// Verify 64-bit encoding and round-trip decode for signed ints
+	const offset = uint64(1) << 63
+
 	v32 := int32(0x01020304)
 	k32 := FromInt32(v32)
-	if len(k32) != 4 || k32[0] != 0x01 || k32[3] != 0x04 {
-		t.Fatalf("FromInt32 produced wrong layout: %v", k32)
+	if len(k32) != 8 {
+		t.Fatalf("FromInt32 should produce 8 bytes, got %d", len(k32))
+	}
+	// decode by subtracting offset
+	got32 := int32(int64(binary.BigEndian.Uint64(k32.Bytes()) - offset))
+	if got32 != v32 {
+		t.Fatalf("round-trip int32 mismatch: got=%#x want=%#x", got32, v32)
 	}
 
-	// Int64
 	v64 := int64(0x0102030405060708)
 	k64 := FromInt64(v64)
-	if len(k64) != 8 || k64[0] != 0x01 || k64[7] != 0x08 {
-		t.Fatalf("FromInt64 produced wrong layout: %v", k64)
+	if len(k64) != 8 {
+		t.Fatalf("FromInt64 should produce 8 bytes, got %d", len(k64))
+	}
+	got64 := int64(binary.BigEndian.Uint64(k64.Bytes()) - offset)
+	if got64 != v64 {
+		t.Fatalf("round-trip int64 mismatch: got=%#x want=%#x", got64, v64)
 	}
 
-	// Check round-trip using binary.BigEndian
-	if got := int64(binary.BigEndian.Uint64(k64.Bytes())); got != v64 {
-		t.Fatalf("round-trip int64 mismatch: got=%#x want=%#x", got, v64)
+	// small widths should match 64-bit encoding for the same value
+	if !FromInt32(5).Equal(FromInt64(5)) {
+		t.Fatalf("FromInt32 and FromInt64 should produce identical keys for same value")
 	}
 }
 
 func TestUintBigEndianLayouts(t *testing.T) {
+	const offset = uint64(1) << 63
 	u16 := uint16(0xABCD)
 	k16 := FromUint16(u16)
-	if len(k16) != 2 || k16[0] != 0xAB || k16[1] != 0xCD {
-		t.Fatalf("FromUint16 wrong: %v", k16)
+	if len(k16) != 8 {
+		t.Fatalf("FromUint16 should produce 8 bytes, got %d", len(k16))
+	}
+	// round-trip: read 64-bit then cast
+	got16 := uint16(binary.BigEndian.Uint64(k16.Bytes()) - offset)
+	if got16 != u16 {
+		t.Fatalf("round-trip uint16 mismatch: got=%#x want=%#x", got16, u16)
 	}
 
 	u64 := uint64(0x0102030405060708)
 	k64 := FromUint64(u64)
-	if len(k64) != 8 || k64[0] != 0x01 || k64[7] != 0x08 {
-		t.Fatalf("FromUint64 wrong: %v", k64)
+	if len(k64) != 8 {
+		t.Fatalf("FromUint64 should produce 8 bytes, got %d", len(k64))
+	}
+	if binary.BigEndian.Uint64(k64.Bytes()) != u64+offset {
+		t.Fatalf("FromUint64 produced wrong encoding")
+	}
+
+	// small-width unsigned equals 64-bit encoding for same value
+	if !FromUint16(0x1234).Equal(FromUint64(0x1234)) {
+		t.Fatalf("FromUint16 and FromUint64 should produce identical keys for same value")
 	}
 }
 
@@ -176,5 +200,39 @@ func TestLessThan(t *testing.T) {
 		if !s1.LessThan(s2) && !s2.LessThan(s1) {
 			t.Fatalf("expected one of %v or %v to be less", s1.Bytes(), s2.Bytes())
 		}
+	}
+}
+
+func TestSignedOrderingAcrossWidths(t *testing.T) {
+	vals := []int64{-2, -1, 0, 1, 2}
+	// ensure that ordering compares numerically regardless of source width
+	for i := 0; i < len(vals); i++ {
+		for j := 0; j < len(vals); j++ {
+			a := FromInt8(int8(vals[i]))
+			b := FromInt64(vals[j])
+			want := vals[i] < vals[j]
+			if a.LessThan(b) != want {
+				t.Fatalf("ordering mismatch: %d < %d expected %v", vals[i], vals[j], want)
+			}
+		}
+	}
+}
+
+func TestUnsignedWidthConsistency(t *testing.T) {
+	u16 := uint16(0xABCD)
+	if !FromUint16(u16).Equal(FromUint64(uint64(u16))) {
+		t.Fatalf("unsigned widths produced different keys for same numeric value")
+	}
+	if !FromInt16(int16(-1)).LessThan(FromInt16(int16(0))) {
+		t.Fatalf("signed ordering within 16-bit failed")
+	}
+}
+
+func TestInt64Uint64MixedOrdering(t *testing.T) {
+	if !FromInt64(int64(0)).Equal(FromUint64(uint64(0))) {
+		t.Fatalf("unsigned and signed int produced different keys for same numeric value")
+	}
+	if !FromInt64(int64(-1)).LessThan(FromUint64(uint64(0))) {
+		t.Fatalf("unsigned and signed int not correctly ordered")
 	}
 }
