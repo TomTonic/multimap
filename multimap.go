@@ -13,20 +13,20 @@ import (
 // Implementations must clone Keys on insertion and return cloned value sets so
 // callers cannot mutate internal state.
 type MultiMap[T comparable] interface {
-	PutValue(key Key, v T)
-	RemoveValue(key Key, v T)
+	AddValue(key Key, value T)
 	ContainsKey(key Key) bool
+	ValuesFor(key Key) *set3.Set3[T]
+	ValuesBetweenInclusive(from, to Key) *set3.Set3[T]
+	ValuesBetweenExclusive(from, to Key) *set3.Set3[T]
+	ValuesFromInclusive(from Key) *set3.Set3[T]
+	ValuesFromExclusive(from Key) *set3.Set3[T]
+	ValuesToInclusive(to Key) *set3.Set3[T]
+	ValuesToExclusive(to Key) *set3.Set3[T]
+	AllValues() *set3.Set3[T]
+	NumberOfKeys() uint64
+	AllKeys() []Key
+	RemoveValue(key Key, v T)
 	RemoveKey(key Key)
-	GetValuesFor(key Key) *set3.Set3[T]
-	GetAllValues() *set3.Set3[T]
-	GetValuesBetweenInclusive(from, to Key) *set3.Set3[T]
-	GetValuesBetweenExclusive(from, to Key) *set3.Set3[T]
-	GetValuesFromInclusive(from Key) *set3.Set3[T]
-	GetValuesToInclusive(to Key) *set3.Set3[T]
-	GetValuesFromExclusive(from Key) *set3.Set3[T]
-	GetValuesToExclusive(to Key) *set3.Set3[T]
-	Size() uint64
-	Keys() []Key
 	Clear()
 }
 
