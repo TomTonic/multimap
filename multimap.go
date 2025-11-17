@@ -1,276 +1,37 @@
 // Package multimap provides a simple, thread-safe multi-map keyed by Key objects.
-// Each key maps to a set of values of one type (must be comparable). Keys are compared
-// byte-wise, in case of strings lexicographically using bytewise UTF-8 order. The
-// implementation clones Keys on Put and returns cloned sets from Get methods so callers
-// cannot mutate internal state.
+// The default implementation is array-based. This file defines the generic
+// MultiMap interface and constructors allowing future alternative implementations.
 //
 // Concurrency: all exported methods are safe for concurrent use by multiple goroutines.
 package multimap
 
 import (
-	"sync"
-
 	set3 "github.com/TomTonic/Set3"
 )
 
-// MultiMap is a simple multi-map from string keys to a Set3 of values.
-//
-// NOTE: For now methods are API-only (placeholders). We'll fill implementations
-// after the API is reviewed.
-type MultiMap[T comparable] struct {
-	mu   sync.RWMutex
-	data []kvp[T]
+// MultiMap defines the behavior of a multi-map from Keys to a set of values.
+// Implementations must clone Keys on insertion and return cloned value sets so
+// callers cannot mutate internal state.
+type MultiMap[T comparable] interface {
+	PutValue(key Key, v T)
+	RemoveValue(key Key, v T)
+	ContainsKey(key Key) bool
+	RemoveKey(key Key)
+	GetValuesFor(key Key) *set3.Set3[T]
+	GetAllValues() *set3.Set3[T]
+	GetValuesBetweenInclusive(from, to Key) *set3.Set3[T]
+	GetValuesBetweenExclusive(from, to Key) *set3.Set3[T]
+	GetValuesFromInclusive(from Key) *set3.Set3[T]
+	GetValuesToInclusive(to Key) *set3.Set3[T]
+	GetValuesFromExclusive(from Key) *set3.Set3[T]
+	GetValuesToExclusive(to Key) *set3.Set3[T]
+	Size() uint64
+	Keys() []Key
+	Clear()
 }
 
-type kvp[T comparable] struct {
-	key Key
-	val *set3.Set3[T]
-}
+// New returns a new MultiMap using the default array-based implementation.
+func New[T comparable]() MultiMap[T] { return NewArrayBased[T]() }
 
-// New creates and returns an initialized MultiMap.
-func New[T comparable]() *MultiMap[T] {
-	return &MultiMap[T]{
-		// start with zero length, reserve capacity
-		data: make([]kvp[T], 0, 20),
-	}
-}
-
-// PutValue adds value v to the set at key. If the key does not exist it will be created.
-// The provided Key is cloned before insertion; changes to the caller's Key after calling
-// PutValue will not affect the stored key.
-func (m *MultiMap[T]) PutValue(key Key, v T) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.data {
-		if m.data[i].key.Equal(key) {
-			if m.data[i].val == nil {
-				m.data[i].val = set3.Empty[T]()
-			}
-			m.data[i].val.Add(v)
-			return
-		}
-	}
-	newTuple := kvp[T]{
-		key: key.Clone(), // store independent copy
-		val: set3.Empty[T](),
-	}
-	newTuple.val.Add(v)
-	m.data = append(m.data, newTuple)
-}
-
-// RemoveValue removes value v from the set of values at key. If the set becomes empty the key may be removed.
-func (m *MultiMap[T]) RemoveValue(key Key, v T) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.data {
-		if m.data[i].key.Equal(key) {
-			if m.data[i].val != nil {
-				m.data[i].val.Remove(v)
-				// optional: if set becomes empty, remove the kvp
-				// if m.data[i].val.IsEmpty() {
-				//     m.data[i] = m.data[len(m.data)-1]
-				//     m.data = m.data[:len(m.data)-1]
-				// }
-			}
-			return
-		}
-	}
-}
-
-// ContainsKey checks whether the MultiMap contains the specified key.
-func (m *MultiMap[T]) ContainsKey(key Key) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for i := range m.data {
-		if m.data[i].key.Equal(key) {
-			return true
-		}
-	}
-	return false
-}
-
-// RemoveKey removes the key and its associated set of values from the multi-map.
-func (m *MultiMap[T]) RemoveKey(key Key) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.data {
-		if m.data[i].key.Equal(key) {
-			// Remove the key-value pair by swapping with the last and truncating
-			m.data[i] = m.data[len(m.data)-1]
-			m.data = m.data[:len(m.data)-1]
-			return
-		}
-	}
-}
-
-// Get returns the set of values associated with key. If the key does not exist
-// or if it exists but no values are stored for this key, it returns an empty set.
-func (m *MultiMap[T]) GetValuesFor(key Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for i := range m.data {
-		if m.data[i].key.Equal(key) {
-			if m.data[i].val != nil {
-				return m.data[i].val.Clone()
-			}
-			return set3.EmptyWithCapacity[T](0)
-		}
-	}
-	return set3.EmptyWithCapacity[T](0)
-}
-
-// GetAllValues returns a set with all values currently stored in the multi-map.
-func (m *MultiMap[T]) GetAllValues() *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for i := range m.data {
-		if m.data[i].val != nil {
-			result.AddAll(m.data[i].val)
-		}
-	}
-	return result
-}
-
-// GetValuesBetweenInclusive returns a set with all values whose keys are between from and to, including values stored for from and to.
-// If a key is equal to from, its values are included.
-// If a key is equal to to, its values are included.
-// If no keys are between or equal to from and to, an empty set is returned.
-// It is irrelevant whether the from and to keys exist in the MultiMap or not.
-func (m *MultiMap[T]) GetValuesBetweenInclusive(from, to Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for _, kv := range m.data {
-		if (kv.key.LessThan(to) || kv.key.Equal(to)) && (from.LessThan(kv.key) || from.Equal(kv.key)) {
-			if kv.val != nil {
-				result.AddAll(kv.val)
-			}
-		}
-	}
-	return result
-}
-
-// GetValuesBetweenExclusive returns a set with all values whose keys are between from and to, excluding values stored for from and to.
-// If a key is equal to from, its values are not included.
-// If a key is equal to to, its values are not included.
-// If no keys are between from and to, an empty set is returned.
-// It is irrelevant whether the from and to keys exist in the MultiMap or not.
-func (m *MultiMap[T]) GetValuesBetweenExclusive(from, to Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for _, kv := range m.data {
-		if kv.key.LessThan(to) && from.LessThan(kv.key) {
-			if kv.val != nil {
-				result.AddAll(kv.val)
-			}
-		}
-	}
-	return result
-}
-
-// GetValuesFromInclusive returns a set with all values whose keys are greater than or equal to from.
-// If a key is equal to from, its values are included.
-// If no keys are greater than or equal to from, an empty set is returned.
-// It is irrelevant whether the from key exists in the MultiMap or not.
-func (m *MultiMap[T]) GetValuesFromInclusive(from Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for _, kv := range m.data {
-		if from.LessThan(kv.key) || from.Equal(kv.key) {
-			if kv.val != nil {
-				result.AddAll(kv.val)
-			}
-		}
-	}
-	return result
-}
-
-// GetValuesToInclusive returns a set with all values whose keys are less than or equal to to.
-// If a key is equal to to, its values are included.
-// If no keys are less than or equal to to, an empty set is returned.
-// It is irrelevant whether the to key exists in the MultiMap or not.
-func (m *MultiMap[T]) GetValuesToInclusive(to Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for _, kv := range m.data {
-		if kv.key.LessThan(to) || kv.key.Equal(to) {
-			if kv.val != nil {
-				result.AddAll(kv.val)
-			}
-		}
-	}
-	return result
-}
-
-// GetValuesFromExclusive returns a set with all values whose keys are actually greater than from.
-// If a key is equal to from, its values are not included.
-// If no keys are greater than from, an empty set is returned.
-// It is irrelevant whether the from key exists in the MultiMap or not.
-func (m *MultiMap[T]) GetValuesFromExclusive(from Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for _, kv := range m.data {
-		if from.LessThan(kv.key) {
-			if kv.val != nil {
-				result.AddAll(kv.val)
-			}
-		}
-	}
-	return result
-}
-
-// GetValuesToExclusive returns a set with all values whose keys are actually less than to.
-// If a key is equal to to, its values are not included.
-// If no keys are less than to, an empty set is returned.
-// It is irrelevant whether the to key exists in the MultiMap or not.
-func (m *MultiMap[T]) GetValuesToExclusive(to Key) *set3.Set3[T] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := set3.Empty[T]()
-	for _, kv := range m.data {
-		if kv.key.LessThan(to) {
-			if kv.val != nil {
-				result.AddAll(kv.val)
-			}
-		}
-	}
-	return result
-}
-
-// Size returns the number of keys currently stored in the map.
-func (m *MultiMap[T]) Size() uint64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return uint64(len(m.data))
-}
-
-// Keys returns a slice with all keys currently stored in the map.
-func (m *MultiMap[T]) Keys() []Key {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := make([]Key, 0, len(m.data))
-	for i := range m.data {
-		result = append(result, m.data[i].key.Clone())
-	}
-	return result
-}
-
-// Clear removes all keys and values from the multi-map.
-func (m *MultiMap[T]) Clear() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	// reset to zero length, reserve capacity
-	m.data = make([]kvp[T], 0, 20)
-}
-
-// Example usage (for documentation):
-//
-//  mm := multimap.New()
-//  mm.Put("a", 1)
-//  s := mm.Get("a") // returns *set3.Set3
-//
+// NewArrayBased explicitly constructs a MultiMap backed by the array-based implementation.
+func NewArrayBased[T comparable]() MultiMap[T] { return newArrayBased[T]() }
