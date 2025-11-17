@@ -24,7 +24,7 @@ func newArrayBased[T comparable]() *arrayBasedMultiMap[T] {
 	}
 }
 
-func (m *arrayBasedMultiMap[T]) PutValue(key Key, v T) {
+func (m *arrayBasedMultiMap[T]) AddValue(key Key, v T) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.data {
@@ -80,7 +80,7 @@ func (m *arrayBasedMultiMap[T]) RemoveKey(key Key) {
 	}
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesFor(key Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesFor(key Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for i := range m.data {
@@ -94,7 +94,7 @@ func (m *arrayBasedMultiMap[T]) GetValuesFor(key Key) *set3.Set3[T] {
 	return set3.EmptyWithCapacity[T](0)
 }
 
-func (m *arrayBasedMultiMap[T]) GetAllValues() *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) AllValues() *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -106,7 +106,7 @@ func (m *arrayBasedMultiMap[T]) GetAllValues() *set3.Set3[T] {
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesBetweenInclusive(from, to Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesBetweenInclusive(from, to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -120,7 +120,7 @@ func (m *arrayBasedMultiMap[T]) GetValuesBetweenInclusive(from, to Key) *set3.Se
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesBetweenExclusive(from, to Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesBetweenExclusive(from, to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -134,7 +134,7 @@ func (m *arrayBasedMultiMap[T]) GetValuesBetweenExclusive(from, to Key) *set3.Se
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesFromInclusive(from Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesFromInclusive(from Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -148,7 +148,7 @@ func (m *arrayBasedMultiMap[T]) GetValuesFromInclusive(from Key) *set3.Set3[T] {
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesToInclusive(to Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesToInclusive(to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -162,7 +162,7 @@ func (m *arrayBasedMultiMap[T]) GetValuesToInclusive(to Key) *set3.Set3[T] {
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesFromExclusive(from Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesFromExclusive(from Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -176,7 +176,7 @@ func (m *arrayBasedMultiMap[T]) GetValuesFromExclusive(from Key) *set3.Set3[T] {
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) GetValuesToExclusive(to Key) *set3.Set3[T] {
+func (m *arrayBasedMultiMap[T]) ValuesToExclusive(to Key) *set3.Set3[T] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := set3.Empty[T]()
@@ -190,13 +190,13 @@ func (m *arrayBasedMultiMap[T]) GetValuesToExclusive(to Key) *set3.Set3[T] {
 	return result
 }
 
-func (m *arrayBasedMultiMap[T]) Size() uint64 {
+func (m *arrayBasedMultiMap[T]) NumberOfKeys() uint64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return uint64(len(m.data))
 }
 
-func (m *arrayBasedMultiMap[T]) Keys() []Key {
+func (m *arrayBasedMultiMap[T]) AllKeys() []Key {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]Key, 0, len(m.data))
