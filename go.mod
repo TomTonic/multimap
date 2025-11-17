@@ -1,4 +1,4 @@
-module github.com/TomTonic/multi_map
+module github.com/TomTonic/multimap
 
 go 1.25.4
 
