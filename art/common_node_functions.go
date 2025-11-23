@@ -56,11 +56,18 @@ func (n *Node[T]) getMaxChildren() uint {
 	case FullNodeType:
 		return maxChildrenFullNode
 	default:
-		return 0
+		panic("unknown node type: " + string((byte)(n.getNodeType())))
 	}
 }
 
 // Type casting helpers
+
+func (n *Node[T]) asLeaf() *LeafNode[T] {
+	if n.getNodeType() != NodeTypeLeaf {
+		panic("node is not of kind Leaf but of kind " + n.getNodeType().String())
+	}
+	return (*LeafNode[T])(unsafe.Pointer(n))
+}
 
 func (n *Node[T]) asNode64() *Node64[T] {
 	if n.getNodeType() != NodeType64 {
@@ -102,6 +109,10 @@ func (n *Node[T]) asFullNode() *FullNode[T] {
 		panic("node is not of kind FullNode but of kind " + n.getNodeType().String())
 	}
 	return (*FullNode[T])(unsafe.Pointer(n))
+}
+
+func (n *LeafNode[T]) asNode() *Node[T] {
+	return (*Node[T])(unsafe.Pointer(n))
 }
 
 func (n *Node64[T]) asNode() *Node[T] {

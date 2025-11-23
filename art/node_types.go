@@ -63,6 +63,21 @@ type Node[T comparable] struct {
 }
 
 // -----------------------------------------------------------------------------
+// LeafNode — EXACT 32 bytes
+// Specialized leaf node holding a single child pointer.
+//
+// Layout:
+//
+//	Node (24) + child pointer (8) = 32
+//
+// -----------------------------------------------------------------------------
+type LeafNode[T comparable] struct {
+	Node[T]
+	child *Node[T]
+	// Total: 32 B
+}
+
+// -----------------------------------------------------------------------------
 // Node64 — EXACT 64 bytes
 // No bitmap; UNSORTED; linear/unrolled lookup.
 // Size calculation:
