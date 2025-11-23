@@ -25,7 +25,7 @@ func TestNode_getNodeType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			node := &Node[int]{meta: tt.meta}
-			result := node.getNodeType()
+			result := node.GetNodeType()
 			if result != tt.expected {
 				t.Errorf("getNodeType() = %v, want %v", result, tt.expected)
 			}
@@ -56,8 +56,8 @@ func TestNode_setNodeType(t *testing.T) {
 			if node.meta != expected {
 				t.Errorf("meta = 0x%02X, want 0x%02X", node.meta, expected)
 			}
-			if node.getNodeType() != tt.setType {
-				t.Errorf("getNodeType() = %v, want %v", node.getNodeType(), tt.setType)
+			if node.GetNodeType() != tt.setType {
+				t.Errorf("getNodeType() = %v, want %v", node.GetNodeType(), tt.setType)
 			}
 		})
 	}
@@ -80,7 +80,7 @@ func TestNode_getPrefixLen(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			node := &Node[int]{meta: tt.meta}
-			got := node.getPrefixLen()
+			got := node.GetPrefixLen()
 			if got != tt.expected {
 				t.Fatalf("getPrefixLen() = %d, want %d (meta=0x%02X)", got, tt.expected, tt.meta)
 			}
@@ -90,7 +90,7 @@ func TestNode_getPrefixLen(t *testing.T) {
 
 func TestNode_getPrefix_empty(t *testing.T) {
 	node := &Node[int]{}
-	got := node.getPrefix()
+	got := node.GetPrefix()
 	if len(got) != 0 {
 		t.Fatalf("expected empty prefix, got len=%d", len(got))
 	}
@@ -101,13 +101,13 @@ func TestNode_getPrefix_copyAndLength(t *testing.T) {
 	node := &Node[int]{}
 	node.setPrefix(prefix)
 
-	got := node.getPrefix()
+	got := node.GetPrefix()
 	if !bytes.Equal(got, prefix) {
 		t.Fatalf("getPrefix() = %v, want %v", got, prefix)
 	}
 
 	got[0] = 99
-	got2 := node.getPrefix()
+	got2 := node.GetPrefix()
 	if got2[0] != prefix[0] {
 		t.Fatalf("mutation of returned slice affected node localPrefix; got2[0]=%d want=%d", got2[0], prefix[0])
 	}
@@ -121,9 +121,9 @@ func TestNode_getPrefix_longerThanLocalAndRespectsMeta(t *testing.T) {
 
 	node := &Node[int]{}
 	node.setPrefix(long)
-	l := node.getPrefixLen()
+	l := node.GetPrefixLen()
 
-	got := node.getPrefix()
+	got := node.GetPrefix()
 	if len(got) != int(l) {
 		t.Fatalf("len(getPrefix()) = %d, want %d", len(got), l)
 	}
@@ -132,7 +132,7 @@ func TestNode_getPrefix_longerThanLocalAndRespectsMeta(t *testing.T) {
 	}
 
 	node.meta = (node.meta & 0xF0) | 3
-	trunc := node.getPrefix()
+	trunc := node.GetPrefix()
 	if len(trunc) != 3 || !bytes.Equal(trunc, long[:3]) {
 		t.Fatalf("after manual meta change getPrefix() = %v (len=%d), want %v (len=3)", trunc, len(trunc), long[:3])
 	}
@@ -146,13 +146,13 @@ func TestNode_setPrefix_empty(t *testing.T) {
 	if ret != node {
 		t.Fatalf("setPrefix did not return same pointer")
 	}
-	if node.getPrefixLen() != 0 {
-		t.Fatalf("expected prefix len 0, got %d", node.getPrefixLen())
+	if node.GetPrefixLen() != 0 {
+		t.Fatalf("expected prefix len 0, got %d", node.GetPrefixLen())
 	}
 	if node.meta&0xF0 != 0xA0 {
 		t.Fatalf("upper nibble modified, meta=0x%02X", node.meta)
 	}
-	if len(node.getPrefix()) != 0 {
+	if len(node.GetPrefix()) != 0 {
 		t.Fatalf("expected empty stored prefix slice")
 	}
 	// ensure internal buffer bytes are zeroed
@@ -174,13 +174,13 @@ func TestNode_setPrefix_basic(t *testing.T) {
 	if node.meta&0xF0 != 0x50 {
 		t.Fatalf("upper nibble changed; meta=0x%02X", node.meta)
 	}
-	got := node.getPrefix()
+	got := node.GetPrefix()
 	if !bytes.Equal(got, prefix) {
 		t.Fatalf("stored prefix %v want %v", got, prefix)
 	}
 	// mutation safety
 	prefix[0] = 99
-	if node.getPrefix()[0] != 7 {
+	if node.GetPrefix()[0] != 7 {
 		t.Fatalf("mutation of source slice affected stored prefix")
 	}
 	// ensure remaining bytes after prefix are zeroed
@@ -199,10 +199,10 @@ func TestNode_setPrefix_truncates(t *testing.T) {
 	node := &Node[int]{meta: 0xE0}
 	node.setPrefix(orig)
 
-	if node.getPrefixLen() != uint8(maxLocalPrefixLen&0x0F) {
-		t.Fatalf("prefix len=%d want=%d", node.getPrefixLen(), uint8(maxLocalPrefixLen&0x0F))
+	if node.GetPrefixLen() != uint8(maxLocalPrefixLen&0x0F) {
+		t.Fatalf("prefix len=%d want=%d", node.GetPrefixLen(), uint8(maxLocalPrefixLen&0x0F))
 	}
-	got := node.getPrefix()
+	got := node.GetPrefix()
 	if len(got) != maxLocalPrefixLen {
 		t.Fatalf("stored length=%d want=%d", len(got), maxLocalPrefixLen)
 	}
@@ -228,10 +228,10 @@ func TestNode_setPrefix_exactMax(t *testing.T) {
 	node := &Node[int]{meta: 0x20}
 	node.setPrefix(orig)
 
-	if node.getPrefixLen() != uint8(maxLocalPrefixLen&0x0F) {
-		t.Fatalf("prefix len=%d want=%d", node.getPrefixLen(), uint8(maxLocalPrefixLen&0x0F))
+	if node.GetPrefixLen() != uint8(maxLocalPrefixLen&0x0F) {
+		t.Fatalf("prefix len=%d want=%d", node.GetPrefixLen(), uint8(maxLocalPrefixLen&0x0F))
 	}
-	if !bytes.Equal(node.getPrefix(), orig) {
+	if !bytes.Equal(node.GetPrefix(), orig) {
 		t.Fatalf("expected full prefix stored")
 	}
 	if node.meta&0xF0 != 0x20 {
@@ -246,11 +246,11 @@ func TestNode_setPrefix_overwritesPrevious(t *testing.T) {
 	node.setPrefix(first)
 	node.setPrefix(second)
 
-	if node.getPrefixLen() != uint8(len(second)) {
-		t.Fatalf("prefix len=%d want=%d", node.getPrefixLen(), len(second))
+	if node.GetPrefixLen() != uint8(len(second)) {
+		t.Fatalf("prefix len=%d want=%d", node.GetPrefixLen(), len(second))
 	}
-	if !bytes.Equal(node.getPrefix(), second) {
-		t.Fatalf("expected overwritten prefix %v got %v", second, node.getPrefix())
+	if !bytes.Equal(node.GetPrefix(), second) {
+		t.Fatalf("expected overwritten prefix %v got %v", second, node.GetPrefix())
 	}
 	// ensure bytes after new shorter prefix are zeroed
 	for i := len(second); i < maxLocalPrefixLen; i++ {
@@ -296,7 +296,7 @@ func TestNode_getMaxChildren(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			node := &Node[int]{}
 			node.setNodeType(tt.nodeType)
-			result := node.getMaxChildren()
+			result := node.GetMaxChildren()
 			if result != tt.expected {
 				t.Errorf("getMaxChildren() = %v, want %v", result, tt.expected)
 			}
@@ -311,39 +311,39 @@ func TestNode_getMaxChildren_panic(t *testing.T) {
 			t.Errorf("getMaxChildren() did not panic for unknown node type")
 		}
 	}()
-	node.getMaxChildren()
+	node.GetMaxChildren()
 }
 
 // Tests for hasValue, addValue, removeValue
 
 func TestNode_hasValue_emptyNode(t *testing.T) {
 	node := &Node[int]{}
-	if node.hasValue() {
+	if node.HasValue() {
 		t.Fatalf("expected hasValue() = false for new node with nil value")
 	}
 }
 
 func TestNode_hasValue_afterAddValue(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(42)
-	if !node.hasValue() {
+	node.AddValue(42)
+	if !node.HasValue() {
 		t.Fatalf("expected hasValue() = true after addValue")
 	}
 }
 
 func TestNode_hasValue_emptySet(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(10)
-	node.removeValue(10)
+	node.AddValue(10)
+	node.RemoveValue(10)
 	// After removing the only value, the set should be nil
-	if node.hasValue() {
+	if node.HasValue() {
 		t.Fatalf("expected hasValue() = false after removing the only value")
 	}
 }
 
 func TestNode_addValue_single(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(100)
+	node.AddValue(100)
 
 	if node.value == nil {
 		t.Fatalf("expected value set to be non-nil after addValue")
@@ -361,7 +361,7 @@ func TestNode_addValue_multiple(t *testing.T) {
 	values := []int{10, 20, 30, 40}
 
 	for _, v := range values {
-		node.addValue(v)
+		node.AddValue(v)
 	}
 
 	if node.value.Size() != uint32(len(values)) {
@@ -377,9 +377,9 @@ func TestNode_addValue_multiple(t *testing.T) {
 
 func TestNode_addValue_duplicate(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(50)
-	node.addValue(50)
-	node.addValue(50)
+	node.AddValue(50)
+	node.AddValue(50)
+	node.AddValue(50)
 
 	// Set should deduplicate
 	if node.value.Size() != 1 {
@@ -393,8 +393,8 @@ func TestNode_addValue_duplicate(t *testing.T) {
 func TestNode_addValue_differentTypes(t *testing.T) {
 	// Test with string type
 	nodeStr := &Node[string]{}
-	nodeStr.addValue("hello")
-	nodeStr.addValue("world")
+	nodeStr.AddValue("hello")
+	nodeStr.AddValue("world")
 
 	if nodeStr.value.Size() != uint32(2) {
 		t.Fatalf("expected string set size = 2, got %d", nodeStr.value.Size())
@@ -406,25 +406,25 @@ func TestNode_addValue_differentTypes(t *testing.T) {
 
 func TestNode_removeValue_single(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(100)
-	node.removeValue(100)
+	node.AddValue(100)
+	node.RemoveValue(100)
 
 	// After removing the only value, the set should be nil
 	if node.value != nil {
 		t.Fatalf("expected value to be nil after removing the only element")
 	}
-	if node.hasValue() {
+	if node.HasValue() {
 		t.Fatalf("expected hasValue() = false after removing the only value")
 	}
 }
 
 func TestNode_removeValue_fromMultiple(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(10)
-	node.addValue(20)
-	node.addValue(30)
+	node.AddValue(10)
+	node.AddValue(20)
+	node.AddValue(30)
 
-	node.removeValue(20)
+	node.RemoveValue(20)
 
 	if node.value.Size() != uint32(2) {
 		t.Fatalf("expected set size = 2 after removal, got %d", node.value.Size())
@@ -435,18 +435,18 @@ func TestNode_removeValue_fromMultiple(t *testing.T) {
 	if !node.value.Contains(10) || !node.value.Contains(30) {
 		t.Fatalf("expected values 10 and 30 to remain in set")
 	}
-	if !node.hasValue() {
+	if !node.HasValue() {
 		t.Fatalf("expected hasValue() = true after partial removal")
 	}
 }
 
 func TestNode_removeValue_nonExistent(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(100)
-	node.addValue(200) // Add two values to ensure size > 1
+	node.AddValue(100)
+	node.AddValue(200) // Add two values to ensure size > 1
 
 	// Remove a value that doesn't exist
-	node.removeValue(999)
+	node.RemoveValue(999)
 
 	// Should not affect the existing values
 	if node.value == nil {
@@ -464,7 +464,7 @@ func TestNode_removeValue_fromEmpty(t *testing.T) {
 	node := &Node[int]{}
 
 	// Should not panic
-	node.removeValue(42)
+	node.RemoveValue(42)
 
 	if node.value != nil {
 		t.Fatalf("expected value to remain nil after removing from empty node")
@@ -473,16 +473,16 @@ func TestNode_removeValue_fromEmpty(t *testing.T) {
 
 func TestNode_removeValue_afterClear(t *testing.T) {
 	node := &Node[int]{}
-	node.addValue(1)
-	node.addValue(2)
+	node.AddValue(1)
+	node.AddValue(2)
 
 	// Remove all values one by one
-	node.removeValue(1)
+	node.RemoveValue(1)
 	if node.value.Size() != uint32(1) {
 		t.Fatalf("expected size 1 after first removal, got %d", node.value.Size())
 	}
 
-	node.removeValue(2)
+	node.RemoveValue(2)
 	// After removing the last value, set should be nil
 	if node.value != nil {
 		t.Fatalf("expected value to be nil after removing all values")
@@ -493,18 +493,18 @@ func TestNode_addRemoveSequence(t *testing.T) {
 	node := &Node[int]{}
 
 	// Add, remove, add again
-	node.addValue(99)
-	if !node.hasValue() {
+	node.AddValue(99)
+	if !node.HasValue() {
 		t.Fatalf("expected hasValue() = true after first add")
 	}
 
-	node.removeValue(99)
-	if node.hasValue() {
+	node.RemoveValue(99)
+	if node.HasValue() {
 		t.Fatalf("expected hasValue() = false after remove")
 	}
 
-	node.addValue(88)
-	if !node.hasValue() {
+	node.AddValue(88)
+	if !node.HasValue() {
 		t.Fatalf("expected hasValue() = true after second add")
 	}
 	if !node.value.Contains(88) {
@@ -599,5 +599,139 @@ func TestCastingHelpers_PanicOnWrongType(t *testing.T) {
 			}()
 			tt.fn(node)
 		})
+	}
+}
+func TestNode_getValues_emptyNode(t *testing.T) {
+	node := &Node[int]{}
+	values := node.GetValues()
+
+	if values == nil {
+		t.Fatalf("expected non-nil Set3, got nil")
+	}
+	if values.Size() != 0 {
+		t.Fatalf("expected empty set size = 0, got %d", values.Size())
+	}
+}
+
+func TestNode_getValues_withSingleValue(t *testing.T) {
+	node := &Node[int]{}
+	node.AddValue(42)
+
+	values := node.GetValues()
+	if values == nil {
+		t.Fatalf("expected non-nil Set3, got nil")
+	}
+	if values.Size() != 1 {
+		t.Fatalf("expected set size = 1, got %d", values.Size())
+	}
+	if !values.Contains(42) {
+		t.Fatalf("expected set to contain value 42")
+	}
+}
+
+func TestNode_getValues_withMultipleValues(t *testing.T) {
+	node := &Node[int]{}
+	expectedValues := []int{10, 20, 30, 40, 50}
+
+	for _, v := range expectedValues {
+		node.AddValue(v)
+	}
+
+	values := node.GetValues()
+	if values == nil {
+		t.Fatalf("expected non-nil Set3, got nil")
+	}
+	if values.Size() != uint32(len(expectedValues)) {
+		t.Fatalf("expected set size = %d, got %d", len(expectedValues), values.Size())
+	}
+
+	for _, v := range expectedValues {
+		if !values.Contains(v) {
+			t.Fatalf("expected set to contain value %d", v)
+		}
+	}
+}
+
+func TestNode_getValues_isClone(t *testing.T) {
+	node := &Node[int]{}
+	node.AddValue(100)
+	node.AddValue(200)
+
+	values1 := node.GetValues()
+	values2 := node.GetValues()
+
+	// Should be different instances (clones)
+	if values1 == values2 {
+		t.Fatalf("expected different Set3 instances, got same pointer")
+	}
+
+	// But should have same content
+	if values1.Size() != values2.Size() {
+		t.Fatalf("expected same sizes, got %d and %d", values1.Size(), values2.Size())
+	}
+	if !values1.Contains(100) || !values1.Contains(200) {
+		t.Fatalf("expected values1 to contain 100 and 200")
+	}
+	if !values2.Contains(100) || !values2.Contains(200) {
+		t.Fatalf("expected values2 to contain 100 and 200")
+	}
+}
+
+func TestNode_getValues_mutationSafety(t *testing.T) {
+	node := &Node[int]{}
+	node.AddValue(123)
+	node.AddValue(456)
+
+	values := node.GetValues()
+	originalSize := values.Size()
+
+	// Modify the returned set
+	values.Add(789)
+	values.Remove(123)
+
+	// Original node should be unchanged
+	nodeValues := node.GetValues()
+	if nodeValues.Size() != originalSize {
+		t.Fatalf("expected node values size = %d after external mutation, got %d", originalSize, nodeValues.Size())
+	}
+	if !nodeValues.Contains(123) {
+		t.Fatalf("expected node to still contain 123 after external removal")
+	}
+	if nodeValues.Contains(789) {
+		t.Fatalf("expected node to not contain 789 after external addition")
+	}
+}
+
+func TestNode_getValues_afterRemoveAll(t *testing.T) {
+	node := &Node[int]{}
+	node.AddValue(1)
+	node.AddValue(2)
+
+	// Remove all values
+	node.RemoveValue(1)
+	node.RemoveValue(2)
+
+	// Should return empty set, not nil
+	values := node.GetValues()
+	if values == nil {
+		t.Fatalf("expected non-nil empty Set3, got nil")
+	}
+	if values.Size() != 0 {
+		t.Fatalf("expected empty set size = 0, got %d", values.Size())
+	}
+}
+
+func TestNode_getValues_differentTypes(t *testing.T) {
+	// Test with string type
+	nodeStr := &Node[string]{}
+	nodeStr.AddValue("hello")
+	nodeStr.AddValue("world")
+
+	values := nodeStr.GetValues()
+	if values.Size() != 2 {
+		t.Fatalf("expected string set size = 2, got %d", values.Size())
+	}
+	if !values.Contains("hello") || !values.Contains("world") {
+		t.Fatalf("expected string set to contain 'hello' and 'world'")
 	}
 }

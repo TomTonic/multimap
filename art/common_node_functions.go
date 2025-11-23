@@ -22,7 +22,7 @@ func (nt NodeType) String() string {
 	return []string{"Leaf", "Node64", "Node128", "Node256", "Node512", "Node1024", "FullNode"}[nt]
 }
 
-func (n *Node[T]) getNodeType() NodeType {
+func (n *Node[T]) GetNodeType() NodeType {
 	nt := NodeType((n.meta >> 4) & 0x0F)
 	return NodeType(nt)
 }
@@ -32,12 +32,12 @@ func (n *Node[T]) setNodeType(nt NodeType) *Node[T] {
 	return n
 }
 
-func (n *Node[T]) getPrefixLen() uint8 {
+func (n *Node[T]) GetPrefixLen() uint8 {
 	return n.meta & 0x0F
 }
 
-func (n *Node[T]) getPrefix() []byte {
-	l := n.getPrefixLen()
+func (n *Node[T]) GetPrefix() []byte {
+	l := n.GetPrefixLen()
 	k := make([]byte, l)
 	copy(k, n.localPrefix[:l])
 	return k
@@ -55,8 +55,8 @@ func (n *Node[T]) setPrefix(prefix []byte) *Node[T] {
 	return n
 }
 
-func (n *Node[T]) getMaxChildren() uint {
-	switch n.getNodeType() {
+func (n *Node[T]) GetMaxChildren() uint {
+	switch n.GetNodeType() {
 	case NodeTypeLeaf:
 		return maxChildrenLeaf
 	case NodeType64:
@@ -72,22 +72,22 @@ func (n *Node[T]) getMaxChildren() uint {
 	case FullNodeType:
 		return maxChildrenFullNode
 	default:
-		panic("unknown node type: " + string((byte)(n.getNodeType())))
+		panic("unknown node type: " + string((byte)(n.GetNodeType())))
 	}
 }
 
-func (n *Node[T]) hasValue() bool {
+func (n *Node[T]) HasValue() bool {
 	return n.value != nil && n.value.Size() > 0
 }
 
-func (n *Node[T]) addValue(val T) {
+func (n *Node[T]) AddValue(val T) {
 	if n.value == nil {
 		n.value = set3.Empty[T]()
 	}
 	n.value.Add(val)
 }
 
-func (n *Node[T]) removeValue(val T) {
+func (n *Node[T]) RemoveValue(val T) {
 	if n.value != nil {
 		if n.value.Size() <= 1 {
 			n.value = nil
@@ -97,53 +97,60 @@ func (n *Node[T]) removeValue(val T) {
 	}
 }
 
+func (n *Node[T]) GetValues() *set3.Set3[T] {
+	if n.value == nil {
+		return set3.Empty[T]()
+	}
+	return n.value.Clone()
+}
+
 // Type casting helpers
 
 func (n *Node[T]) asLeaf() *LeafNode[T] {
-	if n.getNodeType() != NodeTypeLeaf {
-		panic("node is not of kind Leaf but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != NodeTypeLeaf {
+		panic("node is not of kind Leaf but of kind " + n.GetNodeType().String())
 	}
 	return (*LeafNode[T])(unsafe.Pointer(n))
 }
 
 func (n *Node[T]) asNode64() *Node64[T] {
-	if n.getNodeType() != NodeType64 {
-		panic("node is not of kind Node64 but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != NodeType64 {
+		panic("node is not of kind Node64 but of kind " + n.GetNodeType().String())
 	}
 	return (*Node64[T])(unsafe.Pointer(n))
 }
 
 func (n *Node[T]) asNode128() *Node128[T] {
-	if n.getNodeType() != NodeType128 {
-		panic("node is not of kind Node128 but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != NodeType128 {
+		panic("node is not of kind Node128 but of kind " + n.GetNodeType().String())
 	}
 	return (*Node128[T])(unsafe.Pointer(n))
 }
 
 func (n *Node[T]) asNode256() *Node256[T] {
-	if n.getNodeType() != NodeType256 {
-		panic("node is not of kind Node256 but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != NodeType256 {
+		panic("node is not of kind Node256 but of kind " + n.GetNodeType().String())
 	}
 	return (*Node256[T])(unsafe.Pointer(n))
 }
 
 func (n *Node[T]) asNode512() *Node512[T] {
-	if n.getNodeType() != NodeType512 {
-		panic("node is not of kind Node512 but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != NodeType512 {
+		panic("node is not of kind Node512 but of kind " + n.GetNodeType().String())
 	}
 	return (*Node512[T])(unsafe.Pointer(n))
 }
 
 func (n *Node[T]) asNode1024() *Node1024[T] {
-	if n.getNodeType() != NodeType1024 {
-		panic("node is not of kind Node1024 but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != NodeType1024 {
+		panic("node is not of kind Node1024 but of kind " + n.GetNodeType().String())
 	}
 	return (*Node1024[T])(unsafe.Pointer(n))
 }
 
 func (n *Node[T]) asFullNode() *FullNode[T] {
-	if n.getNodeType() != FullNodeType {
-		panic("node is not of kind FullNode but of kind " + n.getNodeType().String())
+	if n.GetNodeType() != FullNodeType {
+		panic("node is not of kind FullNode but of kind " + n.GetNodeType().String())
 	}
 	return (*FullNode[T])(unsafe.Pointer(n))
 }
