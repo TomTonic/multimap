@@ -514,3 +514,90 @@ func TestNode_addRemoveSequence(t *testing.T) {
 		t.Fatalf("expected old value 99 to not be in set")
 	}
 }
+
+// Round-trip casting tests for all node casting helpers
+func TestCastingHelpers_RoundTrip(t *testing.T) {
+	// LeafNode
+	leaf := &LeafNode[int]{}
+	leaf.setNodeType(NodeTypeLeaf)
+	n := leaf.asNode()
+	if got := n.asLeaf(); got != leaf {
+		t.Fatalf("LeafNode round-trip failed: got %p want %p", got, leaf)
+	}
+
+	// Node64
+	n64 := &Node64[int]{}
+	n64.setNodeType(NodeType64)
+	n = n64.asNode()
+	if got := n.asNode64(); got != n64 {
+		t.Fatalf("Node64 round-trip failed: got %p want %p", got, n64)
+	}
+
+	// Node128
+	n128 := &Node128[int]{}
+	n128.setNodeType(NodeType128)
+	n = n128.asNode()
+	if got := n.asNode128(); got != n128 {
+		t.Fatalf("Node128 round-trip failed: got %p want %p", got, n128)
+	}
+
+	// Node256
+	n256 := &Node256[int]{}
+	n256.setNodeType(NodeType256)
+	n = n256.asNode()
+	if got := n.asNode256(); got != n256 {
+		t.Fatalf("Node256 round-trip failed: got %p want %p", got, n256)
+	}
+
+	// Node512
+	n512 := &Node512[int]{}
+	n512.setNodeType(NodeType512)
+	n = n512.asNode()
+	if got := n.asNode512(); got != n512 {
+		t.Fatalf("Node512 round-trip failed: got %p want %p", got, n512)
+	}
+
+	// Node1024
+	n1024 := &Node1024[int]{}
+	n1024.setNodeType(NodeType1024)
+	n = n1024.asNode()
+	if got := n.asNode1024(); got != n1024 {
+		t.Fatalf("Node1024 round-trip failed: got %p want %p", got, n1024)
+	}
+
+	// FullNode
+	fn := &FullNode[int]{}
+	fn.setNodeType(FullNodeType)
+	n = fn.asNode()
+	if got := n.asFullNode(); got != fn {
+		t.Fatalf("FullNode round-trip failed: got %p want %p", got, fn)
+	}
+}
+
+func TestCastingHelpers_PanicOnWrongType(t *testing.T) {
+	tests := []struct {
+		name string
+		meta uint8
+		fn   func(n *Node[int])
+	}{
+		{"asLeaf_on_Node64", uint8(NodeType64) << 4, func(n *Node[int]) { _ = n.asLeaf() }},
+		{"asNode64_on_Leaf", uint8(NodeTypeLeaf) << 4, func(n *Node[int]) { _ = n.asNode64() }},
+		{"asNode128_on_Node64", uint8(NodeType64) << 4, func(n *Node[int]) { _ = n.asNode128() }},
+		{"asNode256_on_Node128", uint8(NodeType128) << 4, func(n *Node[int]) { _ = n.asNode256() }},
+		{"asNode512_on_Node256", uint8(NodeType256) << 4, func(n *Node[int]) { _ = n.asNode512() }},
+		{"asNode1024_on_Node512", uint8(NodeType512) << 4, func(n *Node[int]) { _ = n.asNode1024() }},
+		{"asFullNode_on_Node1024", uint8(NodeType1024) << 4, func(n *Node[int]) { _ = n.asFullNode() }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &Node[int]{meta: tt.meta}
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("expected panic for %s but none occurred", tt.name)
+				}
+			}()
+			tt.fn(node)
+		})
+	}
+}
