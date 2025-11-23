@@ -4,6 +4,7 @@ import (
 	"unsafe"
 
 	set3 "github.com/TomTonic/Set3"
+	mm "github.com/TomTonic/multimap"
 )
 
 type NodeType uint8
@@ -41,6 +42,14 @@ func (n *Node[T]) GetPrefix() []byte {
 	k := make([]byte, l)
 	copy(k, n.localPrefix[:l])
 	return k
+}
+
+func (n *Node[T]) appendLocalPrefixTo(parentKey mm.Key) mm.Key {
+	l := n.GetPrefixLen()
+	result := make([]byte, len(parentKey)+int(l))
+	copy(result, parentKey)
+	copy(result[len(parentKey):], n.localPrefix[:l])
+	return result
 }
 
 func (n *Node[T]) setPrefix(prefix []byte) *Node[T] {

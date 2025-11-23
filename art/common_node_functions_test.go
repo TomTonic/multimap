@@ -3,6 +3,8 @@ package art
 import (
 	"bytes"
 	"testing"
+
+	mm "github.com/TomTonic/multimap"
 )
 
 func TestNode_getNodeType(t *testing.T) {
@@ -733,5 +735,127 @@ func TestNode_getValues_differentTypes(t *testing.T) {
 	}
 	if !values.Contains("hello") || !values.Contains("world") {
 		t.Fatalf("expected string set to contain 'hello' and 'world'")
+	}
+}
+
+func TestNode_appendLocalPrefixTo_emptyPrefix(t *testing.T) {
+	parent := mm.Key([]byte{1, 2, 3})
+	node := &Node[int]{}
+	node.setPrefix(nil) // prefix len = 0
+
+	out := node.appendLocalPrefixTo(parent)
+	if !bytes.Equal(out, parent) {
+		t.Fatalf("expected out == parent; got %v want %v", out, parent)
+	}
+	if &out[0] == &parent[0] && len(out) > 0 {
+		t.Fatalf("expected new slice allocation, got same backing array")
+	}
+}
+
+func TestNode_appendLocalPrefixTo_nonEmptyPrefix(t *testing.T) {
+	parent := mm.Key([]byte{10, 11})
+	prefix := []byte{1, 2, 3, 4}
+	node := &Node[int]{}
+	node.setPrefix(prefix)
+
+	out := node.appendLocalPrefixTo(parent)
+	want := append(append([]byte{}, parent...), prefix...)
+	if !bytes.Equal(out, want) {
+		t.Fatalf("result mismatch: got %v want %v", out, want)
+	}
+	if len(out) != len(parent)+len(prefix) {
+		t.Fatalf("length mismatch: got %d want %d", len(out), len(parent)+len(prefix))
+	}
+}
+
+func TestNode_appendLocalPrefixTo_parentKeyEmpty(t *testing.T) {
+	parent := mm.Key(nil)
+	prefix := []byte{5, 6, 7}
+	node := &Node[int]{}
+	node.setPrefix(prefix)
+
+	out := node.appendLocalPrefixTo(parent)
+	if !bytes.Equal(out, prefix) {
+		t.Fatalf("expected out == prefix; got %v want %v", out, prefix)
+	}
+}
+
+func TestNode_appendLocalPrefixTo_prefixLenRespectsMetaManipulation(t *testing.T) {
+	parent := mm.Key([]byte{9})
+	prefix := []byte{100, 101, 102, 103, 104}
+	node := &Node[int]{}
+	node.setPrefix(prefix)
+	// Force meta to claim shorter prefix length (2)
+	node.meta = (node.meta & 0xF0) | 0x02
+
+	out := node.appendLocalPrefixTo(parent)
+	want := []byte{9, 100, 101}
+	if !bytes.Equal(out, want) {
+		t.Fatalf("expected truncated usage of localPrefix; got %v want %v", out, want)
+	}
+}
+
+func TestNode_appendLocalPrefixTo_largePrefixTruncated(t *testing.T) {
+	parent := mm.Key([]byte{1, 2})
+	large := make([]byte, maxLocalPrefixLen+20)
+	for i := range large {
+		large[i] = byte(i + 1)
+	}
+	node := &Node[int]{}
+	node.setPrefix(large)
+
+	out := node.appendLocalPrefixTo(parent)
+	if len(out) != len(parent)+maxLocalPrefixLen {
+		t.Fatalf("length got %d want %d", len(out), len(parent)+maxLocalPrefixLen)
+	}
+	if !bytes.Equal(out[len(parent):], large[:maxLocalPrefixLen]) {
+		t.Fatalf("prefix portion mismatch")
+	}
+}
+
+func TestNode_appendLocalPrefixTo_resultIndependence(t *testing.T) {
+	parent := mm.Key([]byte{7, 8, 9})
+	prefix := []byte{1, 2, 3}
+	node := &Node[int]{}
+	node.setPrefix(prefix)
+
+	out := node.appendLocalPrefixTo(parent)
+	out[0] = 99
+	out[len(parent)] = 88
+
+	// parent should be unchanged
+	if parent[0] != 7 {
+		t.Fatalf("parent slice mutated unexpectedly")
+	}
+	// node.localPrefix should be unchanged
+	if node.localPrefix[0] != 1 || node.localPrefix[1] != 2 || node.localPrefix[2] != 3 {
+		t.Fatalf("localPrefix mutated unexpectedly: %v", node.localPrefix[:3])
+	}
+}
+
+func TestNode_appendLocalPrefixTo_emptyParentAndPrefix(t *testing.T) {
+	node := &Node[int]{}
+	node.setPrefix([]byte{})
+	out := node.appendLocalPrefixTo(nil)
+	if len(out) != 0 {
+		t.Fatalf("expected empty result, got %v", out)
+	}
+}
+
+func TestNode_appendLocalPrefixTo_maxPrefix(t *testing.T) {
+	parent := mm.Key([]byte{42})
+	prefix := make([]byte, maxLocalPrefixLen)
+	for i := range prefix {
+		prefix[i] = byte(i)
+	}
+	node := &Node[int]{}
+	node.setPrefix(prefix)
+
+	out := node.appendLocalPrefixTo(parent)
+	if len(out) != 1+maxLocalPrefixLen {
+		t.Fatalf("length mismatch: got %d want %d", len(out), 1+maxLocalPrefixLen)
+	}
+	if !bytes.Equal(out[1:], prefix) {
+		t.Fatalf("stored max prefix mismatch")
 	}
 }
