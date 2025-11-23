@@ -250,3 +250,25 @@ func utf8EncodeRune(buf []byte, r rune) int {
 		return 4
 	}
 }
+
+// LongestCommonPrefix returns the length of the longest common prefix of a and b.
+// If either a or b is nil, one of both is empty or they have no common prefix, 0 is returned.
+// The returned length is in bytes. The value is always between 0 and min(len(a), len(b)).
+func LongestCommonPrefix(a, b Key) uint {
+	i := uint(0)
+	la := uint(len(a))
+	lb := uint(len(b))
+	for i < la && i < lb && a[i] == b[i] {
+		i++
+	}
+	return i
+}
+
+func makeGrowableKeySlice(cap uint) Key {
+	newSlice := make([]byte, 0, cap)
+	return Key(newSlice)
+}
+
+func (k *Key) append(key Key) {
+	*k = append(*k, key...)
+}
