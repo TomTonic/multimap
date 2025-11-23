@@ -1,6 +1,10 @@
 package art
 
-import "unsafe"
+import (
+	"unsafe"
+
+	set3 "github.com/TomTonic/Set3"
+)
 
 type NodeType uint8
 
@@ -23,20 +27,32 @@ func (n *Node[T]) getNodeType() NodeType {
 	return NodeType(nt)
 }
 
-func (n *Node[T]) setNodeType(nt NodeType) {
+func (n *Node[T]) setNodeType(nt NodeType) *Node[T] {
 	n.meta = (n.meta & 0x0F) | (uint8(nt) << 4)
+	return n
 }
 
 func (n *Node[T]) getPrefixLen() uint8 {
 	return n.meta & 0x0F
 }
 
-func (n *Node[T]) setPrefixLen(plen uint8) {
-	n.meta = (n.meta & 0xF0) | (plen & 0x0F)
+func (n *Node[T]) getPrefix() []byte {
+	l := n.getPrefixLen()
+	k := make([]byte, l)
+	copy(k, n.localPrefix[:l])
+	return k
 }
 
-func (n *Node[T]) getDirectChildren() uint {
-	return uint(n.numChildren)
+func (n *Node[T]) setPrefix(prefix []byte) *Node[T] {
+	l := min(len(prefix), maxLocalPrefixLen)
+	n.meta = (n.meta & 0xF0) | (uint8(l) & 0x0F)
+	// copy the provided bytes
+	copy(n.localPrefix[:], prefix[:l])
+	// ensure remaining bytes are zeroed so no stale data remains
+	for i := l; i < maxLocalPrefixLen; i++ {
+		n.localPrefix[i] = 0
+	}
+	return n
 }
 
 func (n *Node[T]) getMaxChildren() uint {
@@ -57,6 +73,27 @@ func (n *Node[T]) getMaxChildren() uint {
 		return maxChildrenFullNode
 	default:
 		panic("unknown node type: " + string((byte)(n.getNodeType())))
+	}
+}
+
+func (n *Node[T]) hasValue() bool {
+	return n.value != nil && n.value.Size() > 0
+}
+
+func (n *Node[T]) addValue(val T) {
+	if n.value == nil {
+		n.value = set3.Empty[T]()
+	}
+	n.value.Add(val)
+}
+
+func (n *Node[T]) removeValue(val T) {
+	if n.value != nil {
+		if n.value.Size() <= 1 {
+			n.value = nil
+		} else {
+			n.value.Remove(val)
+		}
 	}
 }
 
