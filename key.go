@@ -214,7 +214,7 @@ func (k Key) Equal(other Key) bool {
 
 // LessThan reports whether k is lexicographically less than other.
 func (k Key) LessThan(other Key) bool {
-	for i := 0; i < len(k) && i < len(other); i++ {
+	for i := 0; i < min(len(k), len(other)); i++ {
 		if k[i] < other[i] {
 			return true
 		} else if k[i] > other[i] {
@@ -222,6 +222,18 @@ func (k Key) LessThan(other Key) bool {
 		}
 	}
 	return len(k) < len(other)
+}
+
+// LessThanOrEqual reports whether k is lexicographically less than or equal to other.
+func (k Key) LessThanOrEqual(other Key) bool {
+	for i := 0; i < min(len(k), len(other)); i++ {
+		if k[i] < other[i] {
+			return true
+		} else if k[i] > other[i] {
+			return false
+		}
+	}
+	return len(k) <= len(other)
 }
 
 // IsEmpty returns whether the Key is empty or nil.
