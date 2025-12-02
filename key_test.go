@@ -367,3 +367,88 @@ func TestAppendInPlace(t *testing.T) {
 		t.Fatalf("appendInPlace should not be affected by original modification: got %v, want %v", target.Bytes(), expectedTarget)
 	}
 }
+func TestLessThanOrEqual_Basic(t *testing.T) {
+	a := FromBytes([]byte{1, 2, 3})
+	b := FromBytes([]byte{1, 2, 4})
+
+	if !a.LessThanOrEqual(b) {
+		t.Fatalf("expected %v <= %v", a.Bytes(), b.Bytes())
+	}
+	if b.LessThanOrEqual(a) {
+		t.Fatalf("expected %v not <= %v", b.Bytes(), a.Bytes())
+	}
+	if !a.LessThanOrEqual(a) {
+		t.Fatalf("expected %v <= %v (equal keys)", a.Bytes(), a.Bytes())
+	}
+}
+
+func TestLessThanOrEqual_PrefixAndLengths(t *testing.T) {
+	// shorter prefix is <= longer when bytes equal up to the shorter length
+	short := FromBytes([]byte{1, 2})
+	long := FromBytes([]byte{1, 2, 0})
+
+	if !short.LessThanOrEqual(long) {
+		t.Fatalf("expected prefix %v <= %v", short.Bytes(), long.Bytes())
+	}
+	if long.LessThanOrEqual(short) {
+		t.Fatalf("expected %v not <= %v (longer should not be <= shorter when not equal)", long.Bytes(), short.Bytes())
+	}
+
+	// differing at first byte
+	x := FromBytes([]byte{0x00})
+	y := FromBytes([]byte{0xFF})
+	if !x.LessThanOrEqual(y) {
+		t.Fatalf("expected %v <= %v", x.Bytes(), y.Bytes())
+	}
+	if y.LessThanOrEqual(x) {
+		t.Fatalf("expected %v not <= %v", y.Bytes(), x.Bytes())
+	}
+}
+
+func TestLessThanOrEqual_EmptyAndNil(t *testing.T) {
+	var nilKey Key = nil
+	empty := FromBytes(nil) // empty slice (len 0, non-nil)
+
+	non := FromBytes([]byte{0})
+
+	// nil and empty both have len 0, should be <= each other
+	if !nilKey.LessThanOrEqual(empty) || !empty.LessThanOrEqual(nilKey) {
+		t.Fatalf("expected nil and empty to be <= each other")
+	}
+
+	// empty/nil <= non-empty is true; reverse is false
+	if !nilKey.LessThanOrEqual(non) || !empty.LessThanOrEqual(non) {
+		t.Fatalf("expected empty/nil <= non-empty")
+	}
+	if non.LessThanOrEqual(nilKey) || non.LessThanOrEqual(empty) {
+		t.Fatalf("expected non-empty not <= empty/nil")
+	}
+
+	// both nil
+	if !nilKey.LessThanOrEqual(nilKey) {
+		t.Fatalf("expected nil <= nil")
+	}
+}
+
+func TestLessThanOrEqual_ConsistencyWithLessThanAndEqual(t *testing.T) {
+	cases := []struct {
+		a, b Key
+	}{
+		{FromBytes([]byte{1, 2, 3}), FromBytes([]byte{1, 2, 3})}, // equal
+		{FromBytes([]byte{1, 2, 3}), FromBytes([]byte{1, 2, 4})}, // a < b
+		{FromBytes([]byte{1, 2, 4}), FromBytes([]byte{1, 2, 3})}, // a > b
+		{FromBytes([]byte{1, 2}), FromBytes([]byte{1, 2, 0})},    // prefix shorter < longer
+		{FromBytes([]byte{1, 2, 0}), FromBytes([]byte{1, 2})},    // longer > shorter
+		{FromBytes([]byte{}), FromBytes([]byte{0})},              // empty < non-empty
+	}
+
+	for _, c := range cases {
+		lte := c.a.LessThanOrEqual(c.b)
+		lt := c.a.LessThan(c.b)
+		eq := c.a.Equal(c.b)
+		if lte != (lt || eq) {
+			t.Fatalf("inconsistency: a=%v b=%v: <==%v, <||==%v (lt=%v eq=%v)",
+				c.a.Bytes(), c.b.Bytes(), lte, lt || eq, lt, eq)
+		}
+	}
+}
