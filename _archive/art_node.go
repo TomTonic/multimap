@@ -1,6 +1,8 @@
 package multimap
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 const (
 	// maxPrefixLen is maximum prefix length for internal nodes.
@@ -78,15 +80,57 @@ func (n *node[T]) asLeaf() *nodeLeaf[T] {
 	}
 	return (*nodeLeaf[T])(unsafe.Pointer(n))
 }
+func (n *node5[T]) asNode() *node[T] {
+	return (*node[T])(unsafe.Pointer(n))
+}
+func (n *node51[T]) asNode() *node[T] {
+	return (*node[T])(unsafe.Pointer(n))
+}
+func (n *node256[T]) asNode() *node[T] {
+	return (*node[T])(unsafe.Pointer(n))
+}
+func (n *nodeLeaf[T]) asNode() *node[T] {
+	return (*node[T])(unsafe.Pointer(n))
+}
 
-func (n *node[T]) getLocalKey(parentKey Key) Key {
+func (n *node[T]) appendLocalPrefix(parentKey Key) Key {
 	result := make([]byte, len(parentKey)+int(n.prefixLen))
 	copy(result, parentKey)
 	copy(result[len(parentKey):], n.prefix[:n.prefixLen])
 	return result
 }
 
+func (n *node[T]) getChild(currentPrefix Key, searchKey Key) (child *node[T]) {
+	switch n.ntype {
+	case Node5:
+		return (*node5[T])(unsafe.Pointer(n)).getChild(currentPrefix, searchKey)
+	case Node51:
+		return (*node51[T])(unsafe.Pointer(n)).getChild(currentPrefix, searchKey)
+	case Node256:
+		return (*node256[T])(unsafe.Pointer(n)).getChild(currentPrefix, searchKey)
+	case Leaf:
+		return (*nodeLeaf[T])(unsafe.Pointer(n)).getChild(currentPrefix, searchKey)
+	}
+	return nil
+}
+
+func (n *node[T]) getOrCreateChild(currentPrefix Key, searchKey Key) (child *node[T], replacement *node[T]) {
+	switch n.ntype {
+	case Node5:
+		return (*node5[T])(unsafe.Pointer(n)).getOrCreateChild(currentPrefix, searchKey)
+	case Node51:
+		return (*node51[T])(unsafe.Pointer(n)).getOrCreateChild(currentPrefix, searchKey)
+	case Node256:
+		return (*node256[T])(unsafe.Pointer(n)).getOrCreateChild(currentPrefix, searchKey)
+	case Leaf:
+		return (*nodeLeaf[T])(unsafe.Pointer(n)).getOrCreateChild(currentPrefix, searchKey)
+	}
+	return nil, nil
+}
+
 type nodeOps[T comparable] interface {
+	getChild(currentPrefix Key, searchKey Key) *node[T]
+
 	currentChildCount() uint32
 	hasCapacityForChild() bool
 	grow() *node[T]
