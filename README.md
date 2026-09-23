@@ -6,8 +6,53 @@
 [![Tests](https://github.com/TomTonic/multimap/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/TomTonic/multimap/actions/workflows/coverage.yml)
 ![coverage](https://raw.githubusercontent.com/TomTonic/multimap/badges/.badges/main/coverage.svg)
 
-`multimap` provides a compact, thread-safe multimap implementation for Go.
+`multimap` provides fast, compact multimaps for Go.
 A multimap is a data structure that allows multiple values to be associated with a single key, unlike a regular map where each key has exactly one value.
+
+## Implementations
+
+| Constructor | Backed by | Range queries | Iteration order | Concurrency |
+|-------------|-----------|---------------|-----------------|-------------|
+| `New[T]()` | adaptive radix tree | visit only the keys in range | ascending key order | safe (read/write lock) |
+| `NewOrdered[T]()` | adaptive radix tree | visit only the keys in range | ascending key order | not synchronized |
+| `NewHashed[T]()` | Go map | scan all keys | unspecified | not synchronized |
+| `Synchronized[T](m)` | wraps any of the above | as the wrapped map | as the wrapped map | safe (read/write lock) |
+
+Choose `Ordered` (the default behind `New`) when range queries or ordered
+iteration matter. Choose `Hashed` when they are rare: point operations on long
+string keys are faster there, but every range query scans all keys, and like
+every Go map it keeps its memory after deletions. The benchmarks behind these
+statements are in [bench/README.md](bench/README.md).
+
+Both keep the values of a key in a compact container: up to three values
+inline, then a plain array, then a hash set.
+
+## Concurrency
+
+`Ordered` and `Hashed` are not synchronized. Any number of goroutines may read
+at the same time, but a write must not run concurrently with any other
+access; provide that exclusion yourself, or wrap the multimap with
+`Synchronized`, which guards every method with a `sync.RWMutex` (reads run in
+parallel, writes are exclusive). `New` returns a synchronized `Ordered`
+multimap.
+
+## Sets and iterators
+
+Every read method exists twice:
+
+- The plain form (`ValuesFor`, `ValuesBetweenInclusive`, `AllKeys`, ...)
+  returns an independent copy (`*set3.Set3[T]` or `[]Key`). It allocates, but
+  you may keep and modify the result, and on a synchronized multimap no lock is
+  held once it returns.
+- The `Seq` form (`ValuesForSeq`, `ValuesBetweenInclusiveSeq`, `AllKeysSeq`,
+  ...) returns an `iter.Seq` over the stored data without copying. It yields
+  the values key by key, so a value stored under several keys is yielded once
+  per key. Keys yielded by `AllKeysSeq` must not be modified or retained.
+
+On a synchronized multimap, a `Seq` iterator holds the read lock for the whole
+loop. The loop body must not call any method of the same multimap (this can
+deadlock), and a long loop delays writers. Use the plain form when the loop
+body needs the multimap or runs long.
 
 ## Key Characteristics
 
@@ -72,10 +117,11 @@ Examples / consequences:
 
 ## Behavior and semantics
 
-- `PutValue(key, v)` clones `key` before inserting; mutating the caller's `Key` after
-    calling `PutValue` will not affect the stored key.
-- `GetValuesFor(key)` and other retrieval mehods return clones of stored `Set3`
-    instances; modifying the returned set does not affect the `MultiMap`'s contents.
+- `AddValue(key, v)` clones `key` before inserting; mutating the caller's `Key` after
+    calling `AddValue` will not affect the stored key.
+- `ValuesFor(key)` and the other set-returning methods return copies;
+    modifying a returned set does not affect the `MultiMap`'s contents.
+- Removing the last value of a key removes the key.
 - **Range queries**: Keys are ordered in lexicographic order, allowing efficient range
 	queries between two key boundaries. Range operations return a set of all values of
 	all keys where the key falls within the specified range (inclusive or exclusive based

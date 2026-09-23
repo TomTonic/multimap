@@ -29,3 +29,17 @@ func Example_rangeQuery() {
 	// Output:
 	// true
 }
+
+func Example_iterators() {
+	mm := NewOrdered[string]() // unsynchronized; iteration in ascending key order
+	mm.AddValue(FromString("b"), "second")
+	mm.AddValue(FromString("a"), "first")
+	mm.AddValue(FromString("c"), "third")
+
+	for v := range mm.ValuesFromInclusiveSeq(FromString("b")) {
+		fmt.Println(v)
+	}
+	// Output:
+	// second
+	// third
+}
