@@ -1,6 +1,7 @@
 package multimap
 
 import (
+	"sync"
 	"testing"
 
 	set3 "github.com/TomTonic/Set3"
@@ -279,23 +280,17 @@ func TestPutClonesKey(t *testing.T) {
 // from many goroutines at once (run with -race to check the locking).
 func TestConcurrentPuts(t *testing.T) {
 	forEachSynchronized(t, func(t *testing.T, mm MultiMap[int]) {
-		done := make(chan struct{})
-		// spawn writers
-		for i := 0; i < 10; i++ {
-			go func(i int) {
-				for j := 0; j < 100; j++ {
+		var wg sync.WaitGroup
+		for i := range 10 {
+			wg.Go(func() {
+				for j := range 100 {
 					mm.AddValue(FromString("k"), i*100+j)
 				}
-				done <- struct{}{}
-			}(i)
+			})
 		}
-		// wait
-		for i := 0; i < 10; i++ {
-			<-done
-		}
-		// ensure no panic and some values present
-		if mm.NumberOfKeys() == 0 {
-			t.Fatalf("expected non-empty after concurrent puts")
+		wg.Wait()
+		if got := mm.ValuesFor(FromString("k")).Size(); got != 1000 {
+			t.Fatalf("expected 1000 values after concurrent puts, got %d", got)
 		}
 	})
 }

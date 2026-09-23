@@ -89,7 +89,7 @@ func main() {
 		}
 	}()
 
-	for _, op := range strings.Split(*ops, ",") {
+	for op := range strings.SplitSeq(*ops, ",") {
 		if op == "addRemove" {
 			d.warmAddRemove() // settle every key's value set into its steady state first
 		}

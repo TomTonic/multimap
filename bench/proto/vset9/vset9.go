@@ -27,6 +27,7 @@ package vset9
 
 import (
 	"iter"
+	"slices"
 	"unsafe"
 
 	set3 "github.com/TomTonic/Set3"
@@ -80,12 +81,7 @@ func (s *Set[T]) Contains(v T) bool {
 		}
 		return false
 	case s.cap > 0:
-		for _, x := range s.array() {
-			if x == v {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(s.array(), v)
 	default:
 		return s.hash().Contains(v)
 	}

@@ -72,7 +72,7 @@ func main() {
 	}()
 
 	want := func(b string) bool { return *only == "" || slices.Contains(strings.Split(*only, ","), b) }
-	for _, op := range strings.Split(*ops, ",") {
+	for op := range strings.SplitSeq(*ops, ",") {
 		for _, pair := range f.pairs(op, *aName) {
 			if !want(pair[1].Name) {
 				continue

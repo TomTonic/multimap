@@ -278,15 +278,12 @@ func TestSynchronizedConcurrentUse(t *testing.T) {
 	forEachSynchronized(t, func(t *testing.T, mm MultiMap[int]) {
 		var wg sync.WaitGroup
 		for w := range 4 {
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for i := range 500 {
 					mm.AddValue(FromInt(w*1000+i), i)
 				}
-			}()
-			go func() {
-				defer wg.Done()
+			})
+			wg.Go(func() {
 				for range 50 {
 					for k := range mm.AllKeysSeq() {
 						if len(k) != 8 {
@@ -295,7 +292,7 @@ func TestSynchronizedConcurrentUse(t *testing.T) {
 					}
 					_ = mm.ValuesBetweenInclusive(FromInt(0), FromInt(2000))
 				}
-			}()
+			})
 		}
 		wg.Wait()
 		if mm.NumberOfKeys() != 2000 {

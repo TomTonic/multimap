@@ -430,7 +430,7 @@ func (t *Tree) addChild(r ref, b byte, c ref) ref {
 		yi, y := t.n52.alloc()
 		y.header = x.header
 		copy(y.child[:], x.child[:])
-		for i := 0; i < 22; i++ {
+		for i := range 22 {
 			swar.Set(&y.bitmap, x.keys[i])
 		}
 		t.n22.release(r.idx())
@@ -448,7 +448,7 @@ func (t *Tree) addChild(r ref, b byte, c ref) ref {
 		yi, y := t.n256.alloc()
 		y.header = x.header
 		i := 0
-		for k := 0; k < 256; k++ {
+		for k := range 256 {
 			if swar.Has(&x.bitmap, byte(k)) {
 				y.child[k] = x.child[i]
 				i++

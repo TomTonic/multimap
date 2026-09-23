@@ -390,7 +390,7 @@ func addChild(n *header, b byte, c *header) *header {
 		y := &node57{header: x.header}
 		y.kind = kN57
 		copy(y.child[:], x.child[:])
-		for i := 0; i < 25; i++ {
+		for i := range 25 {
 			swar.Set(&y.bitmap, x.keys[i])
 		}
 		return addChild(&y.header, b, c)
@@ -407,7 +407,7 @@ func addChild(n *header, b byte, c *header) *header {
 		y := &node256{header: x.header}
 		y.kind = kN256
 		i := 0
-		for k := 0; k < 256; k++ {
+		for k := range 256 {
 			if swar.Has(&x.bitmap, byte(k)) {
 				y.child[k] = x.child[i]
 				i++

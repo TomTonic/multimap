@@ -34,7 +34,7 @@ func Word(p []byte) uint64 { return binary.LittleEndian.Uint64(p) }
 func Rank(bm *[4]uint64, b byte) int {
 	w := b >> 6
 	r := bits.OnesCount64(bm[w&3] & (uint64(1)<<(b&63) - 1))
-	for i := byte(0); i < w; i++ {
+	for i := range w {
 		r += bits.OnesCount64(bm[i])
 	}
 	return r
@@ -62,7 +62,7 @@ func MatchPrefix(prefix *[8]byte, plen int, key []byte, depth int) bool {
 		x := binary.LittleEndian.Uint64(key[depth:]) ^ binary.LittleEndian.Uint64(prefix[:])
 		return x&(^uint64(0)>>(64-8*m)) == 0
 	}
-	for i := 0; i < m; i++ {
+	for i := range m {
 		if key[depth+i] != prefix[i] {
 			return false
 		}

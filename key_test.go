@@ -206,8 +206,8 @@ func TestLessThan(t *testing.T) {
 func TestSignedOrderingAcrossWidths(t *testing.T) {
 	vals := []int64{-2, -1, 0, 1, 2}
 	// ensure that ordering compares numerically regardless of source width
-	for i := 0; i < len(vals); i++ {
-		for j := 0; j < len(vals); j++ {
+	for i := range vals {
+		for j := range vals {
 			a := FromInt8(int8(vals[i]))
 			b := FromInt64(vals[j])
 			want := vals[i] < vals[j]

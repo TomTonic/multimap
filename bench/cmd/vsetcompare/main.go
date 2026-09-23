@@ -68,7 +68,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	for _, op := range strings.Split(*ops, ",") {
+	for op := range strings.SplitSeq(*ops, ",") {
 		var a, b rtcompare.Candidate
 		switch op {
 		case "contains":
