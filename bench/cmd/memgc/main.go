@@ -24,13 +24,14 @@ import (
 	"github.com/TomTonic/multimap/bench/proto/arenaart"
 	"github.com/TomTonic/multimap/bench/proto/arenaflat"
 	"github.com/TomTonic/multimap/bench/proto/mmart"
+	"github.com/TomTonic/multimap/bench/proto/mmart2"
 	"github.com/TomTonic/multimap/bench/proto/mmbtree"
 	"github.com/TomTonic/multimap/bench/proto/ptrart"
 	"github.com/TomTonic/multimap/bench/proto/vset"
 )
 
 func main() {
-	impl := flag.String("impl", "none", "none|arena-art|arena-flat|ptr-art|tidwall-btree|plar-art|go-map|mm-art|mm-btree-inline|mm-btree-ptr|vset-array|vset-hash")
+	impl := flag.String("impl", "none", "none|arena-art|arena-flat|ptr-art|tidwall-btree|plar-art|go-map|mm-art|mm-art-v2|mm-btree-inline|mm-btree-ptr|vset-array|vset-hash")
 	kind := flag.String("keys", "u64", "u64 or str")
 	n := flag.Int("n", 1<<20, "number of keys")
 	cycles := flag.Int("cycles", 15, "forced GC cycles to time")
@@ -83,6 +84,10 @@ func main() {
 		keep = t
 	case "mm-art":
 		t := &mmart.Map[uint64]{}
+		fillMM(t, k, vals, offs)
+		keep = t
+	case "mm-art-v2":
+		t := &mmart2.Map[uint64]{}
 		fillMM(t, k, vals, offs)
 		keep = t
 	case "mm-btree-inline":

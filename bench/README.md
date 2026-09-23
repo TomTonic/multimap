@@ -242,3 +242,59 @@ mmart costs about 2x btree-inline in GC CPU per cycle (+178 ms against
 +91 ms for u64) at a similar number of scannable bytes. The ART allocates one
 object per key (the leaf) plus inner nodes. btree-inline packs many keys into
 each node array, so the GC visits far fewer objects.
+
+## 128-byte leaf with 9 inline values, plus node25 (`./run6.sh`)
+
+`mmart2` is `mmart` with two changes. It adds node25, a 256 B node with
+25-way SWAR search between node11 and node57. Its only leaf is 128 bytes and
+holds 9 values inline (`vset9`), where `mmart` has an 80-byte leaf holding 3.
+Each cell gives mmart2 / mmart in ns/op and the difference; a positive
+difference means mmart2 is faster, and "n.r." means not resolved.
+
+| keys, n | ValuesFor          | ValuesBetween        | Add+Remove          | build              |
+|---------|--------------------|----------------------|---------------------|--------------------|
+| u64, 4K | 95 / 92 (n.r.)     | 5 010 / 4 977 (n.r.) | 58 / 53 (-10%)      | 1.28 / 1.24 ms (-4%) |
+| u64, 1M | 393 / 413 (+5%)    | 9 091 / 9 951 (+9%)  | 307 / 320 (+4%)     |                    |
+| str, 4K | 133 / 133 (n.r.)   | 5 888 / 5 769 (-2%)  | 135 / 138 (+2%)     | 2.12 / 2.12 ms (n.r.) |
+| str, 1M | 608 / 616 (n.r.)   | 12 433 / 13 120 (+5%) | 687 / 641 (-7%, drifted) |               |
+
+Memory and GC with 1M keys (per key, GC CPU per cycle minus baseline):
+
+| variant | u64 heap | u64 GC CPU | str heap | str GC CPU |
+|---------|---------:|-----------:|---------:|-----------:|
+| mmart   |    178 B |    +178 ms |    206 B |    +235 ms |
+| mmart2  |    203 B |    +162 ms |    242 B |    +271 ms |
+
+Every key pays the 48 extra leaf bytes, but only the roughly 17% of keys with
+4-9 values save an array. The larger leaf costs 14-18% more memory for speed
+changes between -10% and +9%, so it is not worth it. node25 is not isolated in
+this run. The fan-out data (55 479 of 56 246 large nodes hold 12-25 children
+for u64 keys at 1M) predicts it saves about 14 B/key without slowing the
+search: 3-word SWAR took 7.8 ns, popcount 8.0 ns.
+
+## Library `Ordered` against the prototype (`./run7.sh`)
+
+`lib` is the library's `multimap.Ordered`, reached through its iterator API
+(`ValuesForSeq`, `ValuesBetweenInclusiveSeq`). It is `mmart` with node25 as
+a bitmap node (256 B, same search as node57), key deletion with node shrinking,
+and the `Ordered` wrapper around `art.Map`. Each cell gives lib / mmart in
+ns/op and the difference; negative means lib is slower, "n.r." means not
+resolved.
+
+| keys, n | ValuesFor         | ValuesBetween         | Add+Remove        | build                  |
+|---------|-------------------|-----------------------|-------------------|------------------------|
+| u64, 4K | 95 / 94 (n.r.)    | 4 769 / 4 598 (n.r.)  | 55 / 54 (-2%)     | 1.19 / 1.17 ms (-2%)   |
+| u64, 1M | 399 / 405 (+1%)   | 9 182 / 9 156 (n.r.)  | 344 / 311 (-11%)  |                        |
+| str, 4K | 131 / 127 (n.r.)  | 5 724 / 5 282 (-8%)   | 142 / 141 (-1%)   | 2.08 / 2.04 ms (-2%)   |
+| str, 1M | 688 / 665 (n.r.)  | 12 465 / 12 550 (n.r.) | 662 / 644 (-3%)  |                        |
+
+A rerun with the roles swapped confirmed the two larger gaps at smaller size:
+Add+Remove u64 1M -9%, ValuesBetween str 4K -4%.
+
+The u64 1M Add+Remove gap is not explained yet. The value container is the
+same code in both, the leaf and node layouts match, and neither side allocates
+per operation. ValuesFor walks the same nodes and is not slower, which points
+at the insert path rather than at memory layout. The CPU profile puts the
+extra time in `findLoc`, but writing its per-kind search out (as in `find`)
+did not change the rtcompare result, nor did checking for an existing leaf
+before calling `splitLeaf`. Both attempts were reverted.

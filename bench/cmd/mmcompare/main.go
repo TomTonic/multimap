@@ -20,8 +20,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/bench/proto/mmart"
+	"github.com/TomTonic/multimap/bench/proto/mmart2"
 	"github.com/TomTonic/multimap/bench/proto/mmbtree"
 	"github.com/TomTonic/rtcompare"
 )
@@ -30,7 +32,7 @@ var sink uint64
 
 const rangeKeys = 100
 
-type multimap interface {
+type mmAPI interface {
 	AddValue(key []byte, v uint64)
 	RemoveValue(key []byte, v uint64)
 	ValuesFor(key []byte) iter.Seq[uint64]
@@ -60,6 +62,8 @@ type data struct {
 	offs     []int
 	from, to keys.Set // range probes, 100 consecutive keys each
 	art      *mmart.Map[uint64]
+	art2     *mmart2.Map[uint64]
+	lib      *multimap.Ordered[uint64]
 	btInline *mmbtree.Inline[uint64]
 	btPtr    *mmbtree.Ptr[uint64]
 }
@@ -69,6 +73,7 @@ func main() {
 	n := flag.Int("n", 4096, "number of keys")
 	ops := flag.String("ops", "valuesFor,valuesBetween,addRemove", "operations")
 	out := flag.String("out", "results/mm.jsonl", "JSON lines output")
+	aName := flag.String("a", "art", "candidate A")
 	only := flag.String("only", "", "comma-separated B candidates to run (default all)")
 	flag.Parse()
 
@@ -89,8 +94,13 @@ func main() {
 			d.warmAddRemove() // settle every key's value set into its steady state first
 		}
 		cands := d.candidates(op)
-		for _, b := range cands[1:] {
-			if *only != "" && !slices.Contains(strings.Split(*only, ","), b.Name) {
+		ai := slices.IndexFunc(cands, func(c rtcompare.Candidate) bool { return c.Name == *aName })
+		if ai < 0 {
+			fail(fmt.Errorf("unknown candidate A %q", *aName))
+		}
+		a := cands[ai]
+		for _, b := range cands {
+			if b.Name == a.Name || (*only != "" && !slices.Contains(strings.Split(*only, ","), b.Name)) {
 				continue
 			}
 			opt := rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001}}
@@ -102,14 +112,14 @@ func main() {
 				// would make the run take hours.)
 				opt.Collect.GCBetween = true
 			}
-			fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", *kind, *n, op, cands[0].Name, b.Name)
-			rep, err := rtcompare.Compare(cands[0], b, opt)
+			fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", *kind, *n, op, a.Name, b.Name)
+			rep, err := rtcompare.Compare(a, b, opt)
 			if err != nil {
 				fail(err)
 			}
 			fmt.Fprintf(os.Stderr, "%s\n\n", rep)
 			if err := json.NewEncoder(w).Encode(result{
-				Keys: *kind, N: *n, Op: op, A: cands[0].Name, B: b.Name,
+				Keys: *kind, N: *n, Op: op, A: a.Name, B: b.Name,
 				NsA: rep.NsPerOpA, NsB: rep.NsPerOpB, Delta: rep.Estimate.Delta,
 				Low: rep.Estimate.Low, High: rep.Estimate.High, Resolved: rep.Resolved,
 				NoiseFloor: rep.NoiseFloor, Warnings: rep.Warnings,
@@ -124,9 +134,16 @@ func main() {
 func load(kind keys.Kind, n int) *data {
 	d := &data{c: keys.Generate(kind, n, 0x5EED)}
 	d.vals, d.offs = keys.Values(n, 0xFA11)
-	d.art, d.btInline, d.btPtr = &mmart.Map[uint64]{}, &mmbtree.Inline[uint64]{}, &mmbtree.Ptr[uint64]{}
-	for _, m := range []multimap{d.art, d.btInline, d.btPtr} {
+	d.art, d.art2 = &mmart.Map[uint64]{}, &mmart2.Map[uint64]{}
+	d.btInline, d.btPtr = &mmbtree.Inline[uint64]{}, &mmbtree.Ptr[uint64]{}
+	for _, m := range []mmAPI{d.art, d.art2, d.btInline, d.btPtr} {
 		d.fill(m)
+	}
+	d.lib = multimap.NewOrdered[uint64]()
+	for i, k := range d.c.Keys.B {
+		for _, v := range d.vals[d.offs[i]:d.offs[i+1]] {
+			d.lib.AddValue(k, v)
+		}
 	}
 
 	sorted := keys.Sorted(d.c.Keys)
@@ -141,7 +158,7 @@ func load(kind keys.Kind, n int) *data {
 	return d
 }
 
-func (d *data) fill(m multimap) {
+func (d *data) fill(m mmAPI) {
 	for i, k := range d.c.Keys.B {
 		for _, v := range d.vals[d.offs[i]:d.offs[i+1]] {
 			m.AddValue(k, v)
@@ -161,6 +178,12 @@ func (d *data) verify() {
 	for i := range min(len(d.c.Hits.B), 20000) {
 		k := d.c.Hits.B[i]
 		a1, c1 := sum(d.art.ValuesFor(k))
+		if a0, c0 := sum(d.lib.ValuesForSeq(k)); a0 != a1 || c0 != c1 {
+			fail(fmt.Errorf("library ValuesForSeq mismatch for %q", k))
+		}
+		if a0, c0 := sum(d.art2.ValuesFor(k)); a0 != a1 || c0 != c1 {
+			fail(fmt.Errorf("mmart2 ValuesFor mismatch for %q", k))
+		}
 		a2, c2 := sum(d.btInline.ValuesFor(k))
 		a3, c3 := sum(d.btPtr.ValuesFor(k))
 		if a1 != a2 || a1 != a3 || c1 != c2 || c1 != c3 || c1 == 0 {
@@ -170,6 +193,12 @@ func (d *data) verify() {
 	for i := range min(len(d.from.B), 2000) {
 		f, t := d.from.B[i], d.to.B[i]
 		a1, c1 := sum(d.art.ValuesBetween(f, t))
+		if a0, c0 := sum(d.lib.ValuesBetweenInclusiveSeq(f, t)); a0 != a1 || c0 != c1 {
+			fail(fmt.Errorf("library ValuesBetweenInclusiveSeq mismatch for %q..%q", f, t))
+		}
+		if a0, c0 := sum(d.art2.ValuesBetween(f, t)); a0 != a1 || c0 != c1 {
+			fail(fmt.Errorf("mmart2 ValuesBetween mismatch for %q..%q", f, t))
+		}
 		if a0, c0 := sum(d.art.ValuesBetweenLinear(f, t)); a0 != a1 || c0 != c1 {
 			fail(fmt.Errorf("ValuesBetweenLinear mismatch for %q..%q", f, t))
 		}
@@ -186,10 +215,12 @@ func (d *data) verify() {
 func (d *data) warmAddRemove() {
 	for i, k := range d.c.Hits.B {
 		v := absent(i)
-		for _, m := range []multimap{d.art, d.btInline, d.btPtr} {
+		for _, m := range []mmAPI{d.art, d.art2, d.btInline, d.btPtr} {
 			m.AddValue(k, v)
 			m.RemoveValue(k, v)
 		}
+		d.lib.AddValue(k, v)
+		d.lib.RemoveValue(k, v)
 	}
 }
 
@@ -199,18 +230,19 @@ func (d *data) candidates(op string) []rtcompare.Candidate {
 	switch op {
 	case "valuesFor":
 		return []rtcompare.Candidate{
-			valuesForArt("art", d.art, d.c.Hits), valuesForBtInline("btree-inline", d.btInline, d.c.Hits),
+			valuesForArt("art", d.art, d.c.Hits), valuesForArt2("art-v2", d.art2, d.c.Hits), valuesForLib("lib", d.lib, d.c.Hits), valuesForBtInline("btree-inline", d.btInline, d.c.Hits),
 			valuesForBtPtr("btree-ptr", d.btPtr, d.c.Hits)}
 	case "valuesBetween":
 		return []rtcompare.Candidate{
-			valuesBetweenArt("art", d.art, d.from, d.to), valuesBetweenArtLinear("art-linear", d.art, d.from, d.to),
+			valuesBetweenArt("art", d.art, d.from, d.to), valuesBetweenArt2("art-v2", d.art2, d.from, d.to), valuesBetweenLib("lib", d.lib, d.from, d.to),
+			valuesBetweenArtLinear("art-linear", d.art, d.from, d.to),
 			valuesBetweenBtInline("btree-inline", d.btInline, d.from, d.to), valuesBetweenBtPtr("btree-ptr", d.btPtr, d.from, d.to)}
 	case "addRemove":
 		return []rtcompare.Candidate{
-			addRemoveArt("art", d.art, d.c.Hits), addRemoveBtInline("btree-inline", d.btInline, d.c.Hits),
+			addRemoveArt("art", d.art, d.c.Hits), addRemoveArt2("art-v2", d.art2, d.c.Hits), addRemoveLib("lib", d.lib, d.c.Hits), addRemoveBtInline("btree-inline", d.btInline, d.c.Hits),
 			addRemoveBtPtr("btree-ptr", d.btPtr, d.c.Hits)}
 	case "build":
-		return []rtcompare.Candidate{d.buildArt("art"), d.buildBtInline("btree-inline"), d.buildBtPtr("btree-ptr")}
+		return []rtcompare.Candidate{d.buildArt("art"), d.buildArt2("art-v2"), d.buildLib("lib"), d.buildBtInline("btree-inline"), d.buildBtPtr("btree-ptr")}
 	}
 	fail(fmt.Errorf("unknown op %q", op))
 	return nil
@@ -300,6 +332,128 @@ func (d *data) buildArt(name string) rtcompare.Candidate {
 				}
 			}
 			sink += uint64(m.Len())
+		}
+	}}
+}
+
+func valuesForArt2(name string, m *mmart2.Map[uint64], p keys.Set) rtcompare.Candidate {
+	j := 0
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		var acc uint64
+		for range n {
+			for v := range m.ValuesFor(p.B[j]) {
+				acc += v
+			}
+			if j++; j == len(p.B) {
+				j = 0
+			}
+		}
+		sink += acc
+	}}
+}
+
+func valuesBetweenArt2(name string, m *mmart2.Map[uint64], from, to keys.Set) rtcompare.Candidate {
+	j := 0
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		var acc uint64
+		for range n {
+			for v := range m.ValuesBetween(from.B[j], to.B[j]) {
+				acc += v
+			}
+			if j++; j == len(from.B) {
+				j = 0
+			}
+		}
+		sink += acc
+	}}
+}
+
+func addRemoveArt2(name string, m *mmart2.Map[uint64], p keys.Set) rtcompare.Candidate {
+	j := 0
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		for range n {
+			k, v := p.B[j], absent(j)
+			m.AddValue(k, v)
+			m.RemoveValue(k, v)
+			if j++; j == len(p.B) {
+				j = 0
+			}
+		}
+		sink++
+	}}
+}
+
+func (d *data) buildArt2(name string) rtcompare.Candidate {
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		for range n {
+			m := &mmart2.Map[uint64]{}
+			for i, k := range d.c.Keys.B {
+				for _, v := range d.vals[d.offs[i]:d.offs[i+1]] {
+					m.AddValue(k, v)
+				}
+			}
+			sink += uint64(m.Len())
+		}
+	}}
+}
+
+func valuesForLib(name string, m *multimap.Ordered[uint64], p keys.Set) rtcompare.Candidate {
+	j := 0
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		var acc uint64
+		for range n {
+			for v := range m.ValuesForSeq(p.B[j]) {
+				acc += v
+			}
+			if j++; j == len(p.B) {
+				j = 0
+			}
+		}
+		sink += acc
+	}}
+}
+
+func valuesBetweenLib(name string, m *multimap.Ordered[uint64], from, to keys.Set) rtcompare.Candidate {
+	j := 0
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		var acc uint64
+		for range n {
+			for v := range m.ValuesBetweenInclusiveSeq(from.B[j], to.B[j]) {
+				acc += v
+			}
+			if j++; j == len(from.B) {
+				j = 0
+			}
+		}
+		sink += acc
+	}}
+}
+
+func addRemoveLib(name string, m *multimap.Ordered[uint64], p keys.Set) rtcompare.Candidate {
+	j := 0
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		for range n {
+			k, v := p.B[j], absent(j)
+			m.AddValue(k, v)
+			m.RemoveValue(k, v)
+			if j++; j == len(p.B) {
+				j = 0
+			}
+		}
+		sink++
+	}}
+}
+
+func (d *data) buildLib(name string) rtcompare.Candidate {
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		for range n {
+			m := multimap.NewOrdered[uint64]()
+			for i, k := range d.c.Keys.B {
+				for _, v := range d.vals[d.offs[i]:d.offs[i+1]] {
+					m.AddValue(k, v)
+				}
+			}
+			sink += m.NumberOfKeys()
 		}
 	}}
 }
