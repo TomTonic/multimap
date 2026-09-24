@@ -1,5 +1,5 @@
 // Command summarize pools the results of comparisons that ran in several
-// processes (see -layoutseed and PROCS in the run scripts) and prints one row
+// processes (see cmd/bench and -layoutseed) and prints one row
 // per comparison: the median difference, the 95% interval across processes,
 // the spread between processes, and how that spread compares with the
 // interval a single rtcompare run reports.
@@ -21,6 +21,8 @@ import (
 	"math"
 	"os"
 	"slices"
+
+	"github.com/TomTonic/multimap/bench/stats"
 )
 
 type group struct {
@@ -49,11 +51,11 @@ func main() {
 	}
 	for _, k := range order {
 		g := groups[k]
-		s := summarize(g.deltas, g.halves, g.resolved)
+		s := stats.Summarize(g.deltas, g.halves, g.resolved)
 		if *asJSON {
 			if err := enc.Encode(struct {
 				Comparison string `json:"comparison"`
-				summary
+				stats.Summary
 			}{k, s}); err != nil {
 				fmt.Fprintln(os.Stderr, "summarize:", err)
 				os.Exit(1)
@@ -90,7 +92,7 @@ func read(path string, groups map[string]*group, order *[]string) error {
 		lo, _ := row["low"].(float64)
 		hi, _ := row["high"].(float64)
 		res, _ := row["resolved"].(bool)
-		k := groupKey(row)
+		k := stats.GroupKey(row)
 		g := groups[k]
 		if g == nil {
 			g = &group{key: k}
