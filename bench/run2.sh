@@ -8,7 +8,7 @@ go build -o results/nodesearch ./cmd/nodesearch
 go build -o results/compare ./cmd/compare
 : > results/memgc.jsonl
 for k in u64 str; do
-  for impl in none arena-art arena-flat ptr-art tidwall-btree plar-art go-map; do
+  for impl in none arena-art arena-flat ptr-art tidwall-btree plar-art plar-hot go-map; do
     ./results/memgc -impl $impl -keys $k >> results/memgc.jsonl
   done
 done

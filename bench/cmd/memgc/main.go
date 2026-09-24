@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	art "github.com/plar/go-adaptive-radix-tree/v2"
+	hot "github.com/plar/go-hot-trie"
 	"github.com/tidwall/btree"
 
 	"github.com/TomTonic/multimap/bench/keys"
@@ -31,7 +33,7 @@ import (
 )
 
 func main() {
-	impl := flag.String("impl", "none", "none|arena-art|arena-flat|ptr-art|tidwall-btree|plar-art|go-map|mm-art|mm-art-v2|mm-btree-inline|mm-btree-ptr|vset-array|vset-hash")
+	impl := flag.String("impl", "none", "none|arena-art|arena-flat|ptr-art|tidwall-btree|plar-art|plar-hot|go-map|mm-art|mm-art-v2|mm-btree-inline|mm-btree-ptr|vset-array|vset-hash")
 	kind := flag.String("keys", "u64", "u64 or str")
 	n := flag.Int("n", 1<<20, "number of keys")
 	cycles := flag.Int("cycles", 15, "forced GC cycles to time")
@@ -74,6 +76,12 @@ func main() {
 		t := art.New()
 		for i, key := range k {
 			t.Insert(art.Key(key), uint32(i))
+		}
+		keep = t
+	case "plar-hot":
+		t := hot.New()
+		for i, key := range k {
+			t.Insert(hot.Key(bytes.Clone(key)), uint32(i))
 		}
 		keep = t
 	case "go-map":

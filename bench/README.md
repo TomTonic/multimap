@@ -3,7 +3,8 @@
 This module benchmarks the library's ART-backed index against the
 alternatives a Go developer would otherwise reach for. It is a separate
 module so the library's `go.mod` does not inherit the benchmark
-dependencies (rtcompare, tidwall/btree, plar/go-adaptive-radix-tree).
+dependencies (rtcompare, tidwall/btree, plar/go-adaptive-radix-tree,
+plar/go-hot-trie).
 
 `proto/` holds the ART prototypes that led to the shipped design (pointer
 nodes, SWAR/popcount child search, path compression); `cmd/` holds the
@@ -15,7 +16,7 @@ not to document every step of the design process. The full iteration history
 
 ## What's compared, and why
 
-Three off-the-shelf alternatives are benchmarked next to this project's own
+Four off-the-shelf alternatives are benchmarked next to this project's own
 ART (the `ptr-art` prototype, which ships as `Ordered`). They were picked
 because each is pure Go (no cgo), actively maintained, and covers a shape of
 the design space this project's index has to justify itself against:
@@ -25,6 +26,7 @@ the design space this project's index has to justify itself against:
 | Go's built-in `map` | the standard unordered hash map | this library's own `Hashed` variant is built directly on it — the baseline for "what does ordering cost?" |
 | [tidwall/btree](https://github.com/tidwall/btree) | a widely used, actively maintained in-memory B-tree with generics | the standard off-the-shelf *ordered* Go container — the natural alternative to hand-rolling an ART when range queries matter |
 | [plar/go-adaptive-radix-tree](https://github.com/plar/go-adaptive-radix-tree) | the most established pure-Go ART implementation | the direct algorithmic peer — answers whether a purpose-built layout is worth it over an existing ART |
+| [plar/go-hot-trie](https://github.com/plar/go-hot-trie) | the only Go implementation of HOT (Height Optimized Trie), v0.1.2 | HOT keeps the fanout near 32 regardless of key distribution, which is exactly where ART is weak: sparse string keys make our tree twice as deep as random u64 keys |
 
 ## Running
 
@@ -33,6 +35,7 @@ the design space this project's index has to justify itself against:
 ./run2.sh   # memory/GC per candidate, in-node child-search strategies
 ./run3.sh   # realistic multimap: value sets, iterators, vs. tidwall/btree
 ./run4.sh–run7.sh  # internal design iterations (see git history)
+./run8.sh   # HOT vs. this project's ART; memory/GC of all candidates, 3 rounds
 ```
 
 Each scenario runs in its own process via `rtcompare.Compare` with A/B/B/A
@@ -70,14 +73,31 @@ the two ordered candidates are compared:
 | str, 4K      |           1 344 |           365 |
 | str, 1M      |           5 497 |         2 264 |
 
+### HOT against this project's ART (`./run8.sh`, 2026-09-24)
+
+Measured as one interleaved rtcompare pair per cell (ART / HOT in ns/op; all
+differences resolved). HOT has no seek in v0.1.2, so there is no range-scan
+row, and its SIMD search does not run on arm64, so this is its scalar path.
+
+| keys, n | get          | miss         | build              |
+|---------|--------------|--------------|--------------------|
+| u64, 4K | 16.6 / 57.4  | 8.6 / 61.6   | 0.20 / 0.80 ms     |
+| u64, 1M | 107 / 466    | 44.3 / 469   |                    |
+| str, 4K | 53.1 / 75.5  | 41.2 / 70.6  | 0.43 / 1.34 ms     |
+| str, 1M | 296 / 464    | 180 / 401    |                    |
+
 ### Memory & GC, 1M keys, per key beyond the key corpus
 
-| candidate     | u64 heap B | u64 GC CPU/cycle | str heap B | str GC CPU/cycle |
-|---------------|-----------:|-----------------:|-----------:|------------------:|
-| multimap (ART)|         71 |           +241 ms |         99 |           +330 ms |
-| go-map        |         53 |           +153 ms |         73 |           +154 ms |
-| tidwall-btree |         36 |           +128 ms |         56 |           +152 ms |
-| plar-art      |        100 |           +377 ms |        127 |           +483 ms |
+GC CPU is per full cycle minus a baseline process that holds only the corpus;
+median of three round-robin rounds with 50 cycles each (`./run8.sh`).
+
+| candidate      | u64 heap B | u64 GC CPU/cycle | str heap B | str GC CPU/cycle |
+|----------------|-----------:|-----------------:|-----------:|-----------------:|
+| multimap (ART) |         71 |          +135 ms |         99 |          +195 ms |
+| go-map         |         53 |           +43 ms |         73 |           +54 ms |
+| tidwall-btree  |         36 |           +52 ms |         56 |           +68 ms |
+| plar-art       |        100 |          +213 ms |        127 |          +300 ms |
+| plar-hot       |         83 |           +90 ms |        100 |           +95 ms |
 
 ### Realistic multimap (`./run3.sh`): value sets, not bare keys
 
@@ -105,7 +125,10 @@ Each key holds a skewed number of values (50% hold 1, 35% hold 2-4, 12% hold
 
 Memory converges once real value sets are attached: at 1M keys, the ART
 multimap, `btree-inline` and `btree-ptr` all land between 160-206 B/key,
-because the value container dominates, not the key index.
+because the value container dominates, not the key index. GC cost does not
+converge: +176 ms (u64) and +245 ms (str) per cycle for the ART multimap
+against +88 ms for `btree-inline`, because the ART allocates one object per
+key where the B-tree packs up to 63 keys into one node array.
 
 ## What this means for picking a structure
 
@@ -129,6 +152,12 @@ because the value container dominates, not the key index.
   project's own ART. The specialization — inline value sets, tuned node
   fan-out, no separate leaf allocation for the value container — is what
   buys that gap; a generic ART library doesn't get it for free.
+- **plar/go-hot-trie** keeps its promise on tree height, but in this Go
+  implementation it does not turn into speed: this project's ART is 1.4-1.6x
+  faster on string lookups, 3.5-4.3x on u64 lookups and 3-4x faster to
+  build. Its heap is similar (it boxes each value in an `any`, as plar-art
+  does), and its GC cost is one half to two thirds of the ART's. Without a
+  seek it cannot serve range queries yet.
 - An **arena-allocated** version of the ART was prototyped and dropped: it
   was only 8-22% faster at 1M keys, and the memory safety it gives up
   (dangling indices fail silently on reuse) wasn't worth it for a

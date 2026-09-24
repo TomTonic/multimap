@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"strings"
 
 	art "github.com/plar/go-adaptive-radix-tree/v2"
+	hot "github.com/plar/go-hot-trie"
 	"github.com/tidwall/btree"
 
 	"github.com/TomTonic/multimap/bench/keys"
@@ -113,6 +115,7 @@ type fixtures struct {
 	ptr   *ptrart.Tree
 	bt    *btree.Map[string, uint32]
 	plar  art.Tree
+	hot   hot.Tree
 	m     map[string]uint32
 }
 
@@ -120,7 +123,7 @@ type fixtures struct {
 // (copies), as a multimap must.
 func build(c keys.Corpus) *fixtures {
 	f := &fixtures{c: c, arena: &arenaart.Tree{}, flat: &arenaflat.Tree{}, ptr: &ptrart.Tree{},
-		bt: btree.NewMap[string, uint32](0), plar: art.New(), m: map[string]uint32{}}
+		bt: btree.NewMap[string, uint32](0), plar: art.New(), hot: hot.New(), m: map[string]uint32{}}
 	for i, k := range c.Keys.B {
 		v := uint32(i)
 		f.arena.Put(k, v)
@@ -128,6 +131,7 @@ func build(c keys.Corpus) *fixtures {
 		f.ptr.Put(k, v)
 		f.bt.Set(string(k), v)
 		f.plar.Insert(art.Key(k), v)
+		f.hot.Insert(hot.Key(bytes.Clone(k)), v) // HOT keeps the caller's slice
 		f.m[string(k)] = v
 	}
 	return f
@@ -148,7 +152,8 @@ func (f *fixtures) verify() {
 		p, ok2 := f.ptr.Get(k)
 		b, ok3 := f.bt.Get(string(k))
 		x, ok4 := f.plar.Search(art.Key(k))
-		check(ok0 && fl == want && ok1 && ok2 && ok3 && ok4 && a == want && p == want && b == want && x.(uint32) == want, "hit", k)
+		h, ok5 := f.hot.Search(hot.Key(k))
+		check(ok0 && fl == want && ok1 && ok2 && ok3 && ok4 && ok5 && a == want && p == want && b == want && x.(uint32) == want && h.(uint32) == want, "hit", k)
 		if i < 2000 {
 			var sa, sf, sp, sb []uint32
 			f.arena.Scan(k, func(_ []byte, v uint32) bool { sa = append(sa, v); return len(sa) < scanLen })
@@ -165,7 +170,8 @@ func (f *fixtures) verify() {
 		_, ok3 := f.bt.Get(string(k))
 		_, ok4 := f.plar.Search(art.Key(k))
 		_, ok5 := f.m[string(k)]
-		check(!ok0 && !ok1 && !ok2 && !ok3 && !ok4 && !ok5, "miss", k)
+		_, ok6 := f.hot.Search(hot.Key(k))
+		check(!ok0 && !ok1 && !ok2 && !ok3 && !ok4 && !ok5 && !ok6, "miss", k)
 	}
 }
 
@@ -200,8 +206,8 @@ func (f *fixtures) pairs(op, a string) [][2]rtcompare.Candidate {
 // batches walk the whole probe sequence instead of re-probing a warm prefix.
 
 func (f *fixtures) gets(p keys.Set) []rtcompare.Candidate {
-	arena, flat, ptr, bt, pl, m := f.arena, f.flat, f.ptr, f.bt, f.plar, f.m
-	var ja, jf, jp, jb, jl, jm int
+	arena, flat, ptr, bt, pl, ht, m := f.arena, f.flat, f.ptr, f.bt, f.plar, f.hot, f.m
+	var ja, jf, jp, jb, jl, jh, jm int
 	next := func(j *int) {
 		*j++
 		if *j == len(p.B) {
@@ -253,6 +259,17 @@ func (f *fixtures) gets(p keys.Set) []rtcompare.Candidate {
 					acc += uint64(v.(uint32)) + 1
 				}
 				next(&jl)
+			}
+			sink += acc
+		}},
+		{Name: "plar-hot", Batch: func(n uint64) {
+			var acc uint64
+			for range n {
+				v, ok := ht.Search(hot.Key(p.B[jh]))
+				if ok {
+					acc += uint64(v.(uint32)) + 1
+				}
+				next(&jh)
 			}
 			sink += acc
 		}},
@@ -364,6 +381,15 @@ func (f *fixtures) builds() []rtcompare.Candidate {
 				t := art.New()
 				for i, key := range k {
 					t.Insert(art.Key(key), uint32(i))
+				}
+				sink += uint64(t.Size())
+			}
+		}},
+		{Name: "plar-hot", Batch: func(n uint64) {
+			for range n {
+				t := hot.New()
+				for i, key := range k {
+					t.Insert(hot.Key(bytes.Clone(key)), uint32(i))
 				}
 				sink += uint64(t.Size())
 			}
