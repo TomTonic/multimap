@@ -53,6 +53,7 @@ type result struct {
 	High       float64  `json:"high"`
 	Resolved   bool     `json:"resolved"`
 	NoiseFloor float64  `json:"noise_floor"`
+	InnerLoops uint64   `json:"inner_loops"`
 	Warnings   []string `json:"warnings"`
 }
 
@@ -75,6 +76,7 @@ func main() {
 	out := flag.String("out", "results/mm.jsonl", "JSON lines output")
 	aName := flag.String("a", "art", "candidate A")
 	only := flag.String("only", "", "comma-separated B candidates to run (default all)")
+	loopScale := flag.Float64("loopscale", 1, "multiply the calibrated operations per batch by this factor")
 	flag.Parse()
 
 	d := load(keys.Kind(*kind), *n)
@@ -112,6 +114,9 @@ func main() {
 				// would make the run take hours.)
 				opt.Collect.GCBetween = true
 			}
+			if *loopScale != 1 {
+				opt.Collect.InnerLoops = scaledLoops(a, b, opt.Collect, *loopScale)
+			}
 			fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", *kind, *n, op, a.Name, b.Name)
 			rep, err := rtcompare.Compare(a, b, opt)
 			if err != nil {
@@ -122,13 +127,29 @@ func main() {
 				Keys: *kind, N: *n, Op: op, A: a.Name, B: b.Name,
 				NsA: rep.NsPerOpA, NsB: rep.NsPerOpB, Delta: rep.Estimate.Delta,
 				Low: rep.Estimate.Low, High: rep.Estimate.High, Resolved: rep.Resolved,
-				NoiseFloor: rep.NoiseFloor, Warnings: rep.Warnings,
+				NoiseFloor: rep.NoiseFloor, InnerLoops: rep.ValidationA.InnerLoops, Warnings: rep.Warnings,
 			}); err != nil {
 				fail(err)
 			}
 		}
 	}
 	_ = sink
+}
+
+// scaledLoops calibrates both candidates the way rtcompare.Compare does, takes
+// the larger batch size as Compare would, and multiplies it by scale. Longer
+// batches average more cache and scheduler noise into every sample.
+func scaledLoops(a, b rtcompare.Candidate, c rtcompare.CollectOptions, scale float64) uint64 {
+	opt := rtcompare.CalibrationOptions{MaxQuantizationError: c.MaxQuantizationError, GCBetween: c.GCBetween}
+	var loops uint64
+	for _, x := range []rtcompare.Candidate{a, b} {
+		cal, err := rtcompare.CalibrateInnerLoops(x, opt)
+		if err != nil {
+			fail(err)
+		}
+		loops = max(loops, cal.InnerLoops)
+	}
+	return uint64(float64(loops)*scale + 0.5)
 }
 
 func load(kind keys.Kind, n int) *data {
