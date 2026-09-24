@@ -202,6 +202,9 @@ func (d *data) verify() {
 		if a0, c0 := sum(d.art.ValuesBetweenLinear(f, t)); a0 != a1 || c0 != c1 {
 			fail(fmt.Errorf("ValuesBetweenLinear mismatch for %q..%q", f, t))
 		}
+		if a0, c0 := sum(d.art.ValuesBetweenTouch(f, t)); a0 != a1 || c0 != c1 {
+			fail(fmt.Errorf("ValuesBetweenTouch mismatch for %q..%q", f, t))
+		}
 		a2, c2 := sum(d.btInline.ValuesBetween(f, t))
 		a3, c3 := sum(d.btPtr.ValuesBetween(f, t))
 		if a1 != a2 || a1 != a3 || c1 != c2 || c1 != c3 || c1 < rangeKeys {
@@ -236,6 +239,7 @@ func (d *data) candidates(op string) []rtcompare.Candidate {
 		return []rtcompare.Candidate{
 			valuesBetweenArt("art", d.art, d.from, d.to), valuesBetweenArt2("art-v2", d.art2, d.from, d.to), valuesBetweenLib("lib", d.lib, d.from, d.to),
 			valuesBetweenArtLinear("art-linear", d.art, d.from, d.to),
+			valuesBetweenArtTouch("art-touch", d.art, d.from, d.to),
 			valuesBetweenBtInline("btree-inline", d.btInline, d.from, d.to), valuesBetweenBtPtr("btree-ptr", d.btPtr, d.from, d.to)}
 	case "addRemove":
 		return []rtcompare.Candidate{
@@ -297,6 +301,25 @@ func valuesBetweenArtLinear(name string, m *mmart.Map[uint64], from, to keys.Set
 		var acc uint64
 		for range n {
 			for v := range m.ValuesBetweenLinear(from.B[j], to.B[j]) {
+				acc += v
+			}
+			if j++; j == len(from.B) {
+				j = 0
+			}
+		}
+		sink += acc
+	}}
+}
+
+// valuesBetweenArtTouch measures the range scan that touches all children of
+// a node before descending. Like art-linear it shares the tree with "art" and
+// therefore starts half-way through the probes.
+func valuesBetweenArtTouch(name string, m *mmart.Map[uint64], from, to keys.Set) rtcompare.Candidate {
+	j := len(from.B) / 2
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		var acc uint64
+		for range n {
+			for v := range m.ValuesBetweenTouch(from.B[j], to.B[j]) {
 				acc += v
 			}
 			if j++; j == len(from.B) {

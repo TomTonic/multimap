@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"iter"
 	"math/bits"
+	"runtime"
 	"unsafe"
 
 	"github.com/TomTonic/multimap/bench/proto/swar"
@@ -492,7 +493,7 @@ func (t *Tree) scanOne(c *header, exact bool, from []byte, depth int, fn func(*l
 // bound only while on its path. A subtree strictly inside the range is visited
 // without any key comparison, so its leaves' keys (which live outside the leaf
 // for keys over 16 bytes) are never read.
-func (t *Tree) scanRange(n *header, from, to []byte, depth int, lo, hi bool, fn func(*leafHead) bool) bool {
+func (t *Tree) scanRange(n *header, from, to []byte, depth int, lo, hi, mlp bool, fn func(*leafHead) bool) bool {
 	if n == nil {
 		return true
 	}
@@ -547,7 +548,7 @@ func (t *Tree) scanRange(n *header, from, to []byte, depth int, lo, hi bool, fn 
 	if hi {
 		hiB = to[depth]
 	}
-	if !t.rangeChildren(n, from, to, depth, lo, hi, loB, hiB, fn) {
+	if !t.rangeChildren(n, from, to, depth, lo, hi, mlp, loB, hiB, fn) {
 		return false
 	}
 	return !hi // on to's path, everything after the hiB child is > to
@@ -555,9 +556,12 @@ func (t *Tree) scanRange(n *header, from, to []byte, depth int, lo, hi bool, fn 
 
 // rangeChildren visits the children with byte in [loB, hiB] in order. Only
 // the child for loB stays on from's path, only the one for hiB on to's.
-func (t *Tree) rangeChildren(n *header, from, to []byte, depth int, lo, hi bool, loB, hiB byte, fn func(*leafHead) bool) bool {
+func (t *Tree) rangeChildren(n *header, from, to []byte, depth int, lo, hi, mlp bool, loB, hiB byte, fn func(*leafHead) bool) bool {
 	visit := func(c *header, kb byte) bool {
-		return t.scanRange(c, from, to, depth+1, lo && kb == loB, hi && kb == hiB, fn)
+		return t.scanRange(c, from, to, depth+1, lo && kb == loB, hi && kb == hiB, mlp, fn)
+	}
+	if mlp {
+		touchChildren(n, loB, hiB)
 	}
 	var keys []byte
 	var child []*header
@@ -611,6 +615,60 @@ func (t *Tree) rangeChildren(n *header, from, to []byte, depth int, lo, hi bool,
 	return true
 }
 
+// touchChildren loads the first cache line of every child in [loB, hiB], and
+// for leaves also the line holding the value set, before the scan descends.
+// The loads are independent, so the CPU can have all their misses in flight
+// at once instead of taking them one after another.
+func touchChildren(n *header, loB, hiB byte) {
+	if loB > hiB { // empty range (from > to)
+		return
+	}
+	var acc uint8
+	touch := func(c *header) {
+		acc += uint8(c.kind)
+		if c.kind == kLeaf {
+			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTailOff))
+		}
+	}
+	switch n.kind {
+	case kN4:
+		x := asN4(n)
+		for i, kb := range x.keys[:x.count] {
+			if kb >= loB && kb <= hiB {
+				touch(x.child[i])
+			}
+		}
+	case kN11:
+		x := asN11(n)
+		for i, kb := range x.keys[:x.count] {
+			if kb >= loB && kb <= hiB {
+				touch(x.child[i])
+			}
+		}
+	case kN57:
+		x := asN57(n)
+		end := swar.Rank(&x.bitmap, hiB)
+		if swar.Has(&x.bitmap, hiB) {
+			end++
+		}
+		for _, c := range x.child[swar.Rank(&x.bitmap, loB):end] {
+			touch(c)
+		}
+	default:
+		x := asN256(n)
+		for k := int(loB); k <= int(hiB); k++ {
+			if c := x.child[k]; c != nil {
+				touch(c)
+			}
+		}
+	}
+	runtime.KeepAlive(acc) // keeps the loads from being optimized away
+}
+
+// leafTailOff is the offset of the last word of a leaf[uint64], which lies in
+// the value set.
+const leafTailOff = 72
+
 // Map is a multimap from byte-string keys to sets of T.
 type Map[T comparable] struct {
 	t Tree
@@ -657,7 +715,17 @@ func (m *Map[T]) ValuesFor(key []byte) iter.Seq[T] {
 // order.
 func (m *Map[T]) ValuesBetween(from, to []byte) iter.Seq[T] {
 	return func(yield func(T) bool) {
-		m.t.scanRange(m.t.root, from, to, 0, true, true, func(l *leafHead) bool {
+		m.t.scanRange(m.t.root, from, to, 0, true, true, false, func(l *leafHead) bool {
+			return vals[T](l).Each(yield)
+		})
+	}
+}
+
+// ValuesBetweenTouch is ValuesBetween with touchChildren before each
+// descent. It exists to measure whether overlapping the misses pays off.
+func (m *Map[T]) ValuesBetweenTouch(from, to []byte) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		m.t.scanRange(m.t.root, from, to, 0, true, true, true, func(l *leafHead) bool {
 			return vals[T](l).Each(yield)
 		})
 	}
