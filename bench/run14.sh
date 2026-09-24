@@ -8,7 +8,7 @@ OUT=results/mm-order.jsonl
 : > "$OUT"
 for n in 4096 1048576; do
   for first in false true; do
-    ./results/mmcompare -a lib -only art-touch -loopscale 1.5 -repeats 151 -libfirst=$first -keys str -n $n -ops valuesBetween -out $OUT 2> results/mm-order-str-$n-libfirst-$first.log
+    ./results/mmcompare -a lib -only art-touch -loopscale 1.5 -repeats 151 -libfirst=$first -keys str -n $n -ops valuesBetween -out $OUT $RT 2> results/mm-order-str-$n-libfirst-$first.log
   done
 done
 echo done

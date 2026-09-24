@@ -25,6 +25,7 @@ import (
 	"github.com/TomTonic/multimap/bench/proto/mmart"
 	"github.com/TomTonic/multimap/bench/proto/mmart2"
 	"github.com/TomTonic/multimap/bench/proto/mmbtree"
+	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -76,8 +77,6 @@ func main() {
 	out := flag.String("out", "results/mm.jsonl", "JSON lines output")
 	aName := flag.String("a", "art", "candidate A")
 	only := flag.String("only", "", "comma-separated B candidates to run (default all)")
-	loopScale := flag.Float64("loopscale", 1, "multiply the calibrated operations per batch by this factor")
-	repeats := flag.Int("repeats", 0, "timing samples per candidate (0: rtcompare's default)")
 	libFirst := flag.Bool("libfirst", false, "build the library's multimap before the prototypes instead of after them")
 	flag.Parse()
 
@@ -107,18 +106,12 @@ func main() {
 			if b.Name == a.Name || (*only != "" && !slices.Contains(strings.Split(*only, ","), b.Name)) {
 				continue
 			}
-			opt := rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001, Repeats: *repeats}}
-			if op == "build" {
-				// building allocates a whole structure per operation; collect
-				// between batches so one candidate's garbage is not charged to
-				// the other. (Not for addRemove: after warmAddRemove it hardly
-				// allocates, and a forced GC per batch over a 1M-key heap
-				// would make the run take hours.)
-				opt.Collect.GCBetween = true
-			}
-			if *loopScale != 1 {
-				opt.Collect.InnerLoops = scaledLoops(a, b, opt.Collect, *loopScale)
-			}
+			// Building allocates a whole structure per operation, so garbage is
+			// collected between batches and one candidate's garbage is not
+			// charged to the other. (Not for addRemove: after warmAddRemove it
+			// hardly allocates, and a forced GC per batch over a 1M-key heap
+			// would make the run take hours.)
+			opt := rtopt.Options(a, b, op == "build")
 			fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", *kind, *n, op, a.Name, b.Name)
 			rep, err := rtcompare.Compare(a, b, opt)
 			if err != nil {
@@ -136,22 +129,6 @@ func main() {
 		}
 	}
 	_ = sink
-}
-
-// scaledLoops calibrates both candidates the way rtcompare.Compare does, takes
-// the larger batch size as Compare would, and multiplies it by scale. Longer
-// batches average more cache and scheduler noise into every sample.
-func scaledLoops(a, b rtcompare.Candidate, c rtcompare.CollectOptions, scale float64) uint64 {
-	opt := rtcompare.CalibrationOptions{MaxQuantizationError: c.MaxQuantizationError, GCBetween: c.GCBetween}
-	var loops uint64
-	for _, x := range []rtcompare.Candidate{a, b} {
-		cal, err := rtcompare.CalibrateInnerLoops(x, opt)
-		if err != nil {
-			fail(err)
-		}
-		loops = max(loops, cal.InnerLoops)
-	}
-	return uint64(float64(loops)*scale + 0.5)
 }
 
 // load builds every multimap from the same corpus. The build order decides
@@ -240,6 +217,9 @@ func (d *data) verify() {
 		if a0, c0 := sum(d.art.ValuesBetweenTouch(f, t)); a0 != a1 || c0 != c1 {
 			fail(fmt.Errorf("ValuesBetweenTouch mismatch for %q..%q", f, t))
 		}
+		if a0, c0 := sum(d.art.ValuesBetweenTouchCopy(f, t)); a0 != a1 || c0 != c1 {
+			fail(fmt.Errorf("ValuesBetweenTouchCopy mismatch for %q..%q", f, t))
+		}
 		a2, c2 := sum(d.btInline.ValuesBetween(f, t))
 		a3, c3 := sum(d.btPtr.ValuesBetween(f, t))
 		if a1 != a2 || a1 != a3 || c1 != c2 || c1 != c3 || c1 < rangeKeys {
@@ -275,6 +255,7 @@ func (d *data) candidates(op string) []rtcompare.Candidate {
 			valuesBetweenArt("art", d.art, d.from, d.to), valuesBetweenArt2("art-v2", d.art2, d.from, d.to), valuesBetweenLib("lib", d.lib, d.from, d.to),
 			valuesBetweenArtLinear("art-linear", d.art, d.from, d.to),
 			valuesBetweenArtTouch("art-touch", d.art, d.from, d.to),
+			valuesBetweenArtTouchCopy("art-touch-copy", d.art, d.from, d.to),
 			valuesBetweenBtInline("btree-inline", d.btInline, d.from, d.to), valuesBetweenBtPtr("btree-ptr", d.btPtr, d.from, d.to)}
 	case "addRemove":
 		return []rtcompare.Candidate{
@@ -355,6 +336,25 @@ func valuesBetweenArtTouch(name string, m *mmart.Map[uint64], from, to keys.Set)
 		var acc uint64
 		for range n {
 			for v := range m.ValuesBetweenTouch(from.B[j], to.B[j]) {
+				acc += v
+			}
+			if j++; j == len(from.B) {
+				j = 0
+			}
+		}
+		sink += acc
+	}}
+}
+
+// valuesBetweenArtTouchCopy measures art-touch with the former, copying
+// iteration of hash-spilled value sets. It shares the tree with "art-touch",
+// so its cursor starts a quarter of the way through the probes.
+func valuesBetweenArtTouchCopy(name string, m *mmart.Map[uint64], from, to keys.Set) rtcompare.Candidate {
+	j := len(from.B) / 4
+	return rtcompare.Candidate{Name: name, Batch: func(n uint64) {
+		var acc uint64
+		for range n {
+			for v := range m.ValuesBetweenTouchCopy(from.B[j], to.B[j]) {
 				acc += v
 			}
 			if j++; j == len(from.B) {

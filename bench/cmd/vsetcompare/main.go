@@ -20,6 +20,7 @@ import (
 
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/bench/proto/vset"
+	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -81,8 +82,7 @@ func main() {
 			panic("unknown op " + op)
 		}
 		fmt.Fprintf(os.Stderr, "== n=%d %s: %s vs %s\n", *n, op, a.Name, b.Name)
-		rep, err := rtcompare.Compare(a, b, rtcompare.CompareOptions{
-			Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001}})
+		rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, false))
 		if err != nil {
 			panic(err)
 		}

@@ -200,3 +200,18 @@ func (s *Set[T]) Each(yield func(T) bool) bool {
 	}
 	return true
 }
+
+// EachCopy is Each as it was before 2026-09-24: a hash-spilled set is copied
+// (Set3.ImmutableRange) before it is iterated. It stays only so the benchmark
+// can measure what dropping the copy is worth.
+func (s *Set[T]) EachCopy(yield func(T) bool) bool {
+	if s.ext == nil || s.cap > 0 {
+		return s.Each(yield)
+	}
+	for x := range s.hash().ImmutableRange() {
+		if !yield(x) {
+			return false
+		}
+	}
+	return true
+}

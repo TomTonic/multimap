@@ -24,6 +24,7 @@ import (
 	"github.com/TomTonic/multimap/bench/proto/arenaart"
 	"github.com/TomTonic/multimap/bench/proto/arenaflat"
 	"github.com/TomTonic/multimap/bench/proto/ptrart"
+	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -79,14 +80,9 @@ func main() {
 			if !want(pair[1].Name) {
 				continue
 			}
-			// HOWTO: a tie rate of ~18% at the default showed up in the smoke test,
-			// so batches are ten times longer than the default.
-			opt := rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001}}
-			if op == "build" {
-				// building allocates; collect garbage between batches so one
-				// candidate's garbage is not charged to the other
-				opt.Collect.GCBetween = true
-			}
+			// building allocates; collect garbage between batches so one
+			// candidate's garbage is not charged to the other
+			opt := rtopt.Options(pair[0], pair[1], op == "build")
 			fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", *kind, *n, op, pair[0].Name, pair[1].Name)
 			rep, err := rtcompare.Compare(pair[0], pair[1], opt)
 			if err != nil {

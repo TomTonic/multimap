@@ -15,6 +15,7 @@ import (
 	"slices"
 
 	"github.com/TomTonic/multimap/bench/proto/swar"
+	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -72,8 +73,8 @@ func main() {
 		probes := makeProbes(c.capacity)
 		check(probes, c.a.find, c.b.find)
 		fmt.Fprintf(os.Stderr, "== capacity %d: %s vs %s\n", c.capacity, c.a.name, c.b.name)
-		rep, err := rtcompare.Compare(batchFor(c.a.name, probes), batchFor(c.b.name, probes),
-			rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001}})
+		a, b := batchFor(c.a.name, probes), batchFor(c.b.name, probes)
+		rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, false))
 		if err != nil {
 			panic(err)
 		}

@@ -721,6 +721,16 @@ func (m *Map[T]) ValuesBetween(from, to []byte) iter.Seq[T] {
 	}
 }
 
+// ValuesBetweenTouchCopy is ValuesBetweenTouch with the former value-set
+// iteration that copies hash-spilled sets (vset.EachCopy).
+func (m *Map[T]) ValuesBetweenTouchCopy(from, to []byte) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		m.t.scanRange(m.t.root, from, to, 0, true, true, true, func(l *leafHead) bool {
+			return vals[T](l).EachCopy(yield)
+		})
+	}
+}
+
 // ValuesBetweenTouch is ValuesBetween with touchChildren before each
 // descent. It exists to measure whether overlapping the misses pays off.
 func (m *Map[T]) ValuesBetweenTouch(from, to []byte) iter.Seq[T] {

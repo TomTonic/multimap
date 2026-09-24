@@ -9,14 +9,14 @@ go build -o results/memgc ./cmd/memgc
 OUT=results/hot.jsonl
 : > "$OUT"
 for k in u64 str; do
-  ./results/compare -a ptr-art -only plar-hot -keys $k -n 4096    -ops get,miss,build -out $OUT 2> results/hot-$k-4096.log
-  ./results/compare -a ptr-art -only plar-hot -keys $k -n 1048576 -ops get,miss       -out $OUT 2> results/hot-$k-1M.log
+  ./results/compare -a ptr-art -only plar-hot -keys $k -n 4096    -ops get,miss,build -out $OUT $RT 2> results/hot-$k-4096.log
+  ./results/compare -a ptr-art -only plar-hot -keys $k -n 1048576 -ops get,miss       -out $OUT $RT 2> results/hot-$k-1M.log
 done
 : > results/memgc3.jsonl
 for round in 1 2 3; do
   for k in u64 str; do
     for impl in none ptr-art tidwall-btree plar-art plar-hot go-map mm-art mm-btree-inline mm-btree-ptr; do
-      ./results/memgc -impl $impl -keys $k -cycles 50 >> results/memgc3.jsonl
+      ./results/memgc -impl $impl -keys $k -cycles 50 $MEMGC >> results/memgc3.jsonl
     done
   done
 done

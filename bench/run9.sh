@@ -8,7 +8,7 @@ OUT=results/mm-touch.jsonl
 : > "$OUT"
 for k in u64 str; do
   for n in 4096 1048576; do
-    ./results/mmcompare -a art-touch -only art,btree-inline -keys $k -n $n -ops valuesBetween -out $OUT 2> results/mm-touch-$k-$n.log
+    ./results/mmcompare -a art-touch -only art,btree-inline -keys $k -n $n -ops valuesBetween -out $OUT $RT 2> results/mm-touch-$k-$n.log
   done
 done
 echo done

@@ -8,7 +8,7 @@ OUT=results/mm-range2.jsonl
 : > "$OUT"
 for k in u64 str; do
   for n in 4096 1048576; do
-    ./results/mmcompare -keys $k -n $n -ops valuesBetween -out $OUT 2> results/mm-range2-$k-$n.log
+    ./results/mmcompare -keys $k -n $n -ops valuesBetween -out $OUT $RT 2> results/mm-range2-$k-$n.log
   done
 done
 echo done

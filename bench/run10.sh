@@ -8,7 +8,7 @@ OUT=results/mm-touch-size.jsonl
 : > "$OUT"
 for k in u64 str; do
   for n in 16384 65536 262144; do
-    ./results/mmcompare -a art-touch -only art -keys $k -n $n -ops valuesBetween -out $OUT 2> results/mm-touch-size-$k-$n.log
+    ./results/mmcompare -a art-touch -only art -keys $k -n $n -ops valuesBetween -out $OUT $RT 2> results/mm-touch-size-$k-$n.log
   done
 done
 echo done

@@ -37,7 +37,9 @@ func main() {
 	kind := flag.String("keys", "u64", "u64 or str")
 	n := flag.Int("n", 1<<20, "number of keys")
 	cycles := flag.Int("cycles", 15, "forced GC cycles to time")
+	cycleScale := flag.Float64("cyclescale", 1, "multiply -cycles by this factor")
 	flag.Parse()
+	*cycles = int(float64(*cycles)**cycleScale + 0.5)
 
 	c := keys.Generate(keys.Kind(*kind), *n, 0x5EED)
 	vals, offs := keys.Values(*n, 0xFA11) // part of the baseline, like the corpus
