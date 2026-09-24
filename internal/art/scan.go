@@ -3,6 +3,8 @@ package art
 import (
 	"bytes"
 	"math/bits"
+	"runtime"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
 )
@@ -15,9 +17,10 @@ type Bounds struct {
 }
 
 // scan calls fn for every leaf within b, in ascending key order, until fn
-// returns false.
-func (t *Tree) scan(b *Bounds, fn func(*leafHead) bool) {
-	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, fn)
+// returns false. leafTail is the offset of the last byte of a leaf, which
+// the scan touches ahead (see touchChildren).
+func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
+	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, fn)
 }
 
 // scanRange visits the leaves of the subtree n within b in order and returns
@@ -27,7 +30,7 @@ func (t *Tree) scan(b *Bounds, fn func(*leafHead) bool) {
 // are checked structurally: a node's path and child bytes are compared with a
 // bound only while on its path, so a subtree strictly inside the range is
 // visited without reading a single key.
-func scanRange(n *header, b *Bounds, depth int, lo, hi bool, fn func(*leafHead) bool) bool {
+func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, fn func(*leafHead) bool) bool {
 	if n == nil {
 		return true
 	}
@@ -80,7 +83,8 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, fn func(*leafHead) 
 	if hi {
 		hiB = b.To[depth]
 	}
-	if !scanChildren(n, b, depth, lo, hi, loB, hiB, fn) {
+	touchChildren(n, loB, hiB, leafTail)
+	if !scanChildren(n, b, depth, lo, hi, loB, hiB, leafTail, fn) {
 		return false
 	}
 	return !hi // on To's path, everything after the child for hiB is above To
@@ -102,9 +106,9 @@ func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(*leafHead) bool) bool
 
 // scanChildren visits the children with byte in [loB, hiB] in order. Only the
 // child for loB stays on From's path, only the one for hiB on To's.
-func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, fn func(*leafHead) bool) bool {
+func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, fn func(*leafHead) bool) bool {
 	visit := func(c *header, k byte) bool {
-		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, fn)
+		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, fn)
 	}
 	switch n.kind {
 	case kN25, kN57:
@@ -149,6 +153,70 @@ func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, f
 		}
 	}
 	return true
+}
+
+// touchChildren reads one byte from the start of every child of n with byte in
+// [loB, hiB], and from leaves also the byte at leafTail, which lies in the
+// value set. The scan would otherwise take the cache misses for these objects
+// one after another, each only once it has finished the previous child's
+// subtree. These loads do not depend on each other, so the CPU keeps all their
+// misses in flight at once. A node with fewer than two children in range has
+// nothing to overlap and is skipped.
+//
+// Touching is unconditional: once a tree no longer fits in the cache it makes
+// range scans up to 20% faster, while a tree that stays in the cache loses at
+// most about 4% (bench/README.md). Where that line lies depends on the cache
+// size and on what else the program keeps in it, so no fixed tree size could
+// draw it.
+func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
+	if loB >= hiB { // at most one child in range
+		return
+	}
+	var acc uint8
+	touch := func(c *header) {
+		acc += uint8(c.kind)
+		if c.kind == kLeaf {
+			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTail))
+		}
+	}
+	switch n.kind {
+	case kN25, kN57:
+		bm, child := bitmapOf(n)
+		end := swar.Rank(bm, hiB)
+		if swar.Has(bm, hiB) {
+			end++
+		}
+		start := swar.Rank(bm, loB)
+		if end-start < 2 {
+			return
+		}
+		for _, c := range child[start:end] {
+			touch(c)
+		}
+	case kN256:
+		x := asN256(n)
+		for k := int(loB); k <= int(hiB); k++ {
+			if c := x.child[k]; c != nil {
+				touch(c)
+			}
+		}
+	default:
+		keys, child := sorted(n)
+		start, end := 0, len(keys)
+		for start < end && keys[start] < loB {
+			start++
+		}
+		for end > start && keys[end-1] > hiB {
+			end--
+		}
+		if end-start < 2 {
+			return
+		}
+		for _, c := range child[start:end] {
+			touch(c)
+		}
+	}
+	runtime.KeepAlive(acc) // keeps the loads from being optimized away
 }
 
 // Contains reports whether key lies within b. Unordered structures use it to

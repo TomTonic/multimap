@@ -63,16 +63,20 @@ func (m *Map[T]) Values(key []byte) *vset.Set[T] {
 	return nil
 }
 
+// leafTail is the offset of the last byte of a leaf[T], which the scan
+// touches ahead (see touchChildren).
+func leafTail[T comparable]() uintptr { return unsafe.Sizeof(leaf[T]{}) - 1 }
+
 // Range calls fn for every key within b, in ascending key order, until fn
 // returns false. The key and the set belong to the map: fn must not modify or
 // retain them, and must not modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte, vals *vset.Set[T]) bool) {
-	m.t.scan(b, func(l *leafHead) bool { return fn(l.key(), vals[T](l)) })
+	m.t.scan(b, leafTail[T](), func(l *leafHead) bool { return fn(l.key(), vals[T](l)) })
 }
 
 // RangeValues calls yield for every value of every key within b, key by key
 // in ascending key order, until yield returns false. It is Range without the
 // per-key callback, for callers that need only the values.
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
-	m.t.scan(b, func(l *leafHead) bool { return vals[T](l).Each(yield) })
+	m.t.scan(b, leafTail[T](), func(l *leafHead) bool { return vals[T](l).Each(yield) })
 }

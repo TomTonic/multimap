@@ -224,6 +224,20 @@ func checkRange(t *testing.T, m *Map[uint64], ref reference, sorted []string, b 
 	}
 }
 
+// TestLeafTail makes sure that range queries touch ahead only memory that
+// belongs to the leaf, for any value type. It covers the scan of the ART behind
+// multimap.Ordered, which reads the last byte of every leaf it is about to
+// visit: that byte must be the leaf's last one for uint64 values (80 B leaf)
+// and for string values (104 B leaf), whose value sets differ in size.
+func TestLeafTail(t *testing.T) {
+	if got := leafTail[uint64](); got != 79 {
+		t.Fatalf("leafTail[uint64] = %d, want 79", got)
+	}
+	if got := leafTail[string](); got != 103 {
+		t.Fatalf("leafTail[string] = %d, want 103", got)
+	}
+}
+
 // checkInvariants walks the whole tree and fails on any node that violates
 // the structure insert and delete must maintain.
 func checkInvariants(t *testing.T, tr *Tree) {

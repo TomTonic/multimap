@@ -166,7 +166,8 @@ func (d *data) fill(m mmAPI) {
 	}
 }
 
-// verify makes sure all three answer identically before anything is timed.
+// verify makes sure every multimap and scan variant answers identically
+// before anything is timed, so a fast wrong answer cannot win.
 func (d *data) verify() {
 	sum := func(s iter.Seq[uint64]) (a, c uint64) {
 		for v := range s {
