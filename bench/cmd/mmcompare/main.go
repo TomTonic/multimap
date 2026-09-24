@@ -77,6 +77,7 @@ func main() {
 	aName := flag.String("a", "art", "candidate A")
 	only := flag.String("only", "", "comma-separated B candidates to run (default all)")
 	loopScale := flag.Float64("loopscale", 1, "multiply the calibrated operations per batch by this factor")
+	repeats := flag.Int("repeats", 0, "timing samples per candidate (0: rtcompare's default)")
 	flag.Parse()
 
 	d := load(keys.Kind(*kind), *n)
@@ -105,7 +106,7 @@ func main() {
 			if b.Name == a.Name || (*only != "" && !slices.Contains(strings.Split(*only, ","), b.Name)) {
 				continue
 			}
-			opt := rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001}}
+			opt := rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{MaxQuantizationError: 0.0001, Repeats: *repeats}}
 			if op == "build" {
 				// building allocates a whole structure per operation; collect
 				// between batches so one candidate's garbage is not charged to

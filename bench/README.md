@@ -132,7 +132,7 @@ converge: +176 ms (u64) and +245 ms (str) per cycle for the ART multimap
 against +88 ms for `btree-inline`, because the ART allocates one object per
 key where the B-tree packs up to 63 keys into one node array.
 
-### Range scan that touches children ahead (`./run9.sh`–`./run12.sh`, 2026-09-24)
+### Range scan that touches children ahead (`./run9.sh`–`./run13.sh`, 2026-09-24)
 
 A scan otherwise takes the cache misses for a node's children one after
 another. Reading one byte of every child in range before descending lets the
@@ -140,21 +140,28 @@ CPU keep those misses in flight at once. The library now always does this,
 skipping nodes with fewer than two children in range. The tables above were
 measured before, without it. Difference against the same scan without
 touching (positive = touching is faster; n.r. = within noise). The library
-column compares `Ordered` with the prototype's plain scan (`./run12.sh`):
+column compares `Ordered` with the prototype's plain scan and gives the range
+over three runs (`./run11.sh`–`./run13.sh`):
 
 | keys | 4K    | 16K   | 64K  | 256K  | 1M    | library `Ordered`, 4K / 1M |
 |------|-------|-------|------|-------|-------|----------------------------|
-| u64  | n.r.  | n.r.  | n.r. | +14%  | +19%  | n.r. / +15%                |
-| str  | -4%   | n.r.  | +8%  | +16%  | +20%  | -6% / +19%                 |
+| u64  | n.r.  | n.r.  | n.r. | +14%  | +19%  | -3 to -4% / +14 to +16%    |
+| str  | -4%   | n.r.  | +8%  | +16%  | +20%  | -6 to -11% / +14 to +19%   |
 
 Where the gain starts depends on the cache size and on what else the program
 keeps in the cache, so the library touches unconditionally: a tree that stays
 cached loses at most about 4% to touching, one that does not gains up to 20%.
 With touching, the ART ties `btree-inline` on u64 keys at 1M and trails it by
 24% on str keys at 1M (previously 54%). Against the prototype's touching scan
-the library is 2.3% slower on str keys at 1M; the other sizes are within
-noise. Several runs reported the machine drifting by 3-30% within a run, so
-single percentages here are less reliable than the direction of each result.
+the library is 5-6% slower on str keys at 4K and 2-9% at 1M, 1-3% on u64 keys
+at 4K, and within noise on u64 keys at 1M. That gap predates touching and is
+not explained yet.
+
+At 1M keys, the three runs of the same pair disagree by more than each run's
+interval allows (str, library vs. touching prototype: -9%, -2%, -6%, each
+within about ±2%). Every process builds its trees anew, and where they land
+in memory shifts the result. A single-digit difference at 1M therefore needs
+several processes before it means anything; the intervals of 4K runs overlap.
 
 ## What this means for picking a structure
 
