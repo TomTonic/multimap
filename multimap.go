@@ -29,10 +29,12 @@
 // lock once returned. The Seq form returns an iterator (iter.Seq) over the
 // stored data without copying. It yields the values of each key in turn, so a
 // value stored under several keys is yielded once per key, whereas the set
-// forms hold it once. On a synchronized multimap, a Seq iterator holds the
-// read lock for the whole loop: the loop body must not call any method of the
-// same multimap (that can deadlock), and a long loop delays writers. Use the
-// set forms when the loop body needs the multimap or runs long.
+// forms hold it once. The loop body must not modify the multimap it iterates
+// over; what the loop then yields is unspecified. On a synchronized multimap, a
+// Seq iterator holds the read lock for the whole loop: the loop body must not
+// call any method of the same multimap (that can deadlock), and a long loop
+// delays writers. Use the set forms when the loop body needs the multimap or
+// runs long.
 //
 // # Key order
 //

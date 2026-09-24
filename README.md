@@ -47,7 +47,8 @@ Every read method exists twice:
 - The `Seq` form (`ValuesForSeq`, `ValuesBetweenInclusiveSeq`, `AllKeysSeq`,
   ...) returns an `iter.Seq` over the stored data without copying. It yields
   the values key by key, so a value stored under several keys is yielded once
-  per key. Keys yielded by `AllKeysSeq` must not be modified or retained.
+  per key. Keys yielded by `AllKeysSeq` must not be modified or retained, and
+  the loop body must not modify the multimap it iterates over.
 
 On a synchronized multimap, a `Seq` iterator holds the read lock for the whole
 loop. The loop body must not call any method of the same multimap (this can

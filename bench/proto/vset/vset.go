@@ -160,7 +160,7 @@ func (s *Set[T]) Remove(v T) bool {
 		s.n--
 		if s.n <= ArrayBack {
 			a := make([]T, 0, ArrayBack+ArrayBack/2)
-			for x := range h.ImmutableRange() {
+			for x := range h.MutableRange() {
 				a = append(a, x)
 			}
 			s.setArray(a) // setArray keeps the spare capacity
@@ -192,7 +192,7 @@ func (s *Set[T]) Each(yield func(T) bool) bool {
 			}
 		}
 	default:
-		for x := range s.hash().ImmutableRange() {
+		for x := range s.hash().MutableRange() {
 			if !yield(x) {
 				return false
 			}

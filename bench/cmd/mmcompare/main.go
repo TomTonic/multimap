@@ -78,9 +78,10 @@ func main() {
 	only := flag.String("only", "", "comma-separated B candidates to run (default all)")
 	loopScale := flag.Float64("loopscale", 1, "multiply the calibrated operations per batch by this factor")
 	repeats := flag.Int("repeats", 0, "timing samples per candidate (0: rtcompare's default)")
+	libFirst := flag.Bool("libfirst", false, "build the library's multimap before the prototypes instead of after them")
 	flag.Parse()
 
-	d := load(keys.Kind(*kind), *n)
+	d := load(keys.Kind(*kind), *n, *libFirst)
 	w, err := os.OpenFile(*out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		fail(err)
@@ -153,19 +154,30 @@ func scaledLoops(a, b rtcompare.Candidate, c rtcompare.CollectOptions, scale flo
 	return uint64(float64(loops)*scale + 0.5)
 }
 
-func load(kind keys.Kind, n int) *data {
+// load builds every multimap from the same corpus. The build order decides
+// where each one lands on the heap, which measurably shifts the comparisons;
+// libFirst builds the library's multimap first instead of last.
+func load(kind keys.Kind, n int, libFirst bool) *data {
 	d := &data{c: keys.Generate(kind, n, 0x5EED)}
 	d.vals, d.offs = keys.Values(n, 0xFA11)
 	d.art, d.art2 = &mmart.Map[uint64]{}, &mmart2.Map[uint64]{}
 	d.btInline, d.btPtr = &mmbtree.Inline[uint64]{}, &mmbtree.Ptr[uint64]{}
+	d.lib = multimap.NewOrdered[uint64]()
+	buildLib := func() {
+		for i, k := range d.c.Keys.B {
+			for _, v := range d.vals[d.offs[i]:d.offs[i+1]] {
+				d.lib.AddValue(k, v)
+			}
+		}
+	}
+	if libFirst {
+		buildLib()
+	}
 	for _, m := range []mmAPI{d.art, d.art2, d.btInline, d.btPtr} {
 		d.fill(m)
 	}
-	d.lib = multimap.NewOrdered[uint64]()
-	for i, k := range d.c.Keys.B {
-		for _, v := range d.vals[d.offs[i]:d.offs[i+1]] {
-			d.lib.AddValue(k, v)
-		}
+	if !libFirst {
+		buildLib()
 	}
 
 	sorted := keys.Sorted(d.c.Keys)
