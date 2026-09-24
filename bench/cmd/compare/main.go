@@ -21,6 +21,7 @@ import (
 	"github.com/tidwall/btree"
 
 	"github.com/TomTonic/multimap/bench/keys"
+	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/multimap/bench/proto/arenaart"
 	"github.com/TomTonic/multimap/bench/proto/arenaflat"
 	"github.com/TomTonic/multimap/bench/proto/ptrart"
@@ -47,6 +48,7 @@ type result struct {
 	NoiseFloor float64  `json:"noise_floor"`
 	AutoCorr   float64  `json:"autocorr"`
 	InnerLoops uint64   `json:"inner_loops"`
+	LayoutSeed uint64   `json:"layout_seed"`
 	Warnings   []string `json:"warnings"`
 }
 
@@ -94,7 +96,7 @@ func main() {
 				NsA: rep.NsPerOpA, NsB: rep.NsPerOpB,
 				Delta: rep.Estimate.Delta, Low: rep.Estimate.Low, High: rep.Estimate.High,
 				Resolved: rep.Resolved, NoiseFloor: rep.NoiseFloor, AutoCorr: rep.Autocorrelation,
-				InnerLoops: rep.ValidationA.InnerLoops, Warnings: rep.Warnings,
+				InnerLoops: rep.ValidationA.InnerLoops, LayoutSeed: layout.Seed(), Warnings: rep.Warnings,
 			}
 			if err := json.NewEncoder(w).Encode(r); err != nil {
 				fail(err)
@@ -115,20 +117,28 @@ type fixtures struct {
 	m     map[string]uint32
 }
 
-// build inserts the corpus into every structure. All of them own their keys
-// (copies), as a multimap must.
+// build inserts the corpus into every structure, key by key, so their
+// allocations interleave. All of them own their keys (copies), as a multimap
+// must. With -layoutseed the structures take turns in a random order behind a
+// random spacer.
 func build(c keys.Corpus) *fixtures {
 	f := &fixtures{c: c, arena: &arenaart.Tree{}, flat: &arenaflat.Tree{}, ptr: &ptrart.Tree{},
 		bt: btree.NewMap[string, uint32](0), plar: art.New(), hot: hot.New(), m: map[string]uint32{}}
+	puts := []func(k []byte, v uint32){
+		func(k []byte, v uint32) { f.arena.Put(k, v) },
+		func(k []byte, v uint32) { f.flat.Put(k, v) },
+		func(k []byte, v uint32) { f.ptr.Put(k, v) },
+		func(k []byte, v uint32) { f.bt.Set(string(k), v) },
+		func(k []byte, v uint32) { f.plar.Insert(art.Key(k), v) },
+		func(k []byte, v uint32) { f.hot.Insert(hot.Key(bytes.Clone(k)), v) }, // HOT keeps the caller's slice
+		func(k []byte, v uint32) { f.m[string(k)] = v },
+	}
+	layout.Shuffle(puts)
+	layout.Spacer()
 	for i, k := range c.Keys.B {
-		v := uint32(i)
-		f.arena.Put(k, v)
-		f.flat.Put(k, v)
-		f.ptr.Put(k, v)
-		f.bt.Set(string(k), v)
-		f.plar.Insert(art.Key(k), v)
-		f.hot.Insert(hot.Key(bytes.Clone(k)), v) // HOT keeps the caller's slice
-		f.m[string(k)] = v
+		for _, put := range puts {
+			put(k, uint32(i))
+		}
 	}
 	return f
 }

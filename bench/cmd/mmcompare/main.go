@@ -22,6 +22,7 @@ import (
 
 	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
+	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/multimap/bench/proto/mmart"
 	"github.com/TomTonic/multimap/bench/proto/mmart2"
 	"github.com/TomTonic/multimap/bench/proto/mmbtree"
@@ -55,6 +56,7 @@ type result struct {
 	Resolved   bool     `json:"resolved"`
 	NoiseFloor float64  `json:"noise_floor"`
 	InnerLoops uint64   `json:"inner_loops"`
+	LayoutSeed uint64   `json:"layout_seed"`
 	Warnings   []string `json:"warnings"`
 }
 
@@ -77,7 +79,7 @@ func main() {
 	out := flag.String("out", "results/mm.jsonl", "JSON lines output")
 	aName := flag.String("a", "art", "candidate A")
 	only := flag.String("only", "", "comma-separated B candidates to run (default all)")
-	libFirst := flag.Bool("libfirst", false, "build the library's multimap before the prototypes instead of after them")
+	libFirst := flag.Bool("libfirst", false, "build the library's multimap before the prototypes instead of after them (ignored with -layoutseed)")
 	flag.Parse()
 
 	d := load(keys.Kind(*kind), *n, *libFirst)
@@ -122,7 +124,7 @@ func main() {
 				Keys: *kind, N: *n, Op: op, A: a.Name, B: b.Name,
 				NsA: rep.NsPerOpA, NsB: rep.NsPerOpB, Delta: rep.Estimate.Delta,
 				Low: rep.Estimate.Low, High: rep.Estimate.High, Resolved: rep.Resolved,
-				NoiseFloor: rep.NoiseFloor, InnerLoops: rep.ValidationA.InnerLoops, Warnings: rep.Warnings,
+				NoiseFloor: rep.NoiseFloor, InnerLoops: rep.ValidationA.InnerLoops, LayoutSeed: layout.Seed(), Warnings: rep.Warnings,
 			}); err != nil {
 				fail(err)
 			}
@@ -131,9 +133,11 @@ func main() {
 	_ = sink
 }
 
-// load builds every multimap from the same corpus. The build order decides
-// where each one lands on the heap, which measurably shifts the comparisons;
-// libFirst builds the library's multimap first instead of last.
+// load builds every multimap from the same corpus, one after another. The
+// build order decides where each one lands on the heap, which measurably
+// shifts the comparisons: libFirst builds the library's multimap first
+// instead of last, and -layoutseed shuffles the order and puts a random spacer
+// before each build.
 func load(kind keys.Kind, n int, libFirst bool) *data {
 	d := &data{c: keys.Generate(kind, n, 0x5EED)}
 	d.vals, d.offs = keys.Values(n, 0xFA11)
@@ -147,14 +151,19 @@ func load(kind keys.Kind, n int, libFirst bool) *data {
 			}
 		}
 	}
+	builds := []func(){
+		func() { d.fill(d.art) }, func() { d.fill(d.art2) },
+		func() { d.fill(d.btInline) }, func() { d.fill(d.btPtr) },
+	}
 	if libFirst {
-		buildLib()
+		builds = append([]func(){buildLib}, builds...)
+	} else {
+		builds = append(builds, buildLib)
 	}
-	for _, m := range []mmAPI{d.art, d.art2, d.btInline, d.btPtr} {
-		d.fill(m)
-	}
-	if !libFirst {
-		buildLib()
+	layout.Shuffle(builds)
+	for _, b := range builds {
+		layout.Spacer()
+		b()
 	}
 
 	sorted := keys.Sorted(d.c.Keys)

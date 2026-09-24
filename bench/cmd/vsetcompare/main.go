@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/TomTonic/multimap/bench/keys"
+	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/multimap/bench/proto/vset"
 	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
@@ -35,12 +36,19 @@ func main() {
 	flag.Parse()
 
 	vals, offs := keys.Values(*n, 0xFA11)
+	layout.Spacer()
 	news := make([]vset.Set[uint64], *n)
 	olds := make([]vset.HashSpill[uint64], *n)
+	adds := []func(i int, v uint64){
+		func(i int, v uint64) { news[i].Add(v) },
+		func(i int, v uint64) { olds[i].Add(v) },
+	}
+	layout.Shuffle(adds)
 	for i := range *n {
 		for _, v := range vals[offs[i]:offs[i+1]] {
-			news[i].Add(v)
-			olds[i].Add(v)
+			for _, add := range adds {
+				add(i, v)
+			}
 		}
 	}
 	rng := rtcompare.NewDPRNG(0xC0FFEE)
@@ -90,7 +98,8 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"n": *n, "op": op, "a": a.Name, "b": b.Name, "ns_a": rep.NsPerOpA, "ns_b": rep.NsPerOpB,
 			"delta": rep.Estimate.Delta, "low": rep.Estimate.Low, "high": rep.Estimate.High,
-			"resolved": rep.Resolved, "noise_floor": rep.NoiseFloor, "warnings": rep.Warnings,
+			"resolved": rep.Resolved, "noise_floor": rep.NoiseFloor, "inner_loops": rep.ValidationA.InnerLoops,
+			"layout_seed": layout.Seed(), "warnings": rep.Warnings,
 		})
 	}
 	_ = sink

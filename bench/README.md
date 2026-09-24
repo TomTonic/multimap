@@ -31,21 +31,44 @@ the design space this project's index has to justify itself against:
 ## Running
 
 ```sh
-./run.sh    # point lookups, range scan, build: this project's ART vs. the other candidates
-./run2.sh   # memory/GC per candidate, in-node child-search strategies
-./run3.sh   # realistic multimap: value sets, iterators, vs. tidwall/btree
-./run4.sh–run7.sh  # internal design iterations (see git history)
-./run8.sh   # HOT vs. this project's ART; memory/GC of all candidates, 3 rounds
-./run9.sh–run11.sh # range scan that touches children ahead, prototype and library
+./runall.sh     # everything below, in order (PROCS=5 at default settings: most of a day)
+./run.sh        # point lookups, range scan, build: this project's ART vs. the other candidates
+./run2.sh       # memory/GC per candidate, in-node child-search strategies
+./run3.sh       # realistic multimap: value sets, iterators, vs. tidwall/btree
+./run4.sh–run7.sh   # internal design iterations (see git history)
+./run8.sh       # HOT vs. this project's ART; memory/GC of all candidates, 3 rounds
+./run9.sh–run15.sh  # range scan that touches children ahead, prototype and library
+go run ./cmd/summarize results/mm.jsonl   # pool the processes of each comparison
 ```
 
-Each scenario runs in its own process via `rtcompare.Compare` with A/B/B/A
-interleaving, which cancels drift from thermal throttling or background
-load — never compare absolute numbers from separate `go test -bench` runs.
-Memory/GC (`cmd/memgc`) measures one candidate per process instead, since GC
-cost depends on the whole live heap. Raw results are in `results/*.jsonl`,
-full reports in `results/*.log`. `run.sh` to `run7.sh` together take about
-100 minutes.
+Every comparison uses `rtcompare.Compare`, whose A/B/B/A interleaving cancels
+drift from throttling or background load within a run. Never compare absolute
+numbers from separate `go test -bench` runs.
+
+**One process is one sample.** rtcompare's interval covers only the noise
+within a process. Each process also places its fixtures in its own heap
+layout, and for large pointer-heavy fixtures that layout shifts a comparison
+by several points. On 2026-09-24, repeated processes with identical code and
+settings scattered 2-5 points apart at 1M keys, while each reported an
+interval of about ±0.7 points; at 4K keys they agreed within their intervals.
+Longer runs do not help: 1.5x samples and batches narrowed the intervals as
+predicted but not the scatter
+([rtcompare#109](https://github.com/TomTonic/rtcompare/issues/109)).
+
+The scripts therefore run every comparison in `PROCS` processes (default 5,
+see `procs.sh`). Each gets its own `-layoutseed`, which puts random spacers
+between the fixtures and builds them in a random order (package `layout`),
+so that the processes sample different layouts instead of repeating one
+biased layout. `cmd/summarize` then treats each process as one observation.
+It reports the median, a 95% t-interval across processes, the spread between
+them, and its ratio to the standard error of a single run. A ratio well above
+1 means the layout, not the run, decides the result. `RT` passes extra flags
+to all comparisons (`-repeats`, `-loopscale`), `MEMGC` to `cmd/memgc`
+(`-cyclescale`).
+
+Memory/GC (`cmd/memgc`) is not an rtcompare comparison. GC cost depends on
+the whole live heap, so each candidate is measured alone in its own process.
+Raw results are in `results/*.jsonl`, full reports in `results/*.log`.
 
 ## Results (Apple M1 Pro, Go 1.27.1, 2026-09-23)
 

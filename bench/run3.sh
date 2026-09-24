@@ -4,13 +4,14 @@
 # pointer). Then memory and GC of the three multimaps, one process each.
 set -e
 cd "$(dirname "$0")"
+. ./procs.sh
 go build -o results/mmcompare ./cmd/mmcompare
 go build -o results/memgc ./cmd/memgc
 OUT=results/mm.jsonl
 : > "$OUT"
 for k in u64 str; do
-  ./results/mmcompare -keys $k -n 4096    -ops valuesFor,valuesBetween,addRemove,build -out $OUT $RT 2> results/mm-$k-4096.log
-  ./results/mmcompare -keys $k -n 1048576 -ops valuesFor,valuesBetween,addRemove       -out $OUT $RT 2> results/mm-$k-1M.log
+  runp results/mm-$k-4096.log ./results/mmcompare -keys $k -n 4096    -ops valuesFor,valuesBetween,addRemove,build -out $OUT
+  runp results/mm-$k-1M.log ./results/mmcompare -keys $k -n 1048576 -ops valuesFor,valuesBetween,addRemove       -out $OUT
 done
 : > results/mm-memgc.jsonl
 for k in u64 str; do
@@ -18,4 +19,4 @@ for k in u64 str; do
     ./results/memgc -impl $impl -keys $k $MEMGC >> results/mm-memgc.jsonl
   done
 done
-echo done
+echo 'done'

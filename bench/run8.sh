@@ -4,13 +4,14 @@
 # each, so the median is robust against the baseline noise of single runs.
 set -e
 cd "$(dirname "$0")"
+. ./procs.sh
 go build -o results/compare ./cmd/compare
 go build -o results/memgc ./cmd/memgc
 OUT=results/hot.jsonl
 : > "$OUT"
 for k in u64 str; do
-  ./results/compare -a ptr-art -only plar-hot -keys $k -n 4096    -ops get,miss,build -out $OUT $RT 2> results/hot-$k-4096.log
-  ./results/compare -a ptr-art -only plar-hot -keys $k -n 1048576 -ops get,miss       -out $OUT $RT 2> results/hot-$k-1M.log
+  runp results/hot-$k-4096.log ./results/compare -a ptr-art -only plar-hot -keys $k -n 4096    -ops get,miss,build -out $OUT
+  runp results/hot-$k-1M.log ./results/compare -a ptr-art -only plar-hot -keys $k -n 1048576 -ops get,miss       -out $OUT
 done
 : > results/memgc3.jsonl
 for round in 1 2 3; do
@@ -20,4 +21,4 @@ for round in 1 2 3; do
     done
   done
 done
-echo done
+echo 'done'

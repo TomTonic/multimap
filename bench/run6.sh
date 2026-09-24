@@ -3,13 +3,14 @@
 # against the current one (80-byte leaf with 3 inline values, mmart).
 set -e
 cd "$(dirname "$0")"
+. ./procs.sh
 go build -o results/mmcompare ./cmd/mmcompare
 go build -o results/memgc ./cmd/memgc
 OUT=results/mm-v2.jsonl
 : > "$OUT"
 for k in u64 str; do
-  ./results/mmcompare -a art-v2 -only art -keys $k -n 4096    -ops valuesFor,valuesBetween,addRemove,build -out $OUT $RT 2> results/mm-v2-$k-4096.log
-  ./results/mmcompare -a art-v2 -only art -keys $k -n 1048576 -ops valuesFor,valuesBetween,addRemove       -out $OUT $RT 2> results/mm-v2-$k-1M.log
+  runp results/mm-v2-$k-4096.log ./results/mmcompare -a art-v2 -only art -keys $k -n 4096    -ops valuesFor,valuesBetween,addRemove,build -out $OUT
+  runp results/mm-v2-$k-1M.log ./results/mmcompare -a art-v2 -only art -keys $k -n 1048576 -ops valuesFor,valuesBetween,addRemove       -out $OUT
 done
 : > results/mm-v2-memgc.jsonl
 for k in u64 str; do
@@ -17,4 +18,4 @@ for k in u64 str; do
     ./results/memgc -impl $impl -keys $k $MEMGC >> results/mm-v2-memgc.jsonl
   done
 done
-echo done
+echo 'done'

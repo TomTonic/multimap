@@ -3,6 +3,7 @@
 # Memory/GC of the containers alone and of the whole multimaps, then speed.
 set -e
 cd "$(dirname "$0")"
+. ./procs.sh
 go build -o results/memgc ./cmd/memgc
 go build -o results/vsetcompare ./cmd/vsetcompare
 : > results/vset-memgc.jsonl
@@ -13,6 +14,6 @@ for impl in none mm-art mm-btree-inline mm-btree-ptr; do
   ./results/memgc -impl $impl -keys str $MEMGC >> results/vset-memgc.jsonl
 done
 : > results/vset.jsonl
-./results/vsetcompare -n 4096    -out results/vset.jsonl $RT 2> results/vset-4096.log
-./results/vsetcompare -n 1048576 -out results/vset.jsonl $RT 2> results/vset-1M.log
-echo done
+runp results/vset-4096.log ./results/vsetcompare -n 4096    -out results/vset.jsonl
+runp results/vset-1M.log ./results/vsetcompare -n 1048576 -out results/vset.jsonl
+echo 'done'

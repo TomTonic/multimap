@@ -14,6 +14,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/multimap/bench/proto/swar"
 	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
@@ -83,7 +84,8 @@ func main() {
 			"capacity": c.capacity, "a": c.a.name, "b": c.b.name,
 			"ns_a": rep.NsPerOpA, "ns_b": rep.NsPerOpB, "delta": rep.Estimate.Delta,
 			"low": rep.Estimate.Low, "high": rep.Estimate.High, "resolved": rep.Resolved,
-			"noise_floor": rep.NoiseFloor, "warnings": rep.Warnings,
+			"noise_floor": rep.NoiseFloor, "inner_loops": rep.ValidationA.InnerLoops,
+			"layout_seed": layout.Seed(), "warnings": rep.Warnings,
 		})
 	}
 	_ = sink
@@ -230,6 +232,7 @@ func findPopcnt(n *node, b byte) int {
 
 func makeProbes(capacity int) []probe {
 	rng := rtcompare.NewDPRNG(uint64(capacity) * 7919)
+	layout.Spacer()
 	nodes := make([]*node, numNodes)
 	for i := range nodes {
 		n := &node{count: capacity}
