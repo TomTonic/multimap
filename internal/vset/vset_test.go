@@ -113,3 +113,50 @@ func TestLayout(t *testing.T) {
 		t.Fatalf("Set[uint64] is %d bytes, want 40", got)
 	}
 }
+
+// TestIteration makes sure that reading the values of a multimap key yields
+// every value exactly once and stops as soon as the caller stops, however many
+// values the key holds. It covers All and Each of the value set in each of its
+// representations (empty, inline, array, hash) and checks a full pass and a
+// pass that the caller ends after the first value.
+func TestIteration(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		n    int
+	}{
+		{"an empty set yields nothing", 0},
+		{"a full inline set yields every value", InlineCap},
+		{"a full array set yields every value", ArrayMax},
+		{"a hash set yields every value", ArrayMax + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var s Set[uint64]
+			for i := range tc.n {
+				s.Add(uint64(i))
+			}
+			seen := map[uint64]bool{}
+			for v := range s.All() {
+				if seen[v] || v >= uint64(tc.n) {
+					t.Fatalf("All yielded %d twice or unexpectedly", v)
+				}
+				seen[v] = true
+			}
+			if len(seen) != tc.n {
+				t.Fatalf("All yielded %d values, want %d", len(seen), tc.n)
+			}
+			calls := 0
+			done := s.Each(func(uint64) bool { calls++; return false })
+			if calls != min(1, tc.n) || done != (tc.n == 0) {
+				t.Fatalf("Each after stopping at once: %d calls, completed %v", calls, done)
+			}
+			calls = 0
+			for range s.All() {
+				calls++
+				break
+			}
+			if calls != min(1, tc.n) {
+				t.Fatalf("All after a break: %d calls", calls)
+			}
+		})
+	}
+}

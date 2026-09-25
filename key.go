@@ -3,6 +3,7 @@ package multimap
 import (
 	"encoding/binary"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -151,13 +152,10 @@ func FromUint8(u uint8) Key {
 // FromByte is an alias for FromUint8 and produces an 8-byte representation.
 func FromByte(b byte) Key { return FromUint8(uint8(b)) }
 
-// FromRune converts a rune to its UTF-8 encoding as a Key.
-func FromRune(r rune) Key {
-	// encode rune to UTF-8 bytes
-	var buf [4]byte
-	n := utf8EncodeRune(buf[:], r)
-	return FromBytes(buf[:n])
-}
+// FromRune converts a rune to its UTF-8 encoding as a Key. An invalid rune
+// (a surrogate half, or a value outside the Unicode range) is encoded as
+// U+FFFD, the replacement character, like everywhere in Go.
+func FromRune(r rune) Key { return utf8.AppendRune(nil, r) }
 
 // Bytes returns a copy of the Key as a byte slice.
 func (k Key) Bytes() []byte {
@@ -238,27 +236,3 @@ func (k Key) LessThanOrEqual(other Key) bool {
 
 // IsEmpty returns whether the Key is empty or nil.
 func (k Key) IsEmpty() bool { return len(k) == 0 }
-
-// helper: encode rune to utf8 into buf, return length
-func utf8EncodeRune(buf []byte, r rune) int {
-	switch {
-	case r <= 0x7F:
-		buf[0] = byte(r)
-		return 1
-	case r <= 0x7FF:
-		buf[0] = 0xC0 | byte(r>>6)
-		buf[1] = 0x80 | byte(r)&0x3F
-		return 2
-	case r <= 0xFFFF:
-		buf[0] = 0xE0 | byte(r>>12)
-		buf[1] = 0x80 | byte(r>>6)&0x3F
-		buf[2] = 0x80 | byte(r)&0x3F
-		return 3
-	default:
-		buf[0] = 0xF0 | byte(r>>18)
-		buf[1] = 0x80 | byte(r>>12)&0x3F
-		buf[2] = 0x80 | byte(r>>6)&0x3F
-		buf[3] = 0x80 | byte(r)&0x3F
-		return 4
-	}
-}

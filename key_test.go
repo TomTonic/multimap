@@ -3,6 +3,7 @@ package multimap
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 	"testing"
 )
 
@@ -318,6 +319,86 @@ func TestLessThanOrEqual_ConsistencyWithLessThanAndEqual(t *testing.T) {
 		if lte != (lt || eq) {
 			t.Fatalf("inconsistency: a=%v b=%v: <==%v, <||==%v (lt=%v eq=%v)",
 				c.a.Bytes(), c.b.Bytes(), lte, lt || eq, lt, eq)
+		}
+	}
+}
+
+// TestUnsignedConstructorsAgree makes sure that an unsigned number becomes the
+// same key whichever constructor a caller uses, so that keys built from
+// different integer types find each other in a multimap. It covers the
+// unsigned integer constructors of Key and checks, for values at the limits of
+// each width, that FromUint, FromUint32, FromUint16, FromUint8 and FromByte
+// produce exactly the key FromUint64 produces.
+func TestUnsignedConstructorsAgree(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  Key
+		want uint64
+	}{
+		{"FromUint of 0 equals FromUint64", FromUint(0), 0},
+		{"FromUint of MaxUint32 equals FromUint64", FromUint(math.MaxUint32), math.MaxUint32},
+		{"FromUint32 of 0 equals FromUint64", FromUint32(0), 0},
+		{"FromUint32 of MaxUint32 equals FromUint64", FromUint32(math.MaxUint32), math.MaxUint32},
+		{"FromUint16 of MaxUint16 equals FromUint64", FromUint16(math.MaxUint16), math.MaxUint16},
+		{"FromUint8 of 0 equals FromUint64", FromUint8(0), 0},
+		{"FromUint8 of MaxUint8 equals FromUint64", FromUint8(math.MaxUint8), math.MaxUint8},
+		{"FromByte equals FromUint64", FromByte(0x7F), 0x7F},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if want := FromUint64(tc.want); !tc.got.Equal(want) {
+				t.Fatalf("got %s, want %s", tc.got, want)
+			}
+		})
+	}
+}
+
+// TestFromRuneEncodesUTF8 makes sure that a character used as a key is stored
+// as its standard UTF-8 bytes, so that it matches the same character inside
+// string keys and sorts in code point order. It covers FromRune and checks
+// the first and last code point of each UTF-8 length, and that invalid runes
+// become the replacement character U+FFFD.
+func TestFromRuneEncodesUTF8(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		r    rune
+		want string
+	}{
+		{"NUL is one byte", 0, "\x00"},
+		{"DEL is the last one-byte rune", 0x7F, "\x7f"},
+		{"U+0080 is the first two-byte rune", 0x80, "\u0080"},
+		{"a-umlaut is two bytes", 'ä', "ä"},
+		{"U+07FF is the last two-byte rune", 0x7FF, "\u07ff"},
+		{"U+0800 is the first three-byte rune", 0x800, "\u0800"},
+		{"euro sign is three bytes", '€', "€"},
+		{"U+FFFF is the last three-byte rune", 0xFFFF, "\uffff"},
+		{"U+10000 is the first four-byte rune", 0x10000, "\U00010000"},
+		{"U+10FFFF is the last four-byte rune", 0x10FFFF, "\U0010ffff"},
+		{"a surrogate half becomes U+FFFD", 0xD800, "\uFFFD"},
+		{"a rune beyond Unicode becomes U+FFFD", 0x110000, "\uFFFD"},
+		{"a negative rune becomes U+FFFD", -1, "\uFFFD"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FromRune(tc.r); !bytes.Equal(got, []byte(tc.want)) {
+				t.Fatalf("FromRune(%U) = %s, want %s", tc.r, got, Key(tc.want))
+			}
+		})
+	}
+}
+
+// TestEmptyKeys makes sure that nil and empty keys behave predictably when a
+// caller copies or prints them. It covers Key.Bytes and Key.String and checks
+// that a nil key copies to nil, an empty key to an empty non-nil slice, and
+// that both print as "[]".
+func TestEmptyKeys(t *testing.T) {
+	if Key(nil).Bytes() != nil {
+		t.Errorf("Key(nil).Bytes() is not nil")
+	}
+	if b := (Key{}).Bytes(); b == nil || len(b) != 0 {
+		t.Errorf("Key{}.Bytes() = %v, want an empty non-nil slice", b)
+	}
+	for _, k := range []Key{nil, {}} {
+		if k.String() != "[]" {
+			t.Errorf("String() of an empty key = %q, want \"[]\"", k.String())
 		}
 	}
 }
