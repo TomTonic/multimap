@@ -19,10 +19,12 @@ A multimap is a data structure that allows multiple values to be associated with
 | `Synchronized[T](m)` | wraps any of the above | as the wrapped map | as the wrapped map | safe (read/write lock) |
 
 Choose `Ordered` (the default behind `New`) when range queries or ordered
-iteration matter. Choose `Hashed` when they are rare: point operations on long
-string keys are faster there, but every range query scans all keys, and like
-every Go map it keeps its memory after deletions. The benchmarks behind these
-statements are in [bench/README.md](bench/README.md).
+iteration matter, or when keys are integers: there it is about as fast as
+`Hashed` for point operations. Choose `Hashed` for string keys when range
+queries are rare: point operations are about twice as fast there, but every
+range query scans all keys, and like every Go map it keeps its table after
+deletions. Both need about half the memory of a Go map or B-tree of Go sets.
+The benchmarks behind these statements are in [bench/README.md](bench/README.md).
 
 Both keep the values of a key in a compact container: up to three values
 inline, then a plain array, then a hash set.

@@ -37,9 +37,56 @@ hold 17-200.
 
 ## Results
 
-Pending: the first run of this suite is planned for the night of 2026-09-24.
-`cmd/bench` writes `results/speed-summary.md` and `results/mem-summary.md`;
-the tables will be summarized here.
+Apple M1 Pro, Go 1.27.1, 2026-09-24. Every factor is how many operations the
+first candidate completes in the time the second needs for one: above 1 it is
+faster. All intervals across processes are within ±2 percentage points or
+±10% of the difference; the full tables with intervals are
+[`results/speed-summary.md`](results/speed-summary.md) and
+[`results/mem-summary.md`](results/mem-summary.md).
+
+**`ordered` against `hashed`:** about equal for point operations with integer
+keys, slower with string keys, far faster for range queries.
+
+| operation | u64 4K | u64 1M | str 4K | str 1M |
+|---|---:|---:|---:|---:|
+| `valuesFor` | 1.08× | 1.02× | 0.59× | 0.56× |
+| `addRemove` | 1.07× | 0.89× | 0.43× | 0.53× |
+| `build` | 1.08× | | 0.65× | |
+| `valuesBetween` | 17.9× | | 14.8× | |
+
+**`ordered` against the hand-written candidates:** always faster than
+`btree-sets`, faster than `map-sets` except for changes with string keys.
+
+| operation | vs | u64 4K | u64 1M | str 4K | str 1M |
+|---|---|---:|---:|---:|---:|
+| `valuesFor` | `btree-sets` | 4.16× | 5.62× | 2.38× | 2.82× |
+| `valuesBetween` | `btree-sets` | 2.27× | 2.79× | 1.84× | 2.21× |
+| `addRemove` | `btree-sets` | 4.62× | 3.11× | 1.87× | 1.90× |
+| `build` | `btree-sets` | 2.71× | | 1.58× | |
+| `valuesFor` | `map-sets` | 2.25× | 2.19× | 1.22× | 1.11× |
+| `addRemove` | `map-sets` | 1.11× | 1.54× | 0.44× | 0.85× |
+| `build` | `map-sets` | 1.33× | | 0.78× | |
+
+**`hashed` against `map-sets`:** 2.0-2.2× for `valuesFor`, 1.0-1.7× for
+`addRemove`, 1.2× for `build`. Same data structure, but the value sets are
+smaller and the key is stored once.
+
+**Memory at 1M keys** (bytes per key; GC CPU time per full cycle, minus a
+process that holds only the input):
+
+| candidate | heap u64 | heap str | GC u64 | GC str | heap after removing half, u64 | str |
+|---|---:|---:|---:|---:|---:|---:|
+| `ordered` | 165 | 204 | 158 ms | 235 ms | 80 | 100 |
+| `hashed` | 177 | 196 | 118 ms | 116 ms | 115 | 121 |
+| `btree-sets` | 343 | 363 | 220 ms | 220 ms | 172 | 178 |
+| `map-sets` | 360 | 379 | 197 ms | 196 ms | 206 | 212 |
+
+What follows for a choice:
+- **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` and adds range queries.
+- **String keys:** `hashed` is about twice as fast for point operations. Take `ordered` when you need range queries or ordered iteration: a range query on `hashed` scans every key and costs 15× as much already at 4K keys.
+- **Against writing it yourself:** both use about half the memory of a map or B-tree of Go sets, and `ordered` is 1.6-5.6× faster than the B-tree.
+- **Memory after deletions:** `ordered` shrinks with its keys; the maps keep their tables.
+- **GC:** `ordered` with string keys costs the most GC time per cycle, about twice as much as `hashed`. Its leaves and nodes are many small objects with pointers.
 
 ## How the numbers are made
 
@@ -74,7 +121,7 @@ order each, and the tables show medians.
 ## Running
 
 ```sh
-go run ./cmd/bench                                  # the full suite: about 2-3.5 hours on an M1 Pro
+go run ./cmd/bench                                  # the full suite: 2.5 hours on an M1 Pro
 go run ./cmd/bench -sizes 4096 -skipmem             # a quicker subset
 go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 2 -maxprocs 2 -memn 16384 -memrounds 1
 go run ./cmd/summarize results/speed.jsonl          # pool the raw results again
@@ -85,6 +132,13 @@ The driver starts its own binary for every process and writes to `results/`:
 - `speed-summary.md` and `mem-summary.md`: the pooled tables;
 - `run.json`: settings, machine and time;
 - `logs/`: rtcompare's full report for every process.
+
+While it runs, the driver keeps the machine from sleeping (package
+[`awake`](awake/awake.go): `caffeinate` on macOS, `systemd-inhibit` on Linux,
+`SetThreadExecutionState` on Windows) and warns in the log about every process
+that the machine slept through anyway. The run of 2026-09-24 still lacked
+this: the Mac slept twice, which paused three of 39 speed processes and one
+memory round. Their results lie within the spread of the others.
 
 `-repeats`, `-loopscale` and `-validation` pass through to rtcompare. The
 defaults are rtcompare's. Lower values are for smoke tests only.
