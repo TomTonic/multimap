@@ -265,7 +265,7 @@ func pageFor(items []item) *pageHead {
 	l := len(items[0].key)
 	for _, it := range items {
 		if len(it.key) != l || l > 8 {
-			return sPack(items)
+			return sPack(&sSource{items: items})
 		}
 	}
 	return u8Pack(items)

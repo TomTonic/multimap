@@ -42,10 +42,7 @@ func del(loc **header, key []byte, depth int) bool {
 		return ok
 	case kPageS:
 		p := asPage(n)
-		if !p.sMatch(key) {
-			return false
-		}
-		i, ok := p.sSearch(key[p.base:])
+		i, ok, _ := p.sFind(key, 0) // paths above were checked only up to 8 bytes each
 		if ok {
 			*loc = pageHdr(p.sRemoveKey(i))
 		}

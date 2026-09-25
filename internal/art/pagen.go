@@ -86,7 +86,7 @@ func nClassFor(k, v, e int) int {
 // layout returns where a U8-n or S page keeps its arrays.
 func (p *pageHead) layout() nLayout {
 	if p.kind == kPageS {
-		return p.sLayout().nLayout
+		return p.sValLayout()
 	}
 	return nLayouts[p.class]
 }
@@ -98,25 +98,34 @@ func (p *pageHead) nHeads() []uint64 {
 	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.headsOff)), l.keys)
 }
 
-func (p *pageHead) cnts() []uint8 {
-	l := p.layout()
+func (p *pageHead) cnts() []uint8 { l := p.layout(); return p.cntsIn(&l) }
+
+func (p *pageHead) exts() []unsafe.Pointer { l := p.layout(); return p.extsIn(&l) }
+
+func (p *pageHead) nvals() []uint64 { l := p.layout(); return p.nvalsIn(&l) }
+
+// cntsIn, extsIn and nvalsIn are cnts, exts and nvals for a page whose layout
+// l the caller has at hand, which spares a lookup that must compute it
+// computing it again.
+func (p *pageHead) cntsIn(l *nLayout) []uint8 {
 	return unsafe.Slice((*uint8)(unsafe.Add(unsafe.Pointer(p), l.cntOff)), l.keys)
 }
 
-func (p *pageHead) exts() []unsafe.Pointer {
-	l := p.layout()
+func (p *pageHead) extsIn(l *nLayout) []unsafe.Pointer {
 	return unsafe.Slice((*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(p), l.extOff)), l.ext)
 }
 
-func (p *pageHead) nvals() []uint64 {
-	l := p.layout()
+func (p *pageHead) nvalsIn(l *nLayout) []uint64 {
 	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.valsOff)), l.vals)
 }
 
 // run returns where the values of key i lie: at nvals()[off:off+n], or, with
 // e >= 0, in the external set exts()[e].
-func (p *pageHead) run(i int) (off, n, e int) {
-	c := p.cnts()
+func (p *pageHead) run(i int) (off, n, e int) { l := p.layout(); return p.runIn(&l, i) }
+
+// runIn is run for a page with layout l.
+func (p *pageHead) runIn(l *nLayout, i int) (off, n, e int) {
+	c := p.cntsIn(l)
 	for _, x := range c[:i] {
 		if x < extBit {
 			off += int(x)
@@ -263,7 +272,7 @@ func (p *pageHead) nDropKey(i int) {
 }
 
 // fillVals stores the values of items, inline or as external sets, in the new
-// U8-n or S page p, key by key.
+// U8-n page p, key by key.
 func (p *pageHead) fillVals(items []item) {
 	cs, ex, vs := p.cnts(), p.exts(), p.nvals()
 	off, slot := 0, 0

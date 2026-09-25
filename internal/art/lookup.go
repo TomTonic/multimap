@@ -41,10 +41,12 @@ func (t *Tree) find(key []byte) (*header, int) {
 			if n.kind != kLeaf { // pages hold full keys
 				p := asPage(n)
 				if n.kind == kPageS {
-					if p.sMatch(key) {
-						if i, ok := p.sSearch(key[p.base:]); ok {
-							return n, i
-						}
+					from := depth
+					if skipped {
+						from = 0
+					}
+					if i, ok, _ := p.sFind(key, from); ok {
+						return n, i
 					}
 				} else if len(key) == int(p.klen) {
 					if i, ok := p.search(keyWord(key)); ok {

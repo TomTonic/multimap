@@ -87,11 +87,12 @@ func view[T comparable](n *header, i int) View[T] {
 		return View[T]{raw: asPage(n).vals()[i : i+1]}
 	}
 	p := asPage(n)
-	off, cnt, e := p.run(i)
+	l := p.layout()
+	off, cnt, e := p.runIn(&l, i)
 	if e >= 0 {
-		return View[T]{set: (*vset.Set[T])(p.exts()[e])}
+		return View[T]{set: (*vset.Set[T])(p.extsIn(&l)[e])}
 	}
-	return View[T]{raw: p.nvals()[off : off+cnt]}
+	return View[T]{raw: p.nvalsIn(&l)[off : off+cnt]}
 }
 
 // smallPlain reports whether T may be stored in pages: at most 8 bytes and

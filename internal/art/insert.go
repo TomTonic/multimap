@@ -85,7 +85,7 @@ func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc) *header {
 		p.heads()[0], p.vals()[0] = keyWord(key), v
 		return pageHdr(p)
 	}
-	return pageHdr(sPack([]item{{key: key, vals: []uint64{v}}}))
+	return pageHdr(sPack(newKeySource(nil, 0, key, v)))
 }
 
 // created counts the new key held by c, a child made by newChild.
@@ -103,14 +103,23 @@ func (t *Tree) created(c *header) spot {
 func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newLeafFunc) spot {
 	p := asPage(*loc)
 	if p.kind == kPageS {
-		if p.sMatch(key) {
-			s := key[p.base:]
-			i, ok := p.sSearch(s)
-			if ok {
-				return spot{at: loc, i: i, depth: depth}
+		i, found, match := p.sFind(key, depth) // the descent checked every path
+		switch {
+		case found:
+			return spot{at: loc, i: i, depth: depth}
+		case match && p.sRoom(len(key)-int(p.base)):
+			p.sInsertKey(i, key[p.base:], v)
+			t.size++
+			return spot{created: true}
+		case !t.pageable(key):
+		default:
+			// The page is repacked with the key: into a larger class, or
+			// with a shorter shared prefix when the key does not share it.
+			if !match {
+				i = p.sBefore(key)
 			}
-			if p.sRoom(len(s)) {
-				p.sInsertKey(i, s, v)
+			if q := sPack(newKeySource(p, i, key, v)); q != nil {
+				*loc = pageHdr(q)
 				t.size++
 				return spot{created: true}
 			}
@@ -173,15 +182,18 @@ func (t *Tree) addToSingle(sp spot, v uint64) {
 }
 
 // addInline adds the raw value v to the inline values of the key at sp, in a
-// U8-n or S page, which holds fewer than inlineMax. A full U8-n page grows
-// into a larger class; beyond the largest, and for a full S page, the subtree
-// is rebuilt.
+// U8-n or S page, which holds fewer than inlineMax. A full page grows into a
+// larger class (an S page is repacked); beyond the largest, the subtree is
+// rebuilt.
 func (t *Tree) addInline(sp spot, v uint64) {
 	p := asPage(*sp.at)
 	if int(p.nv) == p.layout().vals {
 		c := -1
 		if p.kind == kPageN {
 			c = nClassFor(int(p.count), int(p.nv)+1, p.extUsed())
+		} else if q := p.sRepackVals(sp.i, v); q != nil {
+			*sp.at = pageHdr(q)
+			return
 		}
 		if c < 0 {
 			t.rebuild(sp, func(it *item) { it.vals = append(it.vals, v) })
@@ -195,8 +207,8 @@ func (t *Tree) addInline(sp spot, v uint64) {
 
 // externalize moves the inline values of the key at sp, in a U8-n or S page,
 // to the external set s, which the caller filled with them and the new value.
-// A U8-n page without a free external slot grows into a class with one;
-// beyond the largest, and for an S page, the subtree is rebuilt.
+// A page without a free external slot grows into a class with one (an S page
+// is repacked); beyond the largest, the subtree is rebuilt.
 func (t *Tree) externalize(sp spot, s unsafe.Pointer) {
 	p := asPage(*sp.at)
 	if p.extUsed() == p.layout().ext {
@@ -204,6 +216,9 @@ func (t *Tree) externalize(sp spot, s unsafe.Pointer) {
 		if p.kind == kPageN {
 			_, n, _ := p.run(sp.i)
 			c = nClassFor(int(p.count), int(p.nv)-n, p.extUsed()+1)
+		} else if q := sPack(&sSource{p: p, at: sp.i, set: s}); q != nil {
+			*sp.at = pageHdr(q)
+			return
 		}
 		if c < 0 {
 			t.rebuild(sp, func(it *item) { it.vals, it.set = nil, s })

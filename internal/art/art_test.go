@@ -718,13 +718,6 @@ func checkPageS(t *testing.T, p *pageHead, depth int) int {
 	return n
 }
 
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
 // kind back down through each smaller kind to nothing, collapsing and
 // re-merging compressed paths (short and longer than 8 bytes) on the way, and
