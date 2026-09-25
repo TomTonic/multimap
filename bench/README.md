@@ -52,15 +52,15 @@ key from a pool and takes the key back when the value is deleted.
 
 ## Results
 
-These results predate `churn` and the new `build`: they were measured with
-`addRemove` (add one value to a random key and remove it again) and a build
-without deletions. The next run replaces them.
-
-Apple M1 Pro, Go 1.27.1, 2026-09-24. Every factor is how many operations the
-first candidate completes in the time the second needs for one: above 1 it is
+AMD Ryzen 9 7900 (12 cores, 24 threads), Linux 6.18 under WSL2 on Windows,
+Go 1.27.1, 2026-09-25. Every factor is how many operations the first
+candidate completes in the time the second needs for one: above 1 it is
 faster. All intervals across processes are within ±2 percentage points or
-±10% of the difference; the full tables with intervals are
-[`results/speed-summary.md`](results/speed-summary.md) and
+±10% of the difference, except for the two marked `*`: `u64` `churn` at 1M
+keys spreads 9-12 points between processes, so ±2 would take 70-130
+processes, and the driver stopped at 40 (`-continue`, see below). Their 95%
+intervals are given below the tables. The full tables
+are [`results/speed-summary.md`](results/speed-summary.md) and
 [`results/mem-summary.md`](results/mem-summary.md).
 
 **`ordered` against `hashed`:** about equal for point operations with integer
@@ -68,40 +68,60 @@ keys, slower with string keys, far faster for range queries.
 
 | operation | u64 4K | u64 1M | str 4K | str 1M |
 |---|---:|---:|---:|---:|
-| `valuesFor` | 1.08× | 1.02× | 0.59× | 0.56× |
-| `addRemove` | 1.07× | 0.89× | 0.43× | 0.53× |
-| `build` | 1.08× | | 0.65× | |
-| `valuesBetween` | 17.9× | | 14.8× | |
+| `valuesFor` | 0.98× | 0.97× | 0.65× | 0.47× |
+| `churn` | 1.08× | 1.06×* | 0.67× | 0.64× |
+| `build` | 1.11× | | 0.72× | |
+| `valuesBetween` | 18.4× | | 15.0× | |
+
+\* `churn` u64 1M: [1.00×, 1.08×].
 
 **`ordered` against the hand-written candidates:** always faster than
 `btree-sets`, faster than `map-sets` except for changes with string keys.
 
 | operation | vs | u64 4K | u64 1M | str 4K | str 1M |
 |---|---|---:|---:|---:|---:|
-| `valuesFor` | `btree-sets` | 4.16× | 5.62× | 2.38× | 2.82× |
-| `valuesBetween` | `btree-sets` | 2.27× | 2.79× | 1.84× | 2.21× |
-| `addRemove` | `btree-sets` | 4.62× | 3.11× | 1.87× | 1.90× |
-| `build` | `btree-sets` | 2.71× | | 1.58× | |
-| `valuesFor` | `map-sets` | 2.25× | 2.19× | 1.22× | 1.11× |
-| `addRemove` | `map-sets` | 1.11× | 1.54× | 0.44× | 0.85× |
-| `build` | `map-sets` | 1.33× | | 0.78× | |
+| `valuesFor` | `btree-sets` | 4.41× | 4.26× | 2.85× | 2.25× |
+| `valuesBetween` | `btree-sets` | 2.61× | 3.40× | 2.13× | 2.52× |
+| `churn` | `btree-sets` | 3.73× | 2.86× | 2.32× | 1.98× |
+| `build` | `btree-sets` | 3.55× | | 2.40× | |
+| `valuesFor` | `map-sets` | 2.50× | 2.15× | 1.54× | 0.97× |
+| `valuesBetween` | `map-sets` | 19.7× | | 15.6× | |
+| `churn` | `map-sets` | 1.20× | 1.12×* | 0.75× | 0.73× |
+| `build` | `map-sets` | 1.28× | | 0.83× | |
 
-**Memory at 1M keys** (bytes per key; GC CPU time per full cycle, minus a
-process that holds only the input):
+\* `churn` u64 1M: [1.05×, 1.12×].
 
-| candidate | heap u64 | heap str | GC u64 | GC str | heap after removing half, u64 | str |
-|---|---:|---:|---:|---:|---:|---:|
-| `ordered` | 165 | 204 | 158 ms | 235 ms | 80 | 100 |
-| `hashed` | 177 | 196 | 118 ms | 116 ms | 115 | 121 |
-| `btree-sets` | 343 | 363 | 220 ms | 220 ms | 172 | 178 |
-| `map-sets` | 360 | 379 | 197 ms | 196 ms | 206 | 212 |
+**`ordered` against `btree-map`, one value per key:** faster for point
+operations and changes, slower for range queries.
+
+| operation | u64 4K | u64 1M | str 4K | str 1M |
+|---|---:|---:|---:|---:|
+| `valuesFor` | 5.63× | 2.94× | 2.65× | 1.71× |
+| `valuesBetween` | 0.42× | 0.64× | 0.28× | 0.52× |
+| `churn` | 2.82× | 1.76× | 1.55× | 1.43× |
+| `build` | 2.36× | | 1.54× | |
+
+**Memory at 1M keys** (bytes per key; scannable: the part of the heap the GC
+must scan for pointers, as `runtime/metrics` counts it, which can exceed the
+live heap; GC CPU time per full cycle, minus a process that holds only the
+input):
+
+| values | candidate | heap u64 | heap str | scannable u64 | scannable str | GC u64 | GC str | heap after removing half, u64 | str |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| multi | `ordered` | 149 | 177 | 83 | 111 | 238 ms | 336 ms | 72 | 86 |
+| multi | `hashed` | 177 | 196 | 101 | 101 | 235 ms | 255 ms | 115 | 121 |
+| multi | `btree-sets` | 343 | 363 | 73 | 73 | 384 ms | 400 ms | 172 | 178 |
+| multi | `map-sets` | 360 | 379 | 85 | 86 | 347 ms | 367 ms | 206 | 212 |
+| unique | `ordered` | 73 | 101 | 81 | 109 | 202 ms | 288 ms | 35 | 48 |
+| unique | `btree-map` | 37 | 56 | 37 | 37 | 64 ms | 84 ms | 19 | 25 |
 
 What follows for a choice:
-- **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` and adds range queries.
-- **String keys:** `hashed` is about twice as fast for point operations. Take `ordered` when you need range queries or ordered iteration: a range query on `hashed` scans every key and costs 15× as much already at 4K keys.
-- **Against writing it yourself:** both use about half the memory of a map or B-tree of Go sets, and `ordered` is 1.6-5.6× faster than the B-tree.
+- **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` (0.97-1.11×) and adds range queries.
+- **String keys:** `hashed` is 1.4-2.1× as fast for point operations. Take `ordered` when you need range queries or ordered iteration: a range query on `hashed` scans every key and costs 15× as much already at 4K keys.
+- **Against writing it yourself:** both use about half the memory of a map or B-tree of Go sets, and `ordered` is 2.0-4.4× faster than the B-tree.
+- **One value per key:** `ordered` is 1.4-5.6× faster than `btree-map` for lookups and changes, but `btree-map` answers range queries 1.6-3.6× faster, needs half the memory and a third of the GC time. The B-tree keeps each key and value in one flat array per node; `ordered` has a leaf object per key with a pointer to its key.
 - **Memory after deletions:** `ordered` shrinks with its keys; the maps keep their tables.
-- **GC:** `ordered` with string keys costs the most GC time per cycle, about twice as much as `hashed`. Its leaves and nodes are many small objects with pointers.
+- **GC:** with string keys `ordered` costs about 1.3× the GC time per cycle of `hashed`, with integer keys about the same; both cost less than the hand-written candidates. Its leaves and nodes are many small objects with pointers.
 
 ## How the numbers are made
 
@@ -127,6 +147,7 @@ keys) in separate processes:
 - Each process counts as one observation. Package [`stats`](stats/stats.go) reports the median difference and a 95% t-interval across processes.
 - Five processes are the minimum. After that, the driver adds processes until every comparison's interval is within ±2 percentage points or within ±10% of the difference itself, up to 20. Five are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points gives ±2.5-6 with five processes and needs 10-20 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M.
 - Fewer than five would estimate the spread from too few processes, and a run that happened to scatter little would stop early by luck.
+- Where 20 were not enough, `-continue` adds processes to an existing `results/` under a higher `-maxprocs`: every scenario resumes after its last process, and scenarios that are already precise are skipped. The run of 2026-09-25 went on this way at 1M keys with several values: `str` became precise after 27 processes, `u64` stopped at 40.
 
 **Memory** is not an rtcompare comparison. GC cost depends on the whole live
 heap, so each candidate is measured alone in its own process, together with a
@@ -138,6 +159,7 @@ order each, and the tables show medians.
 ```sh
 go run ./cmd/bench                                  # the full suite: about 3 hours on an M1 Pro
 go run ./cmd/bench -sizes 4096 -skipmem             # a quicker subset
+go run ./cmd/bench -continue -skipmem -maxprocs 40  # more processes where 20 were not enough
 go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 2 -maxprocs 2 -memn 16384 -memrounds 1
 go run ./cmd/summarize results/speed.jsonl          # pool the raw results again
 ```
@@ -151,9 +173,10 @@ The driver starts its own binary for every process and writes to `results/`:
 While it runs, the driver keeps the machine from sleeping (package
 [`awake`](awake/awake.go): `caffeinate` on macOS, `systemd-inhibit` on Linux,
 `SetThreadExecutionState` on Windows) and warns in the log about every process
-that the machine slept through anyway. The run of 2026-09-24 still lacked
-this: the Mac slept twice, which paused three of 39 speed processes and one
-memory round. Their results lie within the spread of the others.
+that the machine slept through anyway. Under WSL2, `systemd-inhibit` holds
+only the Linux VM awake, not Windows: switch off sleep in the Windows power
+plan for the run. The run of 2026-09-25 took 3 h 38 min on the Ryzen above,
+plus 49 min to continue it, and did not sleep.
 
 `-repeats`, `-loopscale` and `-validation` pass through to rtcompare. The
 defaults are rtcompare's. Lower values are for smoke tests only.
