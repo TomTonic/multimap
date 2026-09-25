@@ -44,13 +44,15 @@ func drive(c config) error {
 			return err
 		}
 		var all []result
-		for _, kind := range c.kinds {
-			for _, n := range c.sizes {
-				rows, err := driveScenario(c, self, kind, n)
-				if err != nil {
-					return err
+		for _, profile := range c.profiles {
+			for _, kind := range c.kinds {
+				for _, n := range c.sizes {
+					rows, err := driveScenario(c, self, kind, profile, n)
+					if err != nil {
+						return err
+					}
+					all = append(all, rows...)
 				}
-				all = append(all, rows...)
 			}
 		}
 		if err := writeSpeed(c, all); err != nil {
@@ -69,20 +71,21 @@ func drive(c config) error {
 	return writeRunInfo(c, start)
 }
 
-// driveScenario runs speed processes for one key kind and size until every
-// comparison is precise (after at least c.minProcs) or c.maxProcs is reached.
-func driveScenario(c config, self, kind string, n int) ([]result, error) {
-	ps := pairsFor(n, c.ops, c.scanMax, c.buildMax)
+// driveScenario runs speed processes for one key kind, value profile and size
+// until every comparison is precise (after at least c.minProcs) or c.maxProcs
+// is reached.
+func driveScenario(c config, self, kind, profile string, n int) ([]result, error) {
+	ps := pairsFor(n, profile, c.ops, c.scanMax, c.buildMax)
 	if len(ps) == 0 {
 		return nil, nil
 	}
 	var rows []result
 	for i := 1; i <= c.maxProcs; i++ {
-		args := []string{"-child", "-keys", kind, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
+		args := []string{"-child", "-keys", kind, "-values", profile, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
 			"-scanmax", strconv.Itoa(c.scanMax), "-buildmax", strconv.Itoa(c.buildMax),
 			"-ratio", strconv.FormatFloat(c.ratio, 'g', -1, 64),
 			"-layoutseed", strconv.Itoa(i)}
-		out, err := runChild(self, append(args, rtopt.Forward()...), filepath.Join(c.out, "logs", fmt.Sprintf("speed-%s-%d-p%02d.log", kind, n, i)))
+		out, err := runChild(self, append(args, rtopt.Forward()...), filepath.Join(c.out, "logs", fmt.Sprintf("speed-%s-%s-%d-p%02d.log", kind, profile, n, i)))
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +98,7 @@ func driveScenario(c config, self, kind string, n int) ([]result, error) {
 		}
 		rows = append(rows, got...)
 		open, widest := imprecise(rows, c.abs, c.rel)
-		logf("%s n=%d process %d: %d of %d comparisons not yet precise%s", kind, n, i, open, len(ps), widest)
+		logf("%s %s n=%d process %d: %d of %d comparisons not yet precise%s", kind, profile, n, i, open, len(ps), widest)
 		if i >= c.minProcs && open == 0 {
 			break
 		}
@@ -133,7 +136,7 @@ func summaries(rows []result) map[string]stats.Summary {
 	}
 	g := map[string]*acc{}
 	for _, r := range rows {
-		k := fmt.Sprintf("%s n=%d %s %s vs %s", r.Keys, r.N, r.Op, r.A, r.B)
+		k := fmt.Sprintf("%s %s n=%d %s %s vs %s", r.Keys, r.Values, r.N, r.Op, r.A, r.B)
 		if g[k] == nil {
 			g[k] = &acc{}
 		}
@@ -148,20 +151,27 @@ func summaries(rows []result) map[string]stats.Summary {
 	return out
 }
 
-// driveMem measures every candidate and a baseline in c.memRounds rounds of
-// separate processes, in a new random order each round.
+// driveMem measures every candidate of every value profile, and a baseline
+// per profile, in c.memRounds rounds of separate processes, in a new random
+// order each round.
 func driveMem(c config, self string) error {
-	impls := append([]string{"none"}, c.impls...)
+	type job struct{ profile, impl string }
+	var jobs []job
+	for _, p := range c.profiles {
+		for _, impl := range append([]string{"none"}, implsFor(p)...) {
+			jobs = append(jobs, job{p, impl})
+		}
+	}
 	path := filepath.Join(c.out, "mem.jsonl")
 	var rows []memResult
 	for round := 1; round <= c.memRounds; round++ {
-		order := slices.Clone(impls)
+		order := slices.Clone(jobs)
 		rand.New(rand.NewPCG(uint64(round), 7)).Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
 		for _, kind := range c.kinds {
-			for _, impl := range order {
-				args := []string{"-memchild", impl, "-keys", kind, "-n", strconv.Itoa(c.memN),
+			for _, jb := range order {
+				args := []string{"-memchild", jb.impl, "-keys", kind, "-values", jb.profile, "-n", strconv.Itoa(c.memN),
 					"-cycles", strconv.Itoa(c.cycles), "-layoutseed", strconv.Itoa(round)}
-				out, err := runChild(self, args, filepath.Join(c.out, "logs", fmt.Sprintf("mem-%s-%s-r%d.log", kind, impl, round)))
+				out, err := runChild(self, args, filepath.Join(c.out, "logs", fmt.Sprintf("mem-%s-%s-%s-r%d.log", kind, jb.profile, jb.impl, round)))
 				if err != nil {
 					return err
 				}
@@ -246,6 +256,7 @@ func writeRunInfo(c config, start time.Time) error {
 		"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
 		"cpu": strings.TrimSpace(string(cpu)), "args": os.Args[1:],
 		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
+		"values": c.profiles,
 	}
 	b, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {

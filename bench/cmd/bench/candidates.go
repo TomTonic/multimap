@@ -92,6 +92,20 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			}
 			sink += acc
 		}
+	case btreeMapC:
+		m := f.bm
+		return func(n uint64) {
+			var acc uint64
+			for range n {
+				if v, ok := m.Get(p.S[j]); ok {
+					acc += v
+				}
+				if j++; j == len(p.B) {
+					j = 0
+				}
+			}
+			sink += acc
+		}
 	}
 	return nil
 }
@@ -153,6 +167,18 @@ func (f *fixture) valuesBetween(impl string) func(uint64) {
 			}
 			sink += acc
 		}
+	case btreeMapC:
+		m := f.bm
+		return func(n uint64) {
+			var acc uint64
+			for range n {
+				acc += btreeMapRangeSum(m, from.S[j], to.S[j])
+				if j++; j == len(from.B) {
+					j = 0
+				}
+			}
+			sink += acc
+		}
 	}
 	return nil
 }
@@ -191,6 +217,9 @@ func (f *fixture) churn(impl string) func(uint64) {
 	case mapSets:
 		m := f.gm
 		return func(n uint64) { step(n, func(s []mutation) { applyMap(m, ks, s) }) }
+	case btreeMapC:
+		m := f.bm
+		return func(n uint64) { step(n, func(s []mutation) { applyBtreeMap(m, ks, s) }) }
 	}
 	return nil
 }
@@ -230,6 +259,14 @@ func (f *fixture) build(impl string) func(uint64) {
 				m := mapMM{}
 				applyMap(m, ks, ms)
 				sink += uint64(len(m))
+			}
+		}
+	case btreeMapC:
+		return func(n uint64) {
+			for range n {
+				m := &btreeMap{}
+				applyBtreeMap(m, ks, ms)
+				sink += uint64(m.Len())
 			}
 		}
 	}

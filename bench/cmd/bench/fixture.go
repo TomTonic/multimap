@@ -12,33 +12,51 @@ import (
 	"github.com/TomTonic/rtcompare"
 )
 
-// The four candidates a user chooses between. "btree-sets" and "map-sets" are
-// what one would write by hand without this library: a tidwall/btree.Map or a
-// Go map from string keys to Go-map sets, with empty keys removed as the
-// library does.
+// The candidates a user chooses between. "btree-sets" and "map-sets" are what
+// one would write by hand without this library: a tidwall/btree.Map or a Go
+// map from string keys to Go-map sets, with empty keys removed as the library
+// does. "btree-map" is a plain tidwall/btree.Map with one value per key, for
+// users whose keys (almost) never hold more than one value.
 const (
 	ordered   = "ordered"
 	hashed    = "hashed"
 	btreeSets = "btree-sets"
 	mapSets   = "map-sets"
+	btreeMapC = "btree-map"
 )
 
-var allImpls = []string{ordered, hashed, btreeSets, mapSets}
+// The value profiles: multi gives keys a skewed number of values (see
+// keys.Values), unique exactly one value per key.
+const (
+	multi  = "multi"
+	unique = "unique"
+)
+
+// implsFor returns the candidates compared under a value profile.
+func implsFor(profile string) []string {
+	if profile == unique {
+		return []string{ordered, btreeMapC}
+	}
+	return []string{ordered, hashed, btreeSets, mapSets}
+}
 
 type (
-	btreeMM = btree.Map[string, map[uint64]struct{}]
-	mapMM   = map[string]map[uint64]struct{}
+	btreeMM  = btree.Map[string, map[uint64]struct{}]
+	mapMM    = map[string]map[uint64]struct{}
+	btreeMap = btree.Map[string, uint64]
 )
 
 // fixture holds one scenario's corpus and every candidate built from it.
 type fixture struct {
-	c    keys.Corpus
-	vals []uint64
-	offs []int
-	ord  *multimap.Ordered[uint64]
-	hsh  *multimap.Hashed[uint64]
-	bt   *btreeMM
-	gm   mapMM
+	c       keys.Corpus
+	profile string
+	vals    []uint64
+	offs    []int
+	ord     *multimap.Ordered[uint64]
+	hsh     *multimap.Hashed[uint64]
+	bt      *btreeMM
+	gm      mapMM
+	bm      *btreeMap
 	// ranges of rangeKeys consecutive keys, as []byte and string views
 	from, to keys.Set
 	// index workloads: churn keys (corpus keys, then extra keys), the ratio of
@@ -52,17 +70,19 @@ type fixture struct {
 
 const rangeKeys = 100
 
-// newFixture generates the corpus and builds the candidates named in impls,
-// one after another. With -layoutseed the build order is shuffled and a random
-// spacer precedes each build, so that each process samples its own layout.
-func newFixture(kind keys.Kind, n int, impls []string) *fixture {
-	f := &fixture{c: keys.Generate(kind, n, 0x5EED)}
-	f.vals, f.offs = keys.Values(n, 0xFA11)
+// newFixture generates the corpus and its values under the value profile and
+// builds the candidates named in impls, one after another. With -layoutseed
+// the build order is shuffled and a random spacer precedes each build, so
+// that each process samples its own layout.
+func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture {
+	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
+	f.vals, f.offs = profileValues(profile, n)
 	builds := map[string]func(){
 		ordered:   func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
 		hashed:    func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
 		btreeSets: func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
 		mapSets:   func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
+		btreeMapC: func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
 	}
 	order := append([]string(nil), impls...)
 	layout.Shuffle(order)
@@ -71,7 +91,7 @@ func newFixture(kind keys.Kind, n int, impls []string) *fixture {
 		builds[name]()
 	}
 	f.from, f.to = ranges(f.c.Keys, n)
-	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:max(1, n/2)]...))
+	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:extraKeys(profile, n)]...))
 	f.ratio, f.cur = 2, map[string]*int{}
 	for _, name := range impls {
 		f.cur[name] = new(int)
@@ -79,10 +99,35 @@ func newFixture(kind keys.Kind, n int, impls []string) *fixture {
 	return f
 }
 
+// profileValues returns the values of n keys under a value profile: key i
+// holds vals[offs[i]:offs[i+1]].
+func profileValues(profile string, n int) (vals []uint64, offs []int) {
+	vals, offs = keys.Values(n, 0xFA11)
+	if profile != unique {
+		return vals, offs
+	}
+	// one value per key: the first of each key's multi values
+	one, idx := make([]uint64, n), make([]int, n+1)
+	for i := range n {
+		one[i], idx[i+1] = vals[offs[i]], i+1
+	}
+	return one, idx
+}
+
+// extraKeys is the number of keys that only the index workloads use: n/2 for
+// multi, where transient values also go to corpus keys; n for unique, where
+// each transient value needs a key of its own (see keyPool).
+func extraKeys(profile string, n int) int {
+	if profile == unique {
+		return n
+	}
+	return max(1, n/2)
+}
+
 // buildWorkload returns the build workload, computing it on first use.
 func (f *fixture) buildWorkload() []mutation {
 	if f.buildW == nil {
-		f.buildW = buildWorkload(len(f.c.Keys.B), f.vals, f.offs, f.ratio, 0xB11D)
+		f.buildW = buildWorkload(len(f.c.Keys.B), f.vals, f.offs, f.ratio, 0xB11D, f.profile == unique)
 	}
 	return f.buildW
 }
@@ -90,7 +135,7 @@ func (f *fixture) buildWorkload() []mutation {
 // churnWorkload returns the churn cycle, computing it on first use.
 func (f *fixture) churnWorkload() []mutation {
 	if f.churnW == nil {
-		f.churnW = churnWorkload(len(f.c.Keys.B), f.vals, f.ratio, 0xC4A2)
+		f.churnW = churnWorkload(len(f.c.Keys.B), f.vals, f.ratio, 0xC4A2, f.profile == unique)
 	}
 	return f.churnW
 }
@@ -110,6 +155,8 @@ func (f *fixture) settle() {
 			applyBtree(f.bt, f.ck.S, rest)
 		case mapSets:
 			applyMap(f.gm, f.ck.S, rest)
+		case btreeMapC:
+			applyBtreeMap(f.bm, f.ck.S, rest)
 		}
 		*j = 0
 	}
@@ -163,6 +210,16 @@ func buildMap(k []string, vals []uint64, offs []int) mapMM {
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
 			mapAdd(m, key, v)
+		}
+	}
+	return m
+}
+
+func buildBtreeMap(k []string, vals []uint64, offs []int) *btreeMap {
+	m := &btreeMap{}
+	for i, key := range k {
+		for _, v := range vals[offs[i]:offs[i+1]] {
+			m.Set(strings.Clone(key), v)
 		}
 	}
 	return m

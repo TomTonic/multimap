@@ -21,16 +21,16 @@ var sink uint64
 type pair struct{ op, a, b string }
 
 // pairsFor lists the comparisons of one scenario: Ordered against every
-// other candidate. Range queries on hashed and map-sets scan every key, so
-// they are compared only up to scanMax keys; building is compared only up to
-// buildMax keys. Both take too long per operation beyond that for the batch
-// size the fast Ordered side needs.
-func pairsFor(n int, ops []string, scanMax, buildMax int) []pair {
+// other candidate of the value profile. Range queries on hashed and map-sets
+// scan every key, so they are compared only up to scanMax keys; building is
+// compared only up to buildMax keys. Both take too long per operation beyond
+// that for the batch size the fast Ordered side needs.
+func pairsFor(n int, profile string, ops []string, scanMax, buildMax int) []pair {
 	var ps []pair
 	for _, op := range ops {
-		for _, b := range []string{hashed, btreeSets, mapSets} {
+		for _, b := range implsFor(profile)[1:] {
 			switch {
-			case op == "valuesBetween" && b != btreeSets && n > scanMax:
+			case op == "valuesBetween" && (b == hashed || b == mapSets) && n > scanMax:
 			case op == "build" && n > buildMax:
 			default:
 				ps = append(ps, pair{op, ordered, b})
@@ -43,6 +43,7 @@ func pairsFor(n int, ops []string, scanMax, buildMax int) []pair {
 // result is one comparison of one process, as written to the JSON lines file.
 type result struct {
 	Keys       string   `json:"keys"`
+	Values     string   `json:"values"`
 	N          int      `json:"n"`
 	Op         string   `json:"op"`
 	A          string   `json:"a"`
@@ -62,8 +63,8 @@ type result struct {
 // runSpeed is one child process: it builds every candidate, checks that they
 // agree, runs the comparisons of the scenario and writes one JSON line per
 // comparison to out. Reports go to stderr.
-func runSpeed(kind keys.Kind, n int, ratio float64, ps []pair, out io.Writer) error {
-	f := newFixture(kind, n, allImpls)
+func runSpeed(kind keys.Kind, profile string, n int, ratio float64, ps []pair, out io.Writer) error {
+	f := newFixture(kind, n, profile, implsFor(profile))
 	f.ratio = ratio
 	if err := f.verify(); err != nil {
 		return err
@@ -76,14 +77,14 @@ func runSpeed(kind keys.Kind, n int, ratio float64, ps []pair, out io.Writer) er
 			}
 		}
 		a, b := f.candidate(p.op, p.a), f.candidate(p.op, p.b)
-		fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", kind, n, p.op, p.a, p.b)
+		fmt.Fprintf(os.Stderr, "== %s %s n=%d %s: %s vs %s\n", kind, profile, n, p.op, p.a, p.b)
 		rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, p.op == "build"))
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "%s\n\n", rep)
 		if err := enc.Encode(result{
-			Keys: string(kind), N: n, Op: p.op, A: p.a, B: p.b, NsA: rep.NsPerOpA, NsB: rep.NsPerOpB,
+			Keys: string(kind), Values: profile, N: n, Op: p.op, A: p.a, B: p.b, NsA: rep.NsPerOpA, NsB: rep.NsPerOpB,
 			Delta: rep.Estimate.Delta, Low: rep.Estimate.Low, High: rep.Estimate.High,
 			Resolved: rep.Resolved, NoiseFloor: rep.NoiseFloor, InnerLoops: rep.ValidationA.InnerLoops,
 			LayoutSeed: layout.Seed(), Warnings: rep.Warnings,
@@ -104,6 +105,9 @@ func runSpeed(kind keys.Kind, n int, ratio float64, ps []pair, out io.Writer) er
 // verify makes sure all candidates answer identically before anything is
 // timed, so that a fast wrong answer cannot win.
 func (f *fixture) verify() error {
+	if f.profile == unique {
+		return f.verifyUnique()
+	}
 	n := len(f.c.Hits.B)
 	for i := range min(n, 20000) {
 		want := sum(f.ord.ValuesForSeq(f.c.Hits.B[i]))
@@ -124,6 +128,23 @@ func (f *fixture) verify() error {
 			if got := mapRangeSum(f.gm, f.from.S[i], f.to.S[i]); got != want {
 				return fmt.Errorf("map-sets disagrees on range %q..%q", f.from.S[i], f.to.S[i])
 			}
+		}
+	}
+	return nil
+}
+
+// verifyUnique is verify for the unique profile: ordered and btree-map.
+func (f *fixture) verifyUnique() error {
+	for i := range min(len(f.c.Hits.B), 20000) {
+		want := sum(f.ord.ValuesForSeq(f.c.Hits.B[i]))
+		if got, ok := f.bm.Get(f.c.Hits.S[i]); !ok || got != want {
+			return fmt.Errorf("btree-map disagrees on the value of %q", f.c.Hits.S[i])
+		}
+	}
+	for i := range min(len(f.from.B), 2000) {
+		want := sum(f.ord.ValuesBetweenInclusiveSeq(f.from.B[i], f.to.B[i]))
+		if got := btreeMapRangeSum(f.bm, f.from.S[i], f.to.S[i]); got != want {
+			return fmt.Errorf("btree-map disagrees on range %q..%q", f.from.S[i], f.to.S[i])
 		}
 	}
 	return nil
@@ -153,6 +174,10 @@ func (f *fixture) verifyBuild(impls ...string) error {
 			m := mapMM{}
 			applyMap(m, f.ck.S, ms)
 			keys, got = len(m), func(i int) uint64 { return mapSum(m, f.c.Keys.S[i]) }
+		case btreeMapC:
+			m := &btreeMap{}
+			applyBtreeMap(m, f.ck.S, ms)
+			keys, got = m.Len(), func(i int) uint64 { v, _ := m.Get(f.c.Keys.S[i]); return v }
 		}
 		if keys != n {
 			return fmt.Errorf("build workload leaves %s with %d keys, want %d", impl, keys, n)
@@ -219,5 +244,17 @@ func mapRangeSum(m mapMM, from, to string) uint64 {
 			}
 		}
 	}
+	return a
+}
+
+func btreeMapRangeSum(m *btreeMap, from, to string) uint64 {
+	var a uint64
+	m.Ascend(from, func(k string, v uint64) bool {
+		if k > to {
+			return false
+		}
+		a += v
+		return true
+	})
 	return a
 }

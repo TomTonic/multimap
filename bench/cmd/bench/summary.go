@@ -19,6 +19,7 @@ var opOrder = []string{"valuesFor", "valuesBetween", "churn", "build"}
 func writeSpeed(c config, rows []result) error {
 	type key struct {
 		keys    string
+		values  string
 		n       int
 		op      string
 		a, b    string
@@ -26,7 +27,7 @@ func writeSpeed(c config, rows []result) error {
 	}
 	groups := map[key][]result{}
 	for _, r := range rows {
-		k := key{r.Keys, r.N, r.Op, r.A, r.B, slices.Index(opOrder, r.Op)}
+		k := key{r.Keys, r.Values, r.N, r.Op, r.A, r.B, slices.Index(opOrder, r.Op)}
 		groups[k] = append(groups[k], r)
 	}
 	ks := make([]key, 0, len(groups))
@@ -34,12 +35,12 @@ func writeSpeed(c config, rows []result) error {
 		ks = append(ks, k)
 	}
 	slices.SortFunc(ks, func(x, y key) int {
-		return cmpAll(strings.Compare(x.keys, y.keys), x.n-y.n, x.opIndex-y.opIndex,
+		return cmpAll(strings.Compare(x.values, y.values), strings.Compare(x.keys, y.keys), x.n-y.n, x.opIndex-y.opIndex,
 			strings.Compare(x.a, y.a), strings.Compare(x.b, y.b))
 	})
 	var b strings.Builder
-	b.WriteString("| keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | ratio | precise |\n")
-	b.WriteString("|---|---:|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---|\n")
+	b.WriteString("| values | keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | ratio | precise |\n")
+	b.WriteString("|---|---|---:|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---|\n")
 	for _, k := range ks {
 		g := groups[k]
 		var d, h, na, nb []float64
@@ -54,8 +55,8 @@ func writeSpeed(c config, rows []result) error {
 			iv = fmt.Sprintf("[%+.1f%%, %+.1f%%]", s.Low*100, s.High*100)
 			fiv = fmt.Sprintf(" [%.2f, %.2f]", speedup(s.Low), speedup(s.High))
 		}
-		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %d | %s | %s | %.2f×%s | %+.1f%% | %s | %.1f pts | %.1f | %s |\n",
-			k.keys, k.n, k.op, k.a, k.b, s.Procs, fmtNs(median(na)), fmtNs(median(nb)), speedup(s.Median), fiv,
+		fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | %.2f×%s | %+.1f%% | %s | %.1f pts | %.1f | %s |\n",
+			k.values, k.keys, k.n, k.op, k.a, k.b, s.Procs, fmtNs(median(na)), fmtNs(median(nb)), speedup(s.Median), fiv,
 			s.Median*100, iv, s.SD*100, s.Ratio, yesNo(s.Precise(c.abs, c.rel)))
 	}
 	b.WriteString("\nA speed vs B: how many operations A completes in the time B needs for one (2.00× = twice as fast, 0.50× = half as fast), from the median difference; the bracket is its 95% interval across processes. Difference: rtcompare's relative difference, positive when A is faster. Ratio: spread between processes over the standard error one process reports.\n")
@@ -65,27 +66,30 @@ func writeSpeed(c config, rows []result) error {
 // writeMem writes mem-summary.md: medians over the rounds, with the GC cost of
 // the baseline process (corpus only) subtracted.
 func writeMem(c config, rows []memResult) error {
-	type key struct{ keys, impl string }
+	type key struct{ values, keys, impl string }
 	groups := map[key][]memResult{}
 	for _, r := range rows {
-		groups[key{r.Keys, r.Impl}] = append(groups[key{r.Keys, r.Impl}], r)
+		k := key{r.Values, r.Keys, r.Impl}
+		groups[k] = append(groups[k], r)
 	}
 	var b strings.Builder
-	b.WriteString("| keys | candidate | rounds | heap B/key | scannable B/key | GC CPU per cycle | heap B/key after removing half the keys |\n")
-	b.WriteString("|---|---|---:|---:|---:|---:|---:|\n")
-	for _, kind := range c.kinds {
-		base := median(field(groups[key{kind, "none"}], func(r memResult) float64 { return r.GCCPUMs }))
-		for _, impl := range c.impls {
-			g := groups[key{kind, impl}]
-			if len(g) == 0 {
-				continue
+	b.WriteString("| values | keys | candidate | rounds | heap B/key | scannable B/key | GC CPU per cycle | heap B/key after removing half the keys |\n")
+	b.WriteString("|---|---|---|---:|---:|---:|---:|---:|\n")
+	for _, profile := range c.profiles {
+		for _, kind := range c.kinds {
+			base := median(field(groups[key{profile, kind, "none"}], func(r memResult) float64 { return r.GCCPUMs }))
+			for _, impl := range implsFor(profile) {
+				g := groups[key{profile, kind, impl}]
+				if len(g) == 0 {
+					continue
+				}
+				f := func(get func(memResult) float64) float64 { return median(field(g, get)) }
+				fmt.Fprintf(&b, "| %s | %s | %s | %d | %.0f | %.0f | %+.0f ms | %.0f |\n", profile, kind, impl, len(g),
+					f(func(r memResult) float64 { return r.HeapPerKey }),
+					f(func(r memResult) float64 { return r.ScanPerKey }),
+					f(func(r memResult) float64 { return r.GCCPUMs })-base,
+					f(func(r memResult) float64 { return r.HalfHeapPerKey }))
 			}
-			f := func(get func(memResult) float64) float64 { return median(field(g, get)) }
-			fmt.Fprintf(&b, "| %s | %s | %d | %.0f | %.0f | %+.0f ms | %.0f |\n", kind, impl, len(g),
-				f(func(r memResult) float64 { return r.HeapPerKey }),
-				f(func(r memResult) float64 { return r.ScanPerKey }),
-				f(func(r memResult) float64 { return r.GCCPUMs })-base,
-				f(func(r memResult) float64 { return r.HalfHeapPerKey }))
 		}
 	}
 	fmt.Fprintf(&b, "\n%d keys. Heap figures exclude the key corpus. GC CPU is per full cycle minus a process that holds only the corpus. After removing every second key, bytes are still per key of the full corpus.\n", c.memN)

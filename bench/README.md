@@ -15,11 +15,13 @@ inherit the benchmark's dependencies.
 | `hashed` | [`multimap.Hashed`](../hashed.go), a Go map from keys to the same value sets | this library's choice when range queries are rare |
 | `btree-sets` | [`tidwall/btree`](https://github.com/tidwall/btree)`.Map[string, map[T]struct{}]` | the ordered multimap you would build by hand, on the most widely used Go B-tree |
 | `map-sets` | `map[string]map[T]struct{}` | the unordered multimap you would build by hand |
+| `btree-map` | [`tidwall/btree`](https://github.com/tidwall/btree)`.Map[string, T]`, one value per key | what you would use if your keys (almost) never hold more than one value: is `ordered` still a good choice then? |
 
 The hand-written candidates own their keys, as the library does, and remove
 a key once its last value is gone. Every candidate is called through its
 concrete type, as you would call it. Every comparison is `ordered` against one
-of the others.
+of the others: `hashed`, `btree-sets` and `map-sets` with the usual number of
+values per key, `btree-map` with exactly one value per key (see below).
 
 The insertions and deletions of `churn` and `build` are computed before
 timing starts, by simulating the workload: a deletion is drawn only from
@@ -39,8 +41,14 @@ Each comparison runs with 4,096 keys, which fit in the CPU caches, and with
 1,048,576 keys, which do not. Keys are either `u64` (random 64-bit integers,
 8 bytes big endian) or `str` (path-like strings such as `tenant/category/word/12345`,
 about 26 bytes). Values are `uint64`, and their number per key is skewed like
-a real index: 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and 3%
-hold 17-200.
+a real index (`-values multi`): 50% of keys hold 1 value, 35% hold 2-4, 12%
+hold 5-16 and 3% hold 17-200.
+
+With `-values unique`, every key holds exactly one value, like an index on a
+unique column, and `ordered` is compared with `btree-map`. In `churn` and
+`build`, every new value then goes to a key of its own, which appears with
+the value and disappears with it: the simulation hands each new value a free
+key from a pool and takes the key back when the value is deleted.
 
 ## Results
 
@@ -128,7 +136,7 @@ order each, and the tables show medians.
 ## Running
 
 ```sh
-go run ./cmd/bench                                  # the full suite: 2.5 hours on an M1 Pro
+go run ./cmd/bench                                  # the full suite: about 3 hours on an M1 Pro
 go run ./cmd/bench -sizes 4096 -skipmem             # a quicker subset
 go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 2 -maxprocs 2 -memn 16384 -memrounds 1
 go run ./cmd/summarize results/speed.jsonl          # pool the raw results again
