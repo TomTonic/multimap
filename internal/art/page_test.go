@@ -1,6 +1,8 @@
 package art
 
 import (
+	"bytes"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -238,9 +240,134 @@ func TestPageNLifecycle(t *testing.T) {
 	delete(ref, "ac")
 	compare(t, &m, ref, r)
 	checkInvariants(t, &m.t)
-	// A longer key makes the externally stored "ab" the term of a new node.
+	// Longer keys join "ab" in an S page, and once they overflow the largest
+	// one, the externally stored "ab" becomes the term of a new node.
 	add([]byte("abx"), 1)
+	if n, _ := m.t.find([]byte("ab")); n.kind != kPageS {
+		t.Fatalf("keys of different lengths do not share an S page")
+	}
+	for b := range byte(40) {
+		add([]byte{'a', 'b', 'x', b}, 1)
+	}
 	if n, _ := m.t.find([]byte("ab")); n.kind != kLeaf {
 		t.Fatalf("the term key \"ab\" is not a leaf")
+	}
+}
+
+// TestPageSLifecycle makes sure that string keys of any length keep all their
+// values while the pages that hold them change underneath. It covers the S
+// pages of the ART behind multimap.Ordered: a page grows through every class
+// as keys arrive and learns a shorter shared prefix when a key does not share
+// the one it has, bursts into a node with smaller pages when it overflows,
+// finds keys that differ only beyond their first 8 suffix bytes or in
+// trailing zero bytes, moves values out to external sets, sends a key too long
+// for any page to a leaf, and shrinks back through the classes as keys leave.
+// After every step the map must match a reference and satisfy the structural
+// invariants.
+func TestPageSLifecycle(t *testing.T) {
+	r := rand.New(rand.NewPCG(5, 6))
+	var m Map[uint64]
+	ref := reference{}
+	add := func(k string, vs ...uint64) {
+		t.Helper()
+		for _, v := range vs {
+			m.Add([]byte(k), v)
+			ref.add([]byte(k), v)
+		}
+		compare(t, &m, ref, r)
+		checkInvariants(t, &m.t)
+	}
+	page := func(k string) *pageHead {
+		t.Helper()
+		n, _ := m.t.find([]byte(k))
+		if n == nil || n.kind != kPageS {
+			t.Fatalf("key %q is not in an S page", k)
+		}
+		return asPage(n)
+	}
+	item := func(i int) string { return fmt.Sprintf("tenant/category/item-%02d/%d", i, 1000+i*7) }
+
+	// Keys that share a page grow it through every class; the first key's
+	// page knows it alone, so the second teaches it a shorter prefix.
+	var classes []int
+	for i := range 22 {
+		add(item(i), uint64(i))
+		classes = append(classes, int(page(item(i)).class))
+	}
+	if m.t.root.kind != kPageS || !slices.IsSorted(classes) || classes[0] != 0 || classes[len(classes)-1] != 3 {
+		t.Fatalf("classes while growing = %v, want one page growing from class 0 to 3", classes)
+	}
+	if b := int(asPage(m.t.root).base); b != len("tenant/category/item-") {
+		t.Fatalf("shared prefix of %d bytes, want %d", b, len("tenant/category/item-"))
+	}
+	// More keys overflow the largest page: it bursts into a node with pages.
+	for i := 22; i < 40; i++ {
+		add(item(i), uint64(i))
+	}
+	if m.t.root.kind < kN4 {
+		t.Fatalf("the full page did not burst: root kind %d", m.t.root.kind)
+	}
+
+	// Keys that share their first 8 suffix bytes, or differ in trailing
+	// zeros, share a head word; the tails and lengths tell them apart.
+	for _, k := range []string{"zz/abcdefgh", "zz/abcdefgh1", "zz/abcdefgh2", "zz/abcdefgh12", "zz/ab", "zz/ab\x00", "zz/ab\x00\x00"} {
+		add(k, 1)
+	}
+
+	// A key too long for any page goes to a leaf among pages.
+	long := "zz/abcdefgh1" + string(bytes.Repeat([]byte{'x'}, maxPageKey))
+	add(long, 1)
+	if n, _ := m.t.find([]byte(long)); n.kind != kLeaf {
+		t.Fatalf("a key of %d bytes is not a leaf", len(long))
+	}
+
+	// Values beyond inlineMax move to external sets. The smallest class has
+	// no external slot, a larger one has a few, and beyond those the
+	// subtree is rebuilt.
+	many := func(from int) []uint64 {
+		out := make([]uint64, inlineMax+1)
+		for i := range out {
+			out[i] = uint64(from + i)
+		}
+		return out
+	}
+	add("vv/key-1-string", 1)
+	add("vv/key-2-string", 2)
+	add("vv/key-1-string", many(10)...)
+	if p := page("vv/key-1-string"); p.extUsed() != 1 {
+		t.Fatalf("a key with %d values uses %d external sets", inlineMax+1, p.extUsed())
+	}
+	for i, k := range []string{"vv/key-2-string", "vv/key-3-string", "vv/key-4-string", "vv/key-5-string"} {
+		add(k, many(100*(i+1))...)
+	}
+	for v := range uint64(inlineMax + 1) {
+		m.Remove([]byte("vv/key-1-string"), 10+v)
+		ref.remove([]byte("vv/key-1-string"), 10+v)
+	}
+	compare(t, &m, ref, r)
+	checkInvariants(t, &m.t)
+
+	// Removing the keys again shrinks the pages back through the classes.
+	shrunk := false
+	for i := 39; i >= 0; i-- {
+		before := page(item(0)).class
+		m.RemoveKey([]byte(item(i)))
+		delete(ref, item(i))
+		if i > 0 && page(item(0)).class < before {
+			shrunk = true
+		}
+	}
+	compare(t, &m, ref, r)
+	checkInvariants(t, &m.t)
+	if !shrunk {
+		t.Fatalf("no page shrank while its keys were removed")
+	}
+	for _, k := range ref.sortedKeys() {
+		m.RemoveKey([]byte(k))
+		delete(ref, k)
+		checkInvariants(t, &m.t)
+	}
+	if m.Len() != 0 || m.t.root != nil {
+		t.Fatalf("%d keys left", m.Len())
 	}
 }

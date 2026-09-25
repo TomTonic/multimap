@@ -40,11 +40,12 @@ import (
 type kind uint8
 
 // The kinds that end a descent come first, so that one comparison
-// (kind <= kPageN) detects them.
+// (kind <= kPageS) detects them.
 const (
 	kLeaf  kind = iota + 1
 	kPage       // U8-1 page, see page.go
 	kPageN      // U8-n page, see pagen.go
+	kPageS      // S page, see pages.go
 	kN4
 	kN11
 	kN25

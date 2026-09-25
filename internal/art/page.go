@@ -14,13 +14,19 @@ import (
 // sorted arrays, so that a lookup ends in one object and a range scan walks
 // contiguous memory.
 //
-// The only page type so far is U8-1: keys of one common length of at most 8
-// bytes (integer keys are 8), each with exactly one value of a small
-// pointer-free type (see Tree.small). A page stores the full keys, as
-// big-endian words, so it never depends on where in the tree it sits: when a
-// node above it collapses, the page just moves up. Keys and values are plain
-// words, so the page contains no pointers and the garbage collector never
-// scans it.
+// Pages hold values of a small pointer-free type only (see Tree.small). There
+// are three page types:
+//
+//   - U8-1 (this file): keys of one common length of at most 8 bytes (integer
+//     keys are 8), each with exactly one value. The keys are stored as
+//     big-endian words; keys and values are plain words, so the page contains
+//     no pointers and the garbage collector never scans it.
+//   - U8-n (pagen.go): keys like U8-1, with any number of values each.
+//   - S (pages.go): keys of any lengths up to maxPageKey, with any number of
+//     values each.
+//
+// Every page can rebuild its full keys, so it never depends on where in the
+// tree it sits: when a node above it collapses, the page just moves up.
 
 // pageCaps are the capacities of the four page classes.
 var pageCaps = [4]int{3, 7, 15, 31}
@@ -28,11 +34,13 @@ var pageCaps = [4]int{3, 7, 15, 31}
 // pageHead is the start of every page (8 B), U8-1 and U8-n alike.
 type pageHead struct {
 	kind  kind
-	class uint8 // index into pageCaps (U8-1) or nLayouts (U8-n)
+	class uint8 // index into pageCaps (U8-1), nLayouts (U8-n) or sSizes (S)
 	count uint8 // keys
-	klen  uint8 // length of every key in the page, 0..8
-	nv    uint8 // U8-n: values held inline
-	_     [3]uint8
+	klen  uint8 // U8: length of every key in the page, 0..8
+	nv    uint8 // U8-n and S: values held inline
+	kcap  uint8 // S: key slots
+	vcap  uint8 // S: inline value slots
+	base  uint8 // S: length of the prefix all keys share
 }
 
 // The page classes: 56, 120, 248 and 504 bytes, allocated as 64, 128, 256
@@ -84,8 +92,8 @@ func newPage(class int) *pageHead {
 	return p
 }
 
-// keys returns the page's keys, in ascending order. Pages of both types keep
-// them at the same place.
+// keys returns the keys of a U8 page, in ascending order. Pages of both U8
+// types keep them at the same place.
 func (p *pageHead) keys() []uint64 {
 	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), headsOff)), p.count)
 }
@@ -119,8 +127,12 @@ func wordKey(w uint64, l int, buf *[8]byte) []byte {
 	return buf[:l]
 }
 
-// search returns the position of key w in the page, or where it would be
+// search returns the position of key w in a U8 page, or where it would be
 // inserted, and whether it is there.
+func (p *pageHead) search(w uint64) (int, bool) { return search(p.keys(), w) }
+
+// search returns the position of the first word in h, which is sorted, that
+// is not below w, and whether it is w.
 //
 // Heads 0-14 fill the page's first 128 bytes, one cache line on Apple
 // silicon. One comparison with head 14 picks the line that holds w, and a
@@ -129,8 +141,7 @@ func wordKey(w uint64, l int, buf *[8]byte) []byte {
 // once it is not; a linear search over all heads is as fast in the cache but
 // loses 25-35% without it, and counting all heads without branching is
 // slower in both.
-func (p *pageHead) search(w uint64) (int, bool) {
-	h := p.keys()
+func search(h []uint64, w uint64) (int, bool) {
 	i := 0
 	if len(h) > 15 && h[14] < w {
 		i = 15
@@ -203,14 +214,29 @@ type item struct {
 	leaf *leafHead
 }
 
-// pageItems returns the keys of page p, of either type, as items, in order.
+// key returns key i of a page of any type, rebuilt in buf.
+func (p *pageHead) key(i int, buf *keyBuf) []byte {
+	if p.kind == kPageS {
+		return p.sKey(i, buf)
+	}
+	return wordKey(p.keys()[i], int(p.klen), (*[8]byte)(buf[:8]))
+}
+
+// pageItems returns the keys of page p, of any type, as items, in order.
 func pageItems(p *pageHead) []item {
-	n, l := int(p.count), int(p.klen)
-	buf := make([]byte, 8*n)
+	n := int(p.count)
+	var buf []byte
 	out := make([]item, n)
-	for i, w := range p.keys() {
-		binary.BigEndian.PutUint64(buf[8*i:], w)
-		out[i].key = buf[8*i : 8*i+l : 8*i+l]
+	var kb keyBuf
+	ends := make([]int, n)
+	for i := range n {
+		buf = append(buf, p.key(i, &kb)...)
+		ends[i] = len(buf)
+	}
+	start := 0
+	for i, e := range ends {
+		out[i].key = buf[start:e:e]
+		start = e
 	}
 	if p.kind == kPage {
 		vs := p.vals()
@@ -231,20 +257,30 @@ func pageItems(p *pageHead) []item {
 	return out
 }
 
-// pageFor returns the page that holds items, or nil if they do not fit one:
-// all of them must be keys of one length of at most 8 bytes, without a leaf.
-// Keys with one value each go into a U8-1 page if there are at most 31;
-// otherwise a U8-n page takes them if its largest class holds them.
-func (t *Tree) pageFor(items []item) *pageHead {
+// pageFor returns the page that holds items, or nil if they do not fit one.
+// Keys of one length of at most 8 bytes go into a U8 page, all others into an
+// S page (see sPack). Only trees with pages rebuild subtrees, so the values
+// may go into pages.
+func pageFor(items []item) *pageHead {
 	l := len(items[0].key)
-	if !t.small || l > 8 {
-		return nil
+	for _, it := range items {
+		if len(it.key) != l || l > 8 {
+			return sPack(items)
+		}
 	}
+	return u8Pack(items)
+}
+
+// u8Pack returns the U8 page that holds items, keys of one length of at most
+// 8 bytes, or nil if they do not fit one. Keys with one value each go into a
+// U8-1 page if there are at most 31; otherwise a U8-n page takes them if its
+// largest class holds them.
+func u8Pack(items []item) *pageHead {
+	l := len(items[0].key)
 	single, inline, sets := true, 0, 0
 	for _, it := range items {
+		// No item is a leaf: a key that must be one is longer than 8 bytes.
 		switch {
-		case it.leaf != nil || len(it.key) != l:
-			return nil
 		case it.set != nil:
 			sets++
 			single = false
@@ -268,18 +304,11 @@ func (t *Tree) pageFor(items []item) *pageHead {
 	}
 	p := newPageN(c)
 	p.count, p.klen, p.nv = uint8(len(items)), uint8(l), uint8(inline)
-	h, cs, ex, vs := p.nHeads(), p.cnts(), p.exts(), p.nvals()
-	off, slot := 0, 0
+	h := p.nHeads()
 	for i, it := range items {
 		h[i] = keyWord(it.key)
-		if it.set != nil {
-			ex[slot], cs[i] = it.set, extBit|uint8(slot)
-			slot++
-			continue
-		}
-		off += copy(vs[off:], it.vals)
-		cs[i] = uint8(len(it.vals))
 	}
+	p.fillVals(items)
 	return p
 }
 
@@ -292,7 +321,7 @@ func (t *Tree) build(items []item, depth int) *header {
 	if len(items) == 1 && items[0].leaf != nil {
 		return leafHdr(items[0].leaf)
 	}
-	if p := t.pageFor(items); p != nil {
+	if p := pageFor(items); p != nil {
 		return pageHdr(p)
 	}
 	first, last := items[0].key, items[len(items)-1].key
@@ -303,9 +332,9 @@ func (t *Tree) build(items []item, depth int) *header {
 	d := depth + plen
 	h := &n.header
 	if len(items[0].key) == d {
-		// A key that ends here sorts first. It is never a leaf already: the
-		// keys of a page have one length, and a key that must be a leaf is
-		// longer than any of them.
+		// A key that ends here sorts first. It is never a leaf already: a key
+		// that must be a leaf is longer than any key a page holds, and all
+		// other items come from one page.
 		h.term = t.mk(items[0])
 		items = items[1:]
 	}

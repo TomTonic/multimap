@@ -33,7 +33,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			*loc = t.newChild(key, v, nl)
 			return t.created(*loc)
 		}
-		if n.kind == kPage || n.kind == kPageN {
+		if n.kind != kLeaf && n.kind <= kPageS {
 			return t.upsertPage(loc, key, depth, v, nl)
 		}
 		if n.kind == kLeaf {
@@ -43,7 +43,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			// MatchPrefix settles paths of up to 8 bytes; a longer path, or
 			// one that does not match, needs the position of the mismatch.
 			if n.plen > 8 || !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
-				var buf [8]byte
+				var buf keyBuf
 				pk := fullPrefix(n, depth, &buf)
 				if mis := swar.Lcp(pk, key[depth:]); mis < len(pk) {
 					return t.splitPrefix(loc, n, pk, mis, key, depth, v, nl)
@@ -70,16 +70,22 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 	}
 }
 
+// pageable reports whether key may go into a page.
+func (t *Tree) pageable(key []byte) bool { return t.small && len(key) <= maxPageKey }
+
 // newChild returns a new page holding key with the raw value v when the key
 // fits a page, else a new leaf made by nl.
 func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc) *header {
-	if t.small && len(key) <= 8 {
+	switch {
+	case !t.pageable(key):
+		return leafHdr(nl(key))
+	case len(key) <= 8:
 		p := newPage(0)
 		p.count, p.klen = 1, uint8(len(key))
 		p.heads()[0], p.vals()[0] = keyWord(key), v
 		return pageHdr(p)
 	}
-	return leafHdr(nl(key))
+	return pageHdr(sPack([]item{{key: key, vals: []uint64{v}}}))
 }
 
 // created counts the new key held by c, a child made by newChild.
@@ -96,7 +102,20 @@ func (t *Tree) created(c *header) spot {
 // the page is full or the key does not fit it.
 func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newLeafFunc) spot {
 	p := asPage(*loc)
-	if len(key) == int(p.klen) {
+	if p.kind == kPageS {
+		if p.sMatch(key) {
+			s := key[p.base:]
+			i, ok := p.sSearch(s)
+			if ok {
+				return spot{at: loc, i: i, depth: depth}
+			}
+			if p.sRoom(len(s)) {
+				p.sInsertKey(i, s, v)
+				t.size++
+				return spot{created: true}
+			}
+		}
+	} else if len(key) == int(p.klen) {
 		w := keyWord(key)
 		i, ok := p.search(w)
 		switch {
@@ -119,7 +138,7 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 		}
 	}
 	it := item{key: key, vals: []uint64{v}}
-	if !t.small || len(key) > 8 {
+	if !t.pageable(key) {
 		it = item{key: key, leaf: nl(key)}
 	}
 	items := pageItems(p)
@@ -154,12 +173,16 @@ func (t *Tree) addToSingle(sp spot, v uint64) {
 }
 
 // addInline adds the raw value v to the inline values of the key at sp, in a
-// U8-n page, which holds fewer than inlineMax. The page grows into a larger
-// class when it is full; beyond the largest, the subtree is rebuilt.
+// U8-n or S page, which holds fewer than inlineMax. A full U8-n page grows
+// into a larger class; beyond the largest, and for a full S page, the subtree
+// is rebuilt.
 func (t *Tree) addInline(sp spot, v uint64) {
 	p := asPage(*sp.at)
 	if int(p.nv) == p.layout().vals {
-		c := nClassFor(int(p.count), int(p.nv)+1, p.extUsed())
+		c := -1
+		if p.kind == kPageN {
+			c = nClassFor(int(p.count), int(p.nv)+1, p.extUsed())
+		}
 		if c < 0 {
 			t.rebuild(sp, func(it *item) { it.vals = append(it.vals, v) })
 			return
@@ -170,15 +193,18 @@ func (t *Tree) addInline(sp spot, v uint64) {
 	p.nAddVal(sp.i, v)
 }
 
-// externalize moves the inline values of the key at sp, in a U8-n page, to
-// the external set s, which the caller filled with them and the new value.
-// The page grows into a class with a free external slot when it has none;
-// beyond the largest, the subtree is rebuilt.
+// externalize moves the inline values of the key at sp, in a U8-n or S page,
+// to the external set s, which the caller filled with them and the new value.
+// A U8-n page without a free external slot grows into a class with one;
+// beyond the largest, and for an S page, the subtree is rebuilt.
 func (t *Tree) externalize(sp spot, s unsafe.Pointer) {
 	p := asPage(*sp.at)
 	if p.extUsed() == p.layout().ext {
-		_, n, _ := p.run(sp.i)
-		c := nClassFor(int(p.count), int(p.nv)-n, p.extUsed()+1)
+		c := -1
+		if p.kind == kPageN {
+			_, n, _ := p.run(sp.i)
+			c = nClassFor(int(p.count), int(p.nv)-n, p.extUsed()+1)
+		}
 		if c < 0 {
 			t.rebuild(sp, func(it *item) { it.vals, it.set = nil, s })
 			return

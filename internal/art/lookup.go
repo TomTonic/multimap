@@ -37,10 +37,16 @@ func (t *Tree) find(key []byte) (*header, int) {
 	depth := 0
 	skipped := false // whether path bytes beyond the eighth went unchecked
 	for n != nil {
-		if n.kind <= kPageN {
+		if n.kind <= kPageS {
 			if n.kind != kLeaf { // pages hold full keys
 				p := asPage(n)
-				if len(key) == int(p.klen) {
+				if n.kind == kPageS {
+					if p.sMatch(key) {
+						if i, ok := p.sSearch(key[p.base:]); ok {
+							return n, i
+						}
+					}
+				} else if len(key) == int(p.klen) {
 					if i, ok := p.search(keyWord(key)); ok {
 						return n, i
 					}
@@ -143,13 +149,17 @@ func findLoc(n *header, b byte) **header {
 	return &asN11(n).child[i]
 }
 
-// minLeaf returns the leaf with the smallest key below n. It is only used
-// below paths longer than 8 bytes (see fullPrefix), where no page can lie:
-// page keys are at most 8 bytes long.
-func minLeaf(n *header) *leafHead {
-	for n.kind != kLeaf {
-		if n.term != nil {
-			return n.term // a prefix of every other key below n
+// minKey returns the smallest key below n; buf backs it when it comes from a
+// page.
+func minKey(n *header, buf *keyBuf) []byte {
+	for {
+		switch {
+		case n.kind == kLeaf:
+			return asLeaf(n).key()
+		case n.kind <= kPageS:
+			return asPage(n).key(0, buf)
+		case n.term != nil:
+			return n.term.key() // a prefix of every other key below n
 		}
 		switch n.kind {
 		case kN25, kN57:
@@ -167,16 +177,15 @@ func minLeaf(n *header) *leafHead {
 			n = child[0]
 		}
 	}
-	return asLeaf(n)
 }
 
 // fullPrefix returns the complete compressed path of n, whose first byte is
 // at key depth depth. Paths longer than the 8 bytes stored inline are read
-// from a leaf below n; buf backs the result otherwise.
-func fullPrefix(n *header, depth int, buf *[8]byte) []byte {
+// from a key below n. buf may back the result.
+func fullPrefix(n *header, depth int, buf *keyBuf) []byte {
 	if n.plen <= 8 {
-		*buf = n.prefix
+		copy(buf[:], n.prefix[:])
 		return buf[:n.plen]
 	}
-	return minLeaf(n).key()[depth : depth+int(n.plen)]
+	return minKey(n, buf)[depth : depth+int(n.plen)]
 }

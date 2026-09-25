@@ -38,16 +38,17 @@ type (
 	}
 )
 
-// nLayout describes one U8-n class: its capacities and where its arrays lie.
+// nLayout describes where a page with values held like this keeps its keys,
+// counts and values: a U8-n class, or an S page (see sLayout).
 type nLayout struct {
-	keys, vals, ext         int
-	cntOff, extOff, valsOff uintptr
+	keys, vals, ext                   int
+	headsOff, cntOff, extOff, valsOff uintptr
 }
 
 var nLayouts = [3]nLayout{
-	{4, 9, 1, unsafe.Offsetof(pageN4{}.cnt), unsafe.Offsetof(pageN4{}.ext), unsafe.Offsetof(pageN4{}.vals)},
-	{8, 20, 2, unsafe.Offsetof(pageN8{}.cnt), unsafe.Offsetof(pageN8{}.ext), unsafe.Offsetof(pageN8{}.vals)},
-	{16, 41, 4, unsafe.Offsetof(pageN16{}.cnt), unsafe.Offsetof(pageN16{}.ext), unsafe.Offsetof(pageN16{}.vals)},
+	{4, 9, 1, headsOff, unsafe.Offsetof(pageN4{}.cnt), unsafe.Offsetof(pageN4{}.ext), unsafe.Offsetof(pageN4{}.vals)},
+	{8, 20, 2, headsOff, unsafe.Offsetof(pageN8{}.cnt), unsafe.Offsetof(pageN8{}.ext), unsafe.Offsetof(pageN8{}.vals)},
+	{16, 41, 4, headsOff, unsafe.Offsetof(pageN16{}.cnt), unsafe.Offsetof(pageN16{}.ext), unsafe.Offsetof(pageN16{}.vals)},
 }
 
 const (
@@ -82,12 +83,19 @@ func nClassFor(k, v, e int) int {
 	return -1
 }
 
-func (p *pageHead) layout() *nLayout { return &nLayouts[p.class] }
+// layout returns where a U8-n or S page keeps its arrays.
+func (p *pageHead) layout() nLayout {
+	if p.kind == kPageS {
+		return p.sLayout().nLayout
+	}
+	return nLayouts[p.class]
+}
 
-// nHeads, cnts, exts and nvals return the arrays of a U8-n page, over its
-// full capacity.
+// nHeads, cnts, exts and nvals return the arrays of a U8-n or S page, over
+// their full capacity.
 func (p *pageHead) nHeads() []uint64 {
-	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), headsOff)), p.layout().keys)
+	l := p.layout()
+	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.headsOff)), l.keys)
 }
 
 func (p *pageHead) cnts() []uint8 {
@@ -223,10 +231,23 @@ func (p *pageHead) nExternalize(i int, s unsafe.Pointer) {
 // smaller replacement once it holds few enough keys and values, or nil once
 // it is empty.
 func (p *pageHead) nRemoveKey(i int) *pageHead {
-	cnt := int(p.count)
-	if cnt == 1 {
+	if p.count == 1 {
 		return nil
 	}
+	p.nDropKey(i)
+	if p.class > 0 {
+		l := nLayouts[p.class-1]
+		if int(p.count) <= l.keys/2 && int(p.nv) <= l.vals/2 && p.extUsed() <= l.ext {
+			return p.nResize(int(p.class) - 1)
+		}
+	}
+	return p
+}
+
+// nDropKey removes key i with its values, inline or external, from its
+// head, count and value arrays.
+func (p *pageHead) nDropKey(i int) {
+	cnt := int(p.count)
 	off, n, e := p.run(i)
 	if e >= 0 {
 		p.exts()[e] = nil
@@ -239,11 +260,20 @@ func (p *pageHead) nRemoveKey(i int) *pageHead {
 	copy(h[i:cnt-1], h[i+1:cnt])
 	copy(c[i:cnt-1], c[i+1:cnt])
 	p.count--
-	if p.class > 0 {
-		l := nLayouts[p.class-1]
-		if int(p.count) <= l.keys/2 && int(p.nv) <= l.vals/2 && p.extUsed() <= l.ext {
-			return p.nResize(int(p.class) - 1)
+}
+
+// fillVals stores the values of items, inline or as external sets, in the new
+// U8-n or S page p, key by key.
+func (p *pageHead) fillVals(items []item) {
+	cs, ex, vs := p.cnts(), p.exts(), p.nvals()
+	off, slot := 0, 0
+	for i, it := range items {
+		if it.set != nil {
+			ex[slot], cs[i] = it.set, extBit|uint8(slot)
+			slot++
+			continue
 		}
+		off += copy(vs[off:], it.vals)
+		cs[i] = uint8(len(it.vals))
 	}
-	return p
 }

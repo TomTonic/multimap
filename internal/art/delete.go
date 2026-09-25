@@ -40,6 +40,16 @@ func del(loc **header, key []byte, depth int) bool {
 			*loc = pageHdr(p.nRemoveKey(i))
 		}
 		return ok
+	case kPageS:
+		p := asPage(n)
+		if !p.sMatch(key) {
+			return false
+		}
+		i, ok := p.sSearch(key[p.base:])
+		if ok {
+			*loc = pageHdr(p.sRemoveKey(i))
+		}
+		return ok
 	case kLeaf:
 		if !bytes.Equal(asLeaf(n).key(), key) {
 			return false
@@ -85,7 +95,7 @@ func collapse(n *header) *header {
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.kind <= kPageN { // leaves and pages hold full keys: they just move up
+	if c.kind <= kPageS { // leaves and pages hold full keys: they just move up
 		return c
 	}
 	var buf [8]byte

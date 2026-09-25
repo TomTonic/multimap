@@ -104,43 +104,64 @@ func (r reference) sortedKeys() []string {
 	return keys
 }
 
+// withoutPages returns an empty map that keeps every key in a generic leaf, as
+// a map of a value type that pages do not take would.
+func withoutPages() *Map[uint64] {
+	m := &Map[uint64]{}
+	m.prep()
+	m.t.small = false
+	return m
+}
+
 // TestAgainstReference checks that the ordered multimap behind
 // multimap.Ordered stores, finds, removes and ranges over keys and values
 // exactly like a trivially correct reference, through phases of growth and
 // of heavy deletion, and that after every phase the tree has the shape its
-// invariants demand (see checkInvariants).
+// invariants demand (see checkInvariants). It runs every key set twice: with
+// pages, as for small plain values, and with generic leaves only, as for any
+// other value type.
 func TestAgainstReference(t *testing.T) {
 	for name, keys := range keySets() {
-		t.Run(name, func(t *testing.T) {
-			r := rand.New(rand.NewPCG(7, 8))
-			var m Map[uint64]
-			ref := reference{}
-			for phase := range 6 {
-				removing := phase%2 == 1
-				for _, k := range keys {
-					switch op := r.IntN(10); {
-					case removing && op < 3:
-						m.RemoveKey(k)
-						delete(ref, string(k))
-					case removing && op < 7:
-						v := uint64(r.IntN(8))
-						m.Remove(k, v)
-						ref.remove(k, v)
-					case !removing || op < 8:
-						for range 1 + r.IntN(4) {
-							v := uint64(r.IntN(8))
-							if r.IntN(30) == 0 {
-								v = uint64(r.IntN(200)) // spill into array and hash
-							}
-							m.Add(k, v)
-							ref.add(k, v)
-						}
+		for _, leaves := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/leaves=%v", name, leaves), func(t *testing.T) {
+				checkAgainstReference(t, keys, leaves)
+			})
+		}
+	}
+}
+
+// checkAgainstReference runs the phases of TestAgainstReference over keys.
+func checkAgainstReference(t *testing.T, keys [][]byte, leaves bool) {
+	r := rand.New(rand.NewPCG(7, 8))
+	m := &Map[uint64]{}
+	if leaves {
+		m = withoutPages()
+	}
+	ref := reference{}
+	for phase := range 6 {
+		removing := phase%2 == 1
+		for _, k := range keys {
+			switch op := r.IntN(10); {
+			case removing && op < 3:
+				m.RemoveKey(k)
+				delete(ref, string(k))
+			case removing && op < 7:
+				v := uint64(r.IntN(8))
+				m.Remove(k, v)
+				ref.remove(k, v)
+			case !removing || op < 8:
+				for range 1 + r.IntN(4) {
+					v := uint64(r.IntN(8))
+					if r.IntN(30) == 0 {
+						v = uint64(r.IntN(200)) // spill into array and hash
 					}
+					m.Add(k, v)
+					ref.add(k, v)
 				}
-				compare(t, &m, ref, r)
-				checkInvariants(t, &m.t)
 			}
-		})
+		}
+		compare(t, m, ref, r)
+		checkInvariants(t, &m.t)
 	}
 }
 
@@ -423,9 +444,9 @@ func TestLeafLayout(t *testing.T) {
 // TestPageLayout makes sure that pages, which hold the short keys of
 // multimap.Ordered together with their values, fill whole cache-line sized
 // Go size classes and keep keys and values where the untyped code expects
-// them. It covers the four U8-1 and three U8-n page classes of the ART behind
-// Ordered and checks each class's size, capacity and the offsets of its
-// arrays.
+// them. It covers the four U8-1, three U8-n and four S page classes of the ART
+// behind Ordered and checks each class's size, capacity and the offsets of
+// its arrays.
 func TestPageLayout(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
@@ -457,6 +478,25 @@ func TestPageLayout(t *testing.T) {
 			// search and scan read the keys of both page types at headsOff
 			if tc.size != tc.want || tc.heads != headsOff {
 				t.Fatalf("size %d, keys at %d; want %d and %d", tc.size, tc.heads, tc.want, headsOff)
+			}
+		})
+	}
+	for c, tc := range []struct {
+		name            string
+		size, body, ext uintptr
+	}{
+		{"S: 64 bytes without external slots", unsafe.Sizeof(pageS64{}), unsafe.Offsetof(pageS64{}.body), 0},
+		{"S: 128 bytes with 1 external slot", unsafe.Sizeof(pageS128{}), unsafe.Offsetof(pageS128{}.body), uintptr(len(pageS128{}.ext))},
+		{"S: 256 bytes with 2 external slots", unsafe.Sizeof(pageS256{}), unsafe.Offsetof(pageS256{}.body), uintptr(len(pageS256{}.ext))},
+		{"S: 512 bytes with 4 external slots", unsafe.Sizeof(pageS512{}), unsafe.Offsetof(pageS512{}.body), uintptr(len(pageS512{}.ext))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// sLayout puts the external slots right after the head and
+			// computes the rest up to the class size
+			p := newPageS(c)
+			if tc.size != uintptr(sSizes[c]) || tc.ext != uintptr(sExt[c]) || tc.body != headsOff+8*tc.ext ||
+				p.sLayout().end != tc.size || p.sLayout().headsOff != tc.body {
+				t.Fatalf("size %d, %d external slots, body at %d; want %d, %d and %d", tc.size, tc.ext, tc.body, sSizes[c], sExt[c], headsOff+8*tc.ext)
 			}
 		})
 	}
@@ -494,7 +534,7 @@ func checkNode(t *testing.T, n *header, depth int) int {
 		}
 		return 1
 	}
-	if n.kind == kPage || n.kind == kPageN {
+	if n.kind <= kPageS {
 		return checkPage(t, asPage(n), depth)
 	}
 	limits := map[kind][2]int{kN4: {1, 4}, kN11: {shrink11 + 1, 11}, kN25: {shrink25 + 1, 25},
@@ -571,11 +611,11 @@ func walkKeys(n *header, fn func([]byte)) {
 	case kLeaf:
 		fn(asLeaf(n).key())
 		return
-	case kPage, kPageN:
+	case kPage, kPageN, kPageS:
 		p := asPage(n)
-		var buf [8]byte
-		for _, w := range p.keys() {
-			fn(wordKey(w, int(p.klen), &buf))
+		var buf keyBuf
+		for i := range int(p.count) {
+			fn(p.key(i, &buf))
 		}
 		return
 	}
@@ -585,13 +625,16 @@ func walkKeys(n *header, fn func([]byte)) {
 	eachChild(n, func(_ byte, c *header) { walkKeys(c, fn) })
 }
 
-// checkPage checks the invariants of a page of either type whose path starts
-// at depth and returns its number of keys: keys of one length of at most 8
-// bytes, strictly ascending, no shorter than its depth. A U8-1 page must be of
-// a class that fits the count without being one a removal should have
-// shrunk; a U8-n page must account for its inline values and external sets.
+// checkPage checks the invariants of a page of any type whose path starts at
+// depth and returns its number of keys. The keys of a U8 page have one length
+// of at most 8 bytes and ascend strictly. A U8-1 page must be of a class that
+// fits the count without being one a removal should have shrunk; U8-n and S
+// pages must account for their inline values and external sets.
 func checkPage(t *testing.T, p *pageHead, depth int) int {
 	t.Helper()
+	if p.kind == kPageS {
+		return checkPageS(t, p, depth)
+	}
 	n, c := int(p.count), int(p.class)
 	if p.klen > 8 || int(p.klen) < depth {
 		t.Fatalf("page keys of length %d at depth %d", p.klen, depth)
@@ -608,9 +651,18 @@ func checkPage(t *testing.T, p *pageHead, depth int) int {
 		}
 		return n
 	}
-	l := nLayouts[c]
+	checkVals(t, p, nLayouts[c])
+	return n
+}
+
+// checkVals checks the value arrays of a U8-n or S page with layout l: every
+// key holds 1 to inlineMax values inline or refers to an external set of its
+// own, and the page counts them right.
+func checkVals(t *testing.T, p *pageHead, l nLayout) {
+	t.Helper()
+	n := int(p.count)
 	if n < 1 || n > l.keys || int(p.nv) > l.vals {
-		t.Fatalf("U8-n page of class %d holds %d keys and %d values", c, n, p.nv)
+		t.Fatalf("page of kind %d, class %d holds %d keys and %d values", p.kind, p.class, n, p.nv)
 	}
 	inline, used := 0, map[int]bool{}
 	for i, x := range p.cnts()[:n] {
@@ -628,7 +680,40 @@ func checkPage(t *testing.T, p *pageHead, depth int) int {
 		}
 	}
 	if inline != int(p.nv) || len(used) != p.extUsed() {
-		t.Fatalf("U8-n page counts %d inline values and %d sets, holds %d and %d", p.nv, p.extUsed(), inline, len(used))
+		t.Fatalf("page counts %d inline values and %d sets, holds %d and %d", p.nv, p.extUsed(), inline, len(used))
+	}
+}
+
+// checkPageS checks an S page: its arrays and byte area fit its class, its
+// keys ascend strictly, are no shorter than its depth and no longer than
+// maxPageKey, share its prefix, and have head words and tails packed as
+// sSearch expects them; and its values are accounted for.
+func checkPageS(t *testing.T, p *pageHead, depth int) int {
+	t.Helper()
+	l := p.sLayout()
+	if int(p.class) >= len(sSizes) || l.bytesOff > l.end || p.count > p.kcap {
+		t.Fatalf("S page of class %d with %d of %d keys and %d value slots overflows", p.class, p.count, p.kcap, p.vcap)
+	}
+	checkVals(t, p, l.nLayout)
+	n, b := int(p.count), int(p.base)
+	lens, offs := p.sLens(&l), p.sOffs(&l)
+	if p.sUsed(&l) > len(p.sBytes(&l)) || int(offs[0]) != b {
+		t.Fatalf("S page uses %d of %d bytes, first tail at %d after a prefix of %d", p.sUsed(&l), len(p.sBytes(&l)), offs[0], b)
+	}
+	var buf, prev keyBuf
+	var last []byte
+	for i := range n {
+		k := p.key(i, &buf)
+		if i > 0 && int(offs[i]) != int(offs[i-1])+tailLen(lens[i-1]) {
+			t.Fatalf("tail %d starts at %d, not right after the one before", i, offs[i])
+		}
+		if len(k) < depth || len(k) > maxPageKey || p.sKeys(&l)[i] != headWord(k[b:]) {
+			t.Fatalf("S page key %q at depth %d: bad length or head word %x", k, depth, p.sKeys(&l)[i])
+		}
+		if i > 0 && bytes.Compare(last, k) >= 0 {
+			t.Fatalf("S page keys not strictly ascending: %q, %q", last, k)
+		}
+		last = append(prev[:0], k...)
 	}
 	return n
 }
@@ -690,38 +775,44 @@ func TestShrinkAndCollapse(t *testing.T) {
 // FuzzOperations drives the tree with arbitrary operation sequences over
 // short keys from a tiny alphabet (which maximises shared paths, splits and
 // merges), checking every result against the reference and the structural
-// invariants at the end.
+// invariants at the end, once with pages and once with generic leaves only.
 func FuzzOperations(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
 	f.Fuzz(func(t *testing.T, ops []byte) {
-		var m Map[uint64]
-		ref := reference{}
-		for len(ops) >= 2 {
-			op, n := ops[0], int(ops[1]%6)
-			ops = ops[2:]
-			if len(ops) < n {
-				break
-			}
-			k := make([]byte, n)
-			for i := range k {
-				k[i] = ops[i] % 4
-			}
-			ops = ops[n:]
-			v := uint64(op >> 2)
-			switch op % 4 {
-			case 0, 1:
-				m.Add(k, v)
-				ref.add(k, v)
-			case 2:
-				m.Remove(k, v)
-				ref.remove(k, v)
-			default:
-				m.RemoveKey(k)
-				delete(ref, string(k))
-			}
-		}
-		compare(t, &m, ref, rand.New(rand.NewPCG(1, 1)))
-		checkInvariants(t, &m.t)
+		checkOperations(t, &Map[uint64]{}, ops)
+		checkOperations(t, withoutPages(), ops)
 	})
+}
+
+// checkOperations applies the operations encoded in ops to m (see
+// FuzzOperations) and compares the result with the reference.
+func checkOperations(t *testing.T, m *Map[uint64], ops []byte) {
+	ref := reference{}
+	for len(ops) >= 2 {
+		op, n := ops[0], int(ops[1]%6)
+		ops = ops[2:]
+		if len(ops) < n {
+			break
+		}
+		k := make([]byte, n)
+		for i := range k {
+			k[i] = ops[i] % 4
+		}
+		ops = ops[n:]
+		v := uint64(op >> 2)
+		switch op % 4 {
+		case 0, 1:
+			m.Add(k, v)
+			ref.add(k, v)
+		case 2:
+			m.Remove(k, v)
+			ref.remove(k, v)
+		default:
+			m.RemoveKey(k)
+			delete(ref, string(k))
+		}
+	}
+	compare(t, m, ref, rand.New(rand.NewPCG(1, 1)))
+	checkInvariants(t, &m.t)
 }

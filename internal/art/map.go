@@ -7,10 +7,10 @@ import (
 	"github.com/TomTonic/multimap/internal/vset"
 )
 
-// Map is a multimap from byte-string keys to sets of T on top of Tree. A key
-// with several values, or one that does not fit a page, has a leaf that holds
-// its values inline (vset.Set); a short key with a single small value sits in
-// a page (see page.go). The zero value is an empty map.
+// Map is a multimap from byte-string keys to sets of T on top of Tree. When T
+// is small and pointer-free, keys of up to maxPageKey bytes sit in pages with
+// their values (see page.go); every other key has a leaf that holds its
+// values in a vset.Set. The zero value is an empty map.
 type Map[T comparable] struct {
 	t Tree
 }
@@ -250,14 +250,14 @@ func leafTail[T comparable]() uintptr { return unsafe.Sizeof(leaf[T, [16]byte]{}
 // returns false. The key and the values belong to the map: fn must not modify
 // or retain them, and must not modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte, vals View[T]) bool) {
-	var buf [8]byte
+	var buf keyBuf
 	m.t.scan(b, leafTail[T](), func(n *header, i, j int) bool {
 		if n.kind == kLeaf {
 			return fn(asLeaf(n).key(), view[T](n, 0))
 		}
 		p := asPage(n)
-		for k, w := range p.keys()[i:j] {
-			if !fn(wordKey(w, int(p.klen), &buf), view[T](n, i+k)) {
+		for k := i; k < j; k++ {
+			if !fn(p.key(k, &buf), view[T](n, k)) {
 				return false
 			}
 		}
