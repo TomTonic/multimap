@@ -136,3 +136,22 @@ Examples / consequences:
 See the `example_test.go` in this package for runnable examples that also appear
 in generated GoDoc.
 
+## Acknowledgements
+
+`multimap` stands on the shoulders of others. Thank you!
+
+- The tree behind `Ordered` follows **the Adaptive Radix Tree** by Viktor Leis,
+  Alfons Kemper and Thomas Neumann:
+  [The Adaptive Radix Tree: ARTful Indexing for Main-Memory Databases](https://db.in.tum.de/~leis/papers/ART.pdf)
+  (ICDE 2013). Nodes that grow and shrink with their number of children, path
+  compression and lazy expansion come from there; the node sizes, the child
+  search and the value sets in the leaves are this project's own.
+- The child search in the small nodes uses the **"has zero byte" SWAR trick**
+  collected in Sean Eron Anderson's
+  [Bit Twiddling Hacks](https://graphics.stanford.edu/~seander/bithacks.html#ZeroInWord)
+  (after Alan Mycroft).
+- [plar/go-adaptive-radix-tree](https://github.com/plar/go-adaptive-radix-tree),
+  [plar/go-hot-trie](https://github.com/plar/go-hot-trie) and
+  [tidwall/btree](https://github.com/tidwall/btree) served as yardsticks while
+  the design took shape (see [`bench/_archive`](bench/_archive/README.md)). No
+  code of theirs is included.
