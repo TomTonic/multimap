@@ -6,7 +6,6 @@ import (
 	set3 "github.com/TomTonic/Set3"
 
 	"github.com/TomTonic/multimap/internal/art"
-	"github.com/TomTonic/multimap/internal/vset"
 )
 
 // Ordered is a multimap backed by an adaptive radix tree. Point operations
@@ -41,7 +40,7 @@ func (m *Ordered[T]) RemoveKey(key Key) { m.m.RemoveKey(key) }
 func (m *Ordered[T]) Clear() { m.m.Clear() }
 
 // ContainsKey reports whether key is present.
-func (m *Ordered[T]) ContainsKey(key Key) bool { return m.m.Values(key) != nil }
+func (m *Ordered[T]) ContainsKey(key Key) bool { return m.m.Values(key).Found() }
 
 // NumberOfKeys returns the number of keys.
 func (m *Ordered[T]) NumberOfKeys() uint64 { return uint64(m.m.Len()) }
@@ -51,11 +50,7 @@ func (m *Ordered[T]) ValuesFor(key Key) *set3.Set3[T] { return collect(m.ValuesF
 
 // ValuesForSeq iterates over the values of key.
 func (m *Ordered[T]) ValuesForSeq(key Key) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		if s := m.m.Values(key); s != nil {
-			s.Each(yield)
-		}
-	}
+	return func(yield func(T) bool) { m.m.Values(key).Each(yield) }
 }
 
 // rangeSeq iterates over the values of all keys within b, key by key in
@@ -143,7 +138,7 @@ func (m *Ordered[T]) AllKeys() []Key {
 // views into the multimap and must not be modified or retained.
 func (m *Ordered[T]) AllKeysSeq() iter.Seq[Key] {
 	return func(yield func(Key) bool) {
-		m.m.Range(&art.Bounds{}, func(k []byte, _ *vset.Set[T]) bool { return yield(k) })
+		m.m.Range(&art.Bounds{}, func(k []byte, _ art.View[T]) bool { return yield(k) })
 	}
 }
 

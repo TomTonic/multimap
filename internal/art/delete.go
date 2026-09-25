@@ -6,58 +6,64 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// remove deletes the leaf of key and returns it, or nil if key is absent.
-func (t *Tree) remove(key []byte) *leafHead {
-	l := del(&t.root, key, 0)
-	if l != nil {
+// remove deletes key and reports whether it was there.
+func (t *Tree) remove(key []byte) bool {
+	ok := del(&t.root, key, 0)
+	if ok {
 		t.size--
 	}
-	return l
+	return ok
 }
 
-// del deletes the leaf of key from the subtree at *loc, whose compressed path
-// starts at key depth depth. On the way back up, every node on the path
-// shrinks to the smallest kind that fits and collapses when it no longer
-// branches, so the tree after a delete has the shape it would have had if the
-// key had never been inserted.
-func del(loc **header, key []byte, depth int) *leafHead {
+// del deletes key from the subtree at *loc, whose compressed path starts at
+// key depth depth, and reports whether it was there. On the way back up,
+// every node on the path shrinks to the smallest kind that fits and collapses
+// when it no longer branches, so the tree after a delete has the shape it
+// would have had if the key had never been inserted.
+func del(loc **header, key []byte, depth int) bool {
 	n := *loc
 	if n == nil {
-		return nil
+		return false
 	}
-	if n.kind == kLeaf {
-		l := asLeaf(n)
-		if !bytes.Equal(l.key(), key) {
-			return nil
+	switch n.kind {
+	case kPage:
+		p := asPage(n)
+		if len(key) != int(p.klen) {
+			return false
+		}
+		i, ok := p.search(keyWord(key))
+		if ok {
+			*loc = pageHdr(p.removeAt(i))
+		}
+		return ok
+	case kLeaf:
+		if !bytes.Equal(asLeaf(n).key(), key) {
+			return false
 		}
 		*loc = nil
-		return l
+		return true
 	}
 	if n.plen != 0 && !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
-		return nil
+		return false
 	}
 	d := depth + int(n.plen)
-	var l *leafHead
 	if d == len(key) {
 		if n.term == nil || !bytes.Equal(n.term.key(), key) {
-			return nil
+			return false
 		}
-		l, n.term = n.term, nil
+		n.term = nil
 	} else {
 		b := key[d]
 		c := findLoc(n, b)
-		if c == nil {
-			return nil
-		}
-		if l = del(c, key, d+1); l == nil {
-			return nil
+		if c == nil || !del(c, key, d+1) {
+			return false
 		}
 		if *c == nil {
 			n = removeChild(n, b)
 		}
 	}
 	*loc = collapse(n)
-	return l
+	return true
 }
 
 // collapse replaces an inner node that no longer branches: without children
@@ -75,7 +81,7 @@ func collapse(n *header) *header {
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.kind == kLeaf {
+	if c.kind <= kPage { // a leaf or a page holds full keys: it just moves up
 		return c
 	}
 	var buf [8]byte

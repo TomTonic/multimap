@@ -11,6 +11,11 @@ import (
 type Tree struct {
 	root *header
 	size int
+	// Set by Map[T] before the first write: whether its values may go into
+	// pages (small and pointer-free, see smallPlain), and how to make a leaf
+	// for a key and one raw value when a key leaves a page.
+	small bool
+	mk    func(key []byte, raw uint64) *leafHead
 }
 
 // Len returns the number of keys.
@@ -19,32 +24,42 @@ func (t *Tree) Len() int { return t.size }
 // Clear removes all keys.
 func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 
-// find returns the leaf of key, or nil.
+// find returns where key is: its leaf (with i = 0) or its page and its
+// position there, or nil.
 //
 // This is the hot path of every point operation. It is one loop over the
 // levels with every node search written out, so that the search helpers are
 // inlined and no call is made per level; that is why it is longer than the
 // project's usual function size.
-func (t *Tree) find(key []byte) *leafHead {
+func (t *Tree) find(key []byte) (*header, int) {
 	n := t.root
 	depth := 0
 	skipped := false // whether path bytes beyond the eighth went unchecked
 	for n != nil {
-		if n.kind == kLeaf {
+		if n.kind <= kPage {
+			if n.kind == kPage { // pages hold full keys
+				p := asPage(n)
+				if len(key) == int(p.klen) {
+					if i, ok := p.search(keyWord(key)); ok {
+						return n, i
+					}
+				}
+				return nil, 0
+			}
 			// Every key below a path starts with it, so once the whole path
 			// to the leaf is checked, only the rest of the key needs comparing.
 			from := depth
 			if skipped {
 				from = 0
 			}
-			if l := asLeaf(n); bytes.Equal(l.key()[from:], key[from:]) {
-				return l
+			if bytes.Equal(asLeaf(n).key()[from:], key[from:]) {
+				return n, 0
 			}
-			return nil
+			return nil, 0
 		}
 		if n.plen != 0 {
 			if !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
-				return nil
+				return nil, 0
 			}
 			if n.plen > 8 {
 				skipped = true
@@ -53,7 +68,7 @@ func (t *Tree) find(key []byte) *leafHead {
 		}
 		if depth == len(key) {
 			if n.term == nil {
-				return nil
+				return nil, 0
 			}
 			n = leafHdr(n.term)
 			continue
@@ -65,7 +80,7 @@ func (t *Tree) find(key []byte) *leafHead {
 			x := asN4(n)
 			i := swar.Index8(swar.Word(x.keys[:]), b)
 			if i >= int(x.count) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[i&3]
 		case kN11:
@@ -75,26 +90,26 @@ func (t *Tree) find(key []byte) *leafHead {
 				i = 8 + swar.Index8(swar.Word(x.keys[8:16]), b)
 			}
 			if i >= int(x.count) || i >= 11 {
-				return nil
+				return nil, 0
 			}
 			n = x.child[i]
 		case kN25:
 			x := asN25(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
 		case kN57:
 			x := asN57(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
 		default:
 			n = asN256(n).child[b]
 		}
 	}
-	return nil
+	return nil, 0
 }
 
 // findLoc returns the slot holding the child for byte b, or nil.
@@ -127,7 +142,9 @@ func findLoc(n *header, b byte) **header {
 	return &asN11(n).child[i]
 }
 
-// minLeaf returns the leaf with the smallest key below n.
+// minLeaf returns the leaf with the smallest key below n. It is only used
+// below paths longer than 8 bytes (see fullPrefix), where no page can lie:
+// page keys are at most 8 bytes long.
 func minLeaf(n *header) *leafHead {
 	for n.kind != kLeaf {
 		if n.term != nil {

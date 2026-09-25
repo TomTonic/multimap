@@ -16,10 +16,11 @@ type Bounds struct {
 	FromIncl, ToIncl bool
 }
 
-// scan calls fn for every leaf within b, in ascending key order, until fn
+// scan calls fn for every leaf within b (with i, j = 0, 1) and for every run
+// of positions [i, j) of a page within b, in ascending key order, until fn
 // returns false. leafTail is the offset of the last byte of a leaf, which
 // the scan touches ahead (see touchChildren).
-func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
+func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(n *header, i, j int) bool) {
 	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, fn)
 }
 
@@ -30,12 +31,15 @@ func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
 // are checked structurally: a node's path and child bytes are compared with a
 // bound only while on its path, so a subtree strictly inside the range is
 // visited without reading a single key.
-func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, fn func(*leafHead) bool) bool {
+func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, fn func(n *header, i, j int) bool) bool {
 	if n == nil {
 		return true
 	}
 	if n.kind == kLeaf {
 		return scanLeaf(asLeaf(n), b, lo, hi, fn)
+	}
+	if n.kind == kPage {
+		return scanPage(asPage(n), b, lo, hi, fn)
 	}
 	if (lo || hi) && n.plen > 0 {
 		var buf [8]byte
@@ -69,7 +73,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 		lo = false
 	}
 	if n.term != nil && !lo && (!termIsFrom || b.FromIncl) && (!termIsTo || b.ToIncl) {
-		if !fn(n.term) {
+		if !fn(leafHdr(n.term), 0, 1) {
 			return false
 		}
 	}
@@ -90,7 +94,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 	return !hi // on To's path, everything after the child for hiB is above To
 }
 
-func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(*leafHead) bool) bool {
+func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
 	if lo {
 		if c := bytes.Compare(l.key(), b.From); c < 0 || (c == 0 && !b.FromIncl) {
 			return true
@@ -101,12 +105,40 @@ func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(*leafHead) bool) bool
 			return false
 		}
 	}
-	return fn(l)
+	return fn(leafHdr(l), 0, 1)
+}
+
+// scanPage hands fn the run of the page's keys within b. A page's keys are
+// full keys, so the bounds are compared directly, and only on their paths.
+func scanPage(p *pageHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
+	h, l := p.heads()[:p.count], int(p.klen)
+	i, j := 0, len(h)
+	var buf [8]byte
+	if lo {
+		for i < j {
+			if c := bytes.Compare(wordKey(h[i], l, &buf), b.From); c > 0 || (c == 0 && b.FromIncl) {
+				break
+			}
+			i++
+		}
+	}
+	if hi {
+		for j > i {
+			if c := bytes.Compare(wordKey(h[j-1], l, &buf), b.To); c < 0 || (c == 0 && b.ToIncl) {
+				break
+			}
+			j--
+		}
+	}
+	if i < j && !fn(pageHdr(p), i, j) {
+		return false
+	}
+	return !hi // on To's path, everything after the page is above To
 }
 
 // scanChildren visits the children with byte in [loB, hiB] in order. Only the
 // child for loB stays on From's path, only the one for hiB on To's.
-func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, fn func(*leafHead) bool) bool {
+func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, fn func(n *header, i, j int) bool) bool {
 	visit := func(c *header, k byte) bool {
 		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, fn)
 	}
