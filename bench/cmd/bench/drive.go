@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TomTonic/multimap/bench/awake"
 	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/multimap/bench/stats"
 )
@@ -33,6 +34,11 @@ func drive(c config) error {
 	}
 	start := time.Now()
 	logf("start: %s", strings.Join(os.Args[1:], " "))
+	if release, err := awake.Hold("benchmark run"); err != nil {
+		logf("warning: %v; the run goes on, and processes the machine slept through are flagged", err)
+	} else {
+		defer release()
+	}
 	if !c.skipSpeed {
 		if err := removeIfExists(filepath.Join(c.out, "speed.jsonl")); err != nil {
 			return err
@@ -184,8 +190,12 @@ func runChild(self string, args []string, logPath string) ([]byte, error) {
 	var out bytes.Buffer
 	cmd := exec.Command(self, args...)
 	cmd.Stdout, cmd.Stderr = &out, log
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%s %s: %w (see %s)", filepath.Base(self), strings.Join(args, " "), err, logPath)
+	}
+	if s := awake.Slept(start); s > 0 {
+		logf("warning: the machine slept %s during %s", s.Round(time.Second), filepath.Base(logPath))
 	}
 	return out.Bytes(), nil
 }
