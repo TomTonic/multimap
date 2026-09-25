@@ -3,6 +3,7 @@ package art
 import (
 	"bytes"
 	"slices"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
 )
@@ -32,7 +33,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			*loc = t.newChild(key, v, nl)
 			return t.created(*loc)
 		}
-		if n.kind == kPage {
+		if n.kind == kPage || n.kind == kPageN {
 			return t.upsertPage(loc, key, depth, v, nl)
 		}
 		if n.kind == kLeaf {
@@ -98,18 +99,28 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 	if len(key) == int(p.klen) {
 		w := keyWord(key)
 		i, ok := p.search(w)
-		if ok {
+		switch {
+		case ok:
 			return spot{at: loc, i: i, depth: depth}
-		}
-		if int(p.count) < pageCaps[len(pageCaps)-1] {
+		case p.kind == kPage && int(p.count) < pageCaps[len(pageCaps)-1]:
 			*loc = pageHdr(p.insertAt(i, w, v))
 			t.size++
 			return spot{created: true}
+		case p.kind == kPageN:
+			if c := nClassFor(int(p.count)+1, int(p.nv)+1, p.extUsed()); c >= 0 {
+				if c > int(p.class) {
+					p = p.nResize(c)
+				}
+				p.nInsertKey(i, w, v)
+				*loc = pageHdr(p)
+				t.size++
+				return spot{created: true}
+			}
 		}
 	}
-	it := item{key: key, val: v}
+	it := item{key: key, vals: []uint64{v}}
 	if !t.small || len(key) > 8 {
-		it.leaf = nl(key)
+		it = item{key: key, leaf: nl(key)}
 	}
 	items := pageItems(p)
 	i, _ := slices.BinarySearchFunc(items, key, func(x item, k []byte) int { return bytes.Compare(x.key, k) })
@@ -120,15 +131,62 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 	return sp
 }
 
-// promote moves the key at sp out of its page into a leaf that holds its
-// value, because the key is about to get a second one, and returns the leaf.
-// The page's subtree is rebuilt around it (see build).
-func (t *Tree) promote(sp spot) *leafHead {
+// rebuild rebuilds the subtree of the page at sp after change modified the
+// key at sp (see build).
+func (t *Tree) rebuild(sp spot, change func(*item)) {
 	items := pageItems(asPage(*sp.at))
-	it := &items[sp.i]
-	it.leaf = t.mk(it.key, it.val)
+	change(&items[sp.i])
 	*sp.at = t.build(items, sp.depth)
-	return it.leaf
+}
+
+// addToSingle gives the key at sp, in a U8-1 page, the second raw value v:
+// the page becomes a U8-n page, or, with more keys than one holds, the
+// subtree is rebuilt.
+func (t *Tree) addToSingle(sp spot, v uint64) {
+	p := asPage(*sp.at)
+	if int(p.count) <= nLayouts[len(nLayouts)-1].keys {
+		q := p.toN(1)
+		q.nAddVal(sp.i, v)
+		*sp.at = pageHdr(q)
+		return
+	}
+	t.rebuild(sp, func(it *item) { it.vals = append(it.vals, v) })
+}
+
+// addInline adds the raw value v to the inline values of the key at sp, in a
+// U8-n page, which holds fewer than inlineMax. The page grows into a larger
+// class when it is full; beyond the largest, the subtree is rebuilt.
+func (t *Tree) addInline(sp spot, v uint64) {
+	p := asPage(*sp.at)
+	if int(p.nv) == p.layout().vals {
+		c := nClassFor(int(p.count), int(p.nv)+1, p.extUsed())
+		if c < 0 {
+			t.rebuild(sp, func(it *item) { it.vals = append(it.vals, v) })
+			return
+		}
+		p = p.nResize(c)
+		*sp.at = pageHdr(p)
+	}
+	p.nAddVal(sp.i, v)
+}
+
+// externalize moves the inline values of the key at sp, in a U8-n page, to
+// the external set s, which the caller filled with them and the new value.
+// The page grows into a class with a free external slot when it has none;
+// beyond the largest, the subtree is rebuilt.
+func (t *Tree) externalize(sp spot, s unsafe.Pointer) {
+	p := asPage(*sp.at)
+	if p.extUsed() == p.layout().ext {
+		_, n, _ := p.run(sp.i)
+		c := nClassFor(int(p.count), int(p.nv)-n, p.extUsed()+1)
+		if c < 0 {
+			t.rebuild(sp, func(it *item) { it.vals, it.set = nil, s })
+			return
+		}
+		p = p.nResize(c)
+		*sp.at = pageHdr(p)
+	}
+	p.nExternalize(sp.i, s)
 }
 
 // splitLeaf handles an insert that reaches leaf l: either it is the key's

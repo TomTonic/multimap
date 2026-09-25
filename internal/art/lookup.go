@@ -13,9 +13,10 @@ type Tree struct {
 	size int
 	// Set by Map[T] before the first write: whether its values may go into
 	// pages (small and pointer-free, see smallPlain), and how to make a leaf
-	// for a key and one raw value when a key leaves a page.
+	// for a key of a page, with its raw values or its external set, when a
+	// rebuild needs it as a term.
 	small bool
-	mk    func(key []byte, raw uint64) *leafHead
+	mk    func(it item) *leafHead
 }
 
 // Len returns the number of keys.
@@ -36,8 +37,8 @@ func (t *Tree) find(key []byte) (*header, int) {
 	depth := 0
 	skipped := false // whether path bytes beyond the eighth went unchecked
 	for n != nil {
-		if n.kind <= kPage {
-			if n.kind == kPage { // pages hold full keys
+		if n.kind <= kPageN {
+			if n.kind != kLeaf { // pages hold full keys
 				p := asPage(n)
 				if len(key) == int(p.klen) {
 					if i, ok := p.search(keyWord(key)); ok {

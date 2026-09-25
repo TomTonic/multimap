@@ -421,10 +421,11 @@ func TestLeafLayout(t *testing.T) {
 }
 
 // TestPageLayout makes sure that pages, which hold the short keys of
-// multimap.Ordered together with their single values, fill whole cache-line
-// sized Go size classes and keep keys and values where the untyped code
-// expects them. It covers the four page classes of the ART behind Ordered
-// and checks each class's size, capacity and the offsets of its arrays.
+// multimap.Ordered together with their values, fill whole cache-line sized
+// Go size classes and keep keys and values where the untyped code expects
+// them. It covers the four U8-1 and three U8-n page classes of the ART behind
+// Ordered and checks each class's size, capacity and the offsets of its
+// arrays.
 func TestPageLayout(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
@@ -440,6 +441,22 @@ func TestPageLayout(t *testing.T) {
 			if tc.size != tc.want || tc.heads != headsOff || tc.vals != headsOff+8*tc.capa {
 				t.Fatalf("size %d, heads at %d, vals at %d; want %d, %d and %d",
 					tc.size, tc.heads, tc.vals, tc.want, headsOff, headsOff+8*tc.capa)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name        string
+		size, heads uintptr
+		want        uintptr
+	}{
+		{"U8-n: 4 keys and 9 values fit 128 bytes", unsafe.Sizeof(pageN4{}), unsafe.Offsetof(pageN4{}.heads), 128},
+		{"U8-n: 8 keys and 20 values fit 256 bytes", unsafe.Sizeof(pageN8{}), unsafe.Offsetof(pageN8{}.heads), 256},
+		{"U8-n: 16 keys and 41 values fit 512 bytes", unsafe.Sizeof(pageN16{}), unsafe.Offsetof(pageN16{}.heads), 512},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// search and scan read the keys of both page types at headsOff
+			if tc.size != tc.want || tc.heads != headsOff {
+				t.Fatalf("size %d, keys at %d; want %d and %d", tc.size, tc.heads, tc.want, headsOff)
 			}
 		})
 	}
@@ -477,7 +494,7 @@ func checkNode(t *testing.T, n *header, depth int) int {
 		}
 		return 1
 	}
-	if n.kind == kPage {
+	if n.kind == kPage || n.kind == kPageN {
 		return checkPage(t, asPage(n), depth)
 	}
 	limits := map[kind][2]int{kN4: {1, 4}, kN11: {shrink11 + 1, 11}, kN25: {shrink25 + 1, 25},
@@ -554,10 +571,10 @@ func walkKeys(n *header, fn func([]byte)) {
 	case kLeaf:
 		fn(asLeaf(n).key())
 		return
-	case kPage:
+	case kPage, kPageN:
 		p := asPage(n)
 		var buf [8]byte
-		for _, w := range p.heads()[:p.count] {
+		for _, w := range p.keys() {
 			fn(wordKey(w, int(p.klen), &buf))
 		}
 		return
@@ -568,24 +585,50 @@ func walkKeys(n *header, fn func([]byte)) {
 	eachChild(n, func(_ byte, c *header) { walkKeys(c, fn) })
 }
 
-// checkPage checks the invariants of a page whose path starts at depth and
-// returns its number of keys: keys of one length of at most 8 bytes, strictly
-// ascending, no longer than its depth, and a class that fits the count
-// without being one a removal should have shrunk.
+// checkPage checks the invariants of a page of either type whose path starts
+// at depth and returns its number of keys: keys of one length of at most 8
+// bytes, strictly ascending, no shorter than its depth. A U8-1 page must be of
+// a class that fits the count without being one a removal should have
+// shrunk; a U8-n page must account for its inline values and external sets.
 func checkPage(t *testing.T, p *pageHead, depth int) int {
 	t.Helper()
 	n, c := int(p.count), int(p.class)
-	if n < 1 || n > pageCaps[c] || (c > 0 && n <= pageShrink[c]) {
-		t.Fatalf("page of class %d (capacity %d) holds %d keys", c, pageCaps[c], n)
-	}
 	if p.klen > 8 || int(p.klen) < depth {
 		t.Fatalf("page keys of length %d at depth %d", p.klen, depth)
 	}
-	h := p.heads()[:n]
+	h := p.keys()
 	for i := 1; i < n; i++ {
 		if h[i-1] >= h[i] {
 			t.Fatalf("page keys not strictly ascending: %x", h)
 		}
+	}
+	if p.kind == kPage {
+		if n < 1 || n > pageCaps[c] || (c > 0 && n <= pageShrink[c]) {
+			t.Fatalf("page of class %d (capacity %d) holds %d keys", c, pageCaps[c], n)
+		}
+		return n
+	}
+	l := nLayouts[c]
+	if n < 1 || n > l.keys || int(p.nv) > l.vals {
+		t.Fatalf("U8-n page of class %d holds %d keys and %d values", c, n, p.nv)
+	}
+	inline, used := 0, map[int]bool{}
+	for i, x := range p.cnts()[:n] {
+		switch {
+		case x >= extBit:
+			e := int(x &^ extBit)
+			if e >= l.ext || used[e] || p.exts()[e] == nil {
+				t.Fatalf("key %d refers to external slot %d, which is out of range, shared or empty", i, e)
+			}
+			used[e] = true
+		case x < 1 || x > inlineMax:
+			t.Fatalf("key %d holds %d inline values", i, x)
+		default:
+			inline += int(x)
+		}
+	}
+	if inline != int(p.nv) || len(used) != p.extUsed() {
+		t.Fatalf("U8-n page counts %d inline values and %d sets, holds %d and %d", p.nv, p.extUsed(), inline, len(used))
 	}
 	return n
 }

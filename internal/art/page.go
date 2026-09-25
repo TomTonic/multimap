@@ -2,6 +2,7 @@ package art
 
 import (
 	"encoding/binary"
+	"slices"
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
@@ -24,13 +25,14 @@ import (
 // pageCaps are the capacities of the four page classes.
 var pageCaps = [4]int{3, 7, 15, 31}
 
-// pageHead is the start of every page (8 B).
+// pageHead is the start of every page (8 B), U8-1 and U8-n alike.
 type pageHead struct {
 	kind  kind
-	class uint8 // index into pageCaps
-	count uint8
+	class uint8 // index into pageCaps (U8-1) or nLayouts (U8-n)
+	count uint8 // keys
 	klen  uint8 // length of every key in the page, 0..8
-	_     uint32
+	nv    uint8 // U8-n: values held inline
+	_     [3]uint8
 }
 
 // The page classes: 56, 120, 248 and 504 bytes, allocated as 64, 128, 256
@@ -82,8 +84,14 @@ func newPage(class int) *pageHead {
 	return p
 }
 
-// heads returns the page's keys; vals their values. Both slices span the
-// page's capacity, of which the first count entries are in use.
+// keys returns the page's keys, in ascending order. Pages of both types keep
+// them at the same place.
+func (p *pageHead) keys() []uint64 {
+	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), headsOff)), p.count)
+}
+
+// heads returns the keys of a U8-1 page; vals their values. Both slices span
+// the page's capacity, of which the first count entries are in use.
 func (p *pageHead) heads() []uint64 {
 	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), headsOff)), pageCaps[p.class])
 }
@@ -122,7 +130,7 @@ func wordKey(w uint64, l int, buf *[8]byte) []byte {
 // loses 25-35% without it, and counting all heads without branching is
 // slower in both.
 func (p *pageHead) search(w uint64) (int, bool) {
-	h := p.heads()[:p.count]
+	h := p.keys()
 	i := 0
 	if len(h) > 15 && h[14] < w {
 		i = 15
@@ -185,58 +193,106 @@ func classFor(n int) int {
 	return c
 }
 
-// item is one key during a rebuild of a subtree (see build): either a key
-// with one raw value that may go into a page, or a key that must stay a leaf.
+// item is one key during a rebuild of a subtree (see build): a key with its
+// raw values (at most inlineMax) or with an external value set, either of
+// which may go into a page, or a key that must stay a leaf.
 type item struct {
 	key  []byte
-	val  uint64
+	vals []uint64
+	set  unsafe.Pointer
 	leaf *leafHead
 }
 
-// pageItems returns the keys of page p as items, in order.
+// pageItems returns the keys of page p, of either type, as items, in order.
 func pageItems(p *pageHead) []item {
 	n, l := int(p.count), int(p.klen)
 	buf := make([]byte, 8*n)
 	out := make([]item, n)
-	h, vs := p.heads(), p.vals()
-	for i := range n {
-		binary.BigEndian.PutUint64(buf[8*i:], h[i])
-		out[i] = item{key: buf[8*i : 8*i+l : 8*i+l], val: vs[i]}
+	for i, w := range p.keys() {
+		binary.BigEndian.PutUint64(buf[8*i:], w)
+		out[i].key = buf[8*i : 8*i+l : 8*i+l]
+	}
+	if p.kind == kPage {
+		vs := p.vals()
+		for i := range out {
+			out[i].vals = vs[i : i+1 : i+1]
+		}
+		return out
+	}
+	vs, ex := slices.Clone(p.nvals()[:p.nv]), p.exts()
+	for i := range out {
+		off, cnt, e := p.run(i)
+		if e >= 0 {
+			out[i].set = ex[e]
+		} else {
+			out[i].vals = vs[off : off+cnt : off+cnt]
+		}
 	}
 	return out
 }
 
-// pageable reports whether items can form one page: all of them keys with a
-// single raw value, of one length of at most 8 bytes, and no more than a page
-// holds.
-func (t *Tree) pageable(items []item) bool {
-	if !t.small || len(items) > pageCaps[len(pageCaps)-1] {
-		return false
-	}
+// pageFor returns the page that holds items, or nil if they do not fit one:
+// all of them must be keys of one length of at most 8 bytes, without a leaf.
+// Keys with one value each go into a U8-1 page if there are at most 31;
+// otherwise a U8-n page takes them if its largest class holds them.
+func (t *Tree) pageFor(items []item) *pageHead {
 	l := len(items[0].key)
+	if !t.small || l > 8 {
+		return nil
+	}
+	single, inline, sets := true, 0, 0
 	for _, it := range items {
-		if it.leaf != nil || len(it.key) != l || l > 8 {
-			return false
+		switch {
+		case it.leaf != nil || len(it.key) != l:
+			return nil
+		case it.set != nil:
+			sets++
+			single = false
+		default:
+			inline += len(it.vals)
+			single = single && len(it.vals) == 1
 		}
 	}
-	return true
+	if single && len(items) <= pageCaps[len(pageCaps)-1] {
+		p := newPage(classFor(len(items)))
+		p.count, p.klen = uint8(len(items)), uint8(l)
+		h, vs := p.heads(), p.vals()
+		for i, it := range items {
+			h[i], vs[i] = keyWord(it.key), it.vals[0]
+		}
+		return p
+	}
+	c := nClassFor(len(items), inline, sets)
+	if c < 0 {
+		return nil
+	}
+	p := newPageN(c)
+	p.count, p.klen, p.nv = uint8(len(items)), uint8(l), uint8(inline)
+	h, cs, ex, vs := p.nHeads(), p.cnts(), p.exts(), p.nvals()
+	off, slot := 0, 0
+	for i, it := range items {
+		h[i] = keyWord(it.key)
+		if it.set != nil {
+			ex[slot], cs[i] = it.set, extBit|uint8(slot)
+			slot++
+			continue
+		}
+		off += copy(vs[off:], it.vals)
+		cs[i] = uint8(len(it.vals))
+	}
+	return p
 }
 
 // build returns a subtree holding exactly items, which are sorted by key,
 // distinct, and all start with the same depth bytes. It is how pages burst
-// and how keys leave a page: the subtree is rebuilt from its keys. Groups of
-// keys that fit a page become pages; the rest becomes nodes and leaves.
+// and how pages change type when nothing simpler fits: the subtree is rebuilt
+// from its keys. Groups of keys that fit a page become pages; the rest becomes
+// nodes and leaves.
 func (t *Tree) build(items []item, depth int) *header {
 	if len(items) == 1 && items[0].leaf != nil {
 		return leafHdr(items[0].leaf)
 	}
-	if t.pageable(items) {
-		p := newPage(classFor(len(items)))
-		p.count, p.klen = uint8(len(items)), uint8(len(items[0].key))
-		h, vs := p.heads(), p.vals()
-		for i, it := range items {
-			h[i], vs[i] = keyWord(it.key), it.val
-		}
+	if p := t.pageFor(items); p != nil {
 		return pageHdr(p)
 	}
 	first, last := items[0].key, items[len(items)-1].key
@@ -247,10 +303,10 @@ func (t *Tree) build(items []item, depth int) *header {
 	d := depth + plen
 	h := &n.header
 	if len(items[0].key) == d {
-		// A key that ends here sorts first. It is always a key with a raw
-		// value: the keys of a page have one length, and a key that must be
-		// a leaf is one of them (being promoted) or longer than any of them.
-		h.term = t.mk(items[0].key, items[0].val)
+		// A key that ends here sorts first. It is never a leaf already: the
+		// keys of a page have one length, and a key that must be a leaf is
+		// longer than any of them.
+		h.term = t.mk(items[0])
 		items = items[1:]
 	}
 	for len(items) > 0 {

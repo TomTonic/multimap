@@ -1,6 +1,7 @@
 package art
 
 import (
+	"math/rand/v2"
 	"slices"
 	"testing"
 )
@@ -146,5 +147,100 @@ func checkValueType[T comparable](t *testing.T, vs []T) {
 	m.Remove(key(0), vs[1])
 	if m.Len() != 0 {
 		t.Fatalf("%d keys left after removing every value", m.Len())
+	}
+}
+
+// TestPageNLifecycle makes sure that integer keys keep all their values, in
+// any mix of one, a few and many values per key, while their pages change
+// shape underneath. It covers the U8-n pages of the ART behind
+// multimap.Ordered: a U8-1 page turning into a U8-n page in place and by
+// rebuilding, values moving out to external sets as a key passes inlineMax,
+// pages growing for lack of external slots and bursting beyond the largest
+// class, an externally stored key becoming a node's term key, and the removal
+// of values and keys. After every step the map must match a reference and
+// satisfy the structural invariants.
+func TestPageNLifecycle(t *testing.T) {
+	r := rand.New(rand.NewPCG(3, 4))
+	var m Map[uint64]
+	ref := reference{}
+	add := func(k []byte, vs ...uint64) {
+		t.Helper()
+		for _, v := range vs {
+			m.Add(k, v)
+			ref.add(k, v)
+		}
+		compare(t, &m, ref, r)
+		checkInvariants(t, &m.t)
+	}
+	kind := func(k []byte) kind {
+		n, _ := m.t.find(k)
+		return n.kind
+	}
+	many := func(from, n int) []uint64 {
+		out := make([]uint64, n)
+		for i := range out {
+			out[i] = uint64(from + i)
+		}
+		return out
+	}
+	key := func(a, b byte) []byte { return []byte{9, 9, 9, 9, 9, 9, a, b} }
+
+	// 16 keys with one value each, then a second value: U8-1 turns into U8-n in place
+	for b := range byte(16) {
+		add(key(0, b), 1)
+	}
+	add(key(0, 3), 2)
+	if kind(key(0, 3)) != kPageN {
+		t.Fatalf("a second value did not turn the page into a U8-n page")
+	}
+	// two keys with more than inlineMax values: the second needs a larger class for its slot
+	add(key(0, 5), many(100, inlineMax+1)...)
+	add(key(0, 6), many(200, inlineMax+1)...)
+	// three more: the largest class has 4 external slots, so the fifth rebuilds the subtree
+	for _, b := range []byte{7, 8, 9} {
+		add(key(0, b), many(300, inlineMax+2)...)
+	}
+	// a shorter key makes an externally stored key a term
+	add([]byte{9, 9, 9, 9, 9, 9, 0}, 7)
+	// 20 keys with one value each in one page, then a second value: too many keys for U8-n
+	for b := range byte(20) {
+		add(key(1, b), 1)
+	}
+	add(key(1, 4), 2)
+	// remove values and whole keys, external ones included
+	for _, k := range [][]byte{key(0, 5), key(0, 7), key(0, 3), key(1, 4)} {
+		for v := range ref[string(k)] {
+			m.Remove(k, v)
+			ref.remove(k, v)
+			compare(t, &m, ref, r)
+			checkInvariants(t, &m.t)
+		}
+	}
+	for _, k := range ref.sortedKeys() {
+		m.RemoveKey([]byte(k))
+		delete(ref, k)
+		checkInvariants(t, &m.t)
+	}
+	if m.Len() != 0 {
+		t.Fatalf("%d keys left", m.Len())
+	}
+
+	// In the smallest class (4 keys, 1 external slot), a second key with many
+	// values needs a larger class for its slot.
+	add([]byte("ab"), many(0, inlineMax+1)...)
+	add([]byte("ac"), many(50, inlineMax+1)...)
+	if n, _ := m.t.find([]byte("ab")); n.kind != kPageN || asPage(n).extUsed() != 2 {
+		t.Fatalf("two externally stored keys do not share one U8-n page")
+	}
+	// Removing an externally stored key from a page that keeps other keys.
+	add([]byte("ad"), 1, 2)
+	m.RemoveKey([]byte("ac"))
+	delete(ref, "ac")
+	compare(t, &m, ref, r)
+	checkInvariants(t, &m.t)
+	// A longer key makes the externally stored "ab" the term of a new node.
+	add([]byte("abx"), 1)
+	if n, _ := m.t.find([]byte("ab")); n.kind != kLeaf {
+		t.Fatalf("the term key \"ab\" is not a leaf")
 	}
 }

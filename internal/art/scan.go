@@ -38,7 +38,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 	if n.kind == kLeaf {
 		return scanLeaf(asLeaf(n), b, lo, hi, fn)
 	}
-	if n.kind == kPage {
+	if n.kind == kPage || n.kind == kPageN {
 		return scanPage(asPage(n), b, lo, hi, fn)
 	}
 	if (lo || hi) && n.plen > 0 {
@@ -111,7 +111,7 @@ func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) 
 // scanPage hands fn the run of the page's keys within b. A page's keys are
 // full keys, so the bounds are compared directly, and only on their paths.
 func scanPage(p *pageHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
-	h, l := p.heads()[:p.count], int(p.klen)
+	h, l := p.keys(), int(p.klen)
 	i, j := 0, len(h)
 	var buf [8]byte
 	if lo {
