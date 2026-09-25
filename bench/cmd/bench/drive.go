@@ -40,20 +40,30 @@ func drive(c config) error {
 		defer release()
 	}
 	if !c.skipSpeed {
-		if err := removeIfExists(filepath.Join(c.out, "speed.jsonl")); err != nil {
+		path := filepath.Join(c.out, "speed.jsonl")
+		if !c.cont {
+			if err := removeIfExists(path); err != nil {
+				return err
+			}
+		}
+		prior, err := readLines[result](path)
+		if err != nil {
 			return err
 		}
-		var all []result
 		for _, profile := range c.profiles {
 			for _, kind := range c.kinds {
 				for _, n := range c.sizes {
-					rows, err := driveScenario(c, self, kind, profile, n)
-					if err != nil {
+					if err := driveScenario(c, self, kind, profile, n, prior); err != nil {
 						return err
 					}
-					all = append(all, rows...)
 				}
 			}
+		}
+		// The summary pools the whole file: with -continue, it also holds
+		// the scenarios this run did not touch.
+		all, err := readLines[result](path)
+		if err != nil {
+			return err
 		}
 		if err := writeSpeed(c, all); err != nil {
 			return err
@@ -73,28 +83,33 @@ func drive(c config) error {
 
 // driveScenario runs speed processes for one key kind, value profile and size
 // until every comparison is precise (after at least c.minProcs) or c.maxProcs
-// is reached.
-func driveScenario(c config, self, kind, profile string, n int) ([]result, error) {
+// is reached. The processes of prior that belong to the scenario count as
+// already run, so -continue resumes after the last of them.
+func driveScenario(c config, self, kind, profile string, n int, prior []result) error {
 	ps := pairsFor(n, profile, c.ops, c.scanMax, c.buildMax)
 	if len(ps) == 0 {
-		return nil, nil
+		return nil
 	}
-	var rows []result
-	for i := 1; i <= c.maxProcs; i++ {
+	rows, done := scenarioRows(prior, kind, profile, n, ps)
+	if open, _ := imprecise(rows, c.abs, c.rel); done > 0 && (done >= c.maxProcs || done >= c.minProcs && open == 0) {
+		logf("%s %s n=%d: %d processes already run, %d of %d comparisons not yet precise", kind, profile, n, done, open, len(ps))
+		return nil
+	}
+	for i := done + 1; i <= c.maxProcs; i++ {
 		args := []string{"-child", "-keys", kind, "-values", profile, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
 			"-scanmax", strconv.Itoa(c.scanMax), "-buildmax", strconv.Itoa(c.buildMax),
 			"-ratio", strconv.FormatFloat(c.ratio, 'g', -1, 64),
 			"-layoutseed", strconv.Itoa(i)}
 		out, err := runChild(self, append(args, rtopt.Forward()...), filepath.Join(c.out, "logs", fmt.Sprintf("speed-%s-%s-%d-p%02d.log", kind, profile, n, i)))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if err := appendFile(filepath.Join(c.out, "speed.jsonl"), out); err != nil {
-			return nil, err
+			return err
 		}
 		got, err := decodeLines[result](out)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		rows = append(rows, got...)
 		open, widest := imprecise(rows, c.abs, c.rel)
@@ -103,7 +118,21 @@ func driveScenario(c config, self, kind, profile string, n int) ([]result, error
 			break
 		}
 	}
-	return rows, nil
+	return nil
+}
+
+// scenarioRows picks the rows of prior that compare one of ps in the scenario
+// and returns them with the number of processes behind them, which is the
+// highest layout seed: the driver numbers a scenario's processes 1, 2, ...
+// and passes that number as the seed. -continue needs both to resume.
+func scenarioRows(prior []result, kind, profile string, n int, ps []pair) (rows []result, done int) {
+	for _, r := range prior {
+		if r.Keys == kind && r.Values == profile && r.N == n && slices.Contains(ps, pair{r.Op, r.A, r.B}) {
+			rows = append(rows, r)
+			done = max(done, int(r.LayoutSeed))
+		}
+	}
+	return rows, done
 }
 
 // imprecise counts the comparisons whose interval across processes is not yet
@@ -211,6 +240,18 @@ func runChild(self string, args []string, logPath string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// readLines decodes a JSON-lines file; a missing file holds no lines.
+func readLines[T any](path string) ([]T, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeLines[T](b)
+}
+
 func decodeLines[T any](b []byte) ([]T, error) {
 	var out []T
 	sc := bufio.NewScanner(bytes.NewReader(b))
@@ -248,19 +289,66 @@ func logf(format string, args ...any) {
 	fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
-// writeRunInfo records when and on what the suite ran.
+// writeRunInfo records when and on what the suite ran. With -continue, it
+// keeps the record of the run it continues and adds this one under
+// "continued".
 func writeRunInfo(c config, start time.Time) error {
-	cpu, _ := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output()
+	path := filepath.Join(c.out, "run.json")
 	info := map[string]any{
 		"start": start.Format(time.RFC3339), "end": time.Now().Format(time.RFC3339),
 		"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
-		"cpu": strings.TrimSpace(string(cpu)), "args": os.Args[1:],
+		"cpu": cpuName(), "args": os.Args[1:],
 		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
 		"values": c.profiles,
+	}
+	if c.cont {
+		info = continued(path, info)
 	}
 	b, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(c.out, "run.json"), append(b, '\n'), 0o644)
+	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+// continued returns the record in path with info appended to its
+// "continued" list, or info itself if path holds no record. A record from
+// before the CPU was known on Linux gets it now.
+func continued(path string, info map[string]any) map[string]any {
+	var old map[string]any
+	if b, err := os.ReadFile(path); err != nil || json.Unmarshal(b, &old) != nil || old == nil {
+		return info
+	}
+	if cpu, _ := old["cpu"].(string); cpu == "" {
+		old["cpu"] = info["cpu"]
+	}
+	list, _ := old["continued"].([]any)
+	old["continued"] = append(list, info)
+	return old
+}
+
+// cpuName names the processor, so that results from different machines are
+// never mistaken for each other. It returns "" where it cannot tell.
+func cpuName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		out, _ := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output()
+		return strings.TrimSpace(string(out))
+	case "windows":
+		out, _ := exec.Command("reg", "query", `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0`, "/v", "ProcessorNameString").Output()
+		_, name, _ := strings.Cut(string(out), "REG_SZ")
+		return strings.TrimSpace(name)
+	}
+	b, _ := os.ReadFile("/proc/cpuinfo")
+	return cpuInfoModel(string(b))
+}
+
+// cpuInfoModel extracts the model name from the text of /proc/cpuinfo.
+func cpuInfoModel(s string) string {
+	for line := range strings.Lines(s) {
+		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "model name" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -187,5 +190,104 @@ func TestMedian(t *testing.T) {
 	}
 	if got := median(nil); !math.IsNaN(got) {
 		t.Errorf("empty: %v", got)
+	}
+}
+
+// TestScenarioRows makes sure a run continued with -continue picks up
+// exactly where the earlier run of a scenario stopped. It covers how the
+// benchmark driver finds a scenario's earlier processes in speed.jsonl: only
+// rows of the same key kind, value profile, size and planned comparisons
+// count, and the number of processes run is the highest layout seed.
+func TestScenarioRows(t *testing.T) {
+	ps := pairsFor(1<<20, multi, []string{"valuesFor"}, 1<<16, 1<<16)
+	row := func(keys, values string, n int, op, b string, seed uint64) result {
+		return result{Keys: keys, Values: values, N: n, Op: op, A: ordered, B: b, LayoutSeed: seed}
+	}
+	prior := []result{
+		row("u64", multi, 1<<20, "valuesFor", hashed, 1),
+		row("u64", multi, 1<<20, "valuesFor", mapSets, 20),
+		row("u64", multi, 1<<20, "churn", hashed, 25),     // not planned
+		row("str", multi, 1<<20, "valuesFor", hashed, 30), // other key kind
+		row("u64", unique, 1<<20, "valuesFor", btreeMapC, 30),
+		row("u64", multi, 4096, "valuesFor", hashed, 30),
+	}
+	for _, tt := range []struct {
+		name     string
+		kind     string
+		wantRows int
+		wantDone int
+	}{
+		{"counts only the scenario's planned comparisons", "u64", 2, 20},
+		{"starts from scratch when the scenario never ran", "none", 0, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, done := scenarioRows(prior, tt.kind, multi, 1<<20, ps)
+			if len(rows) != tt.wantRows || done != tt.wantDone {
+				t.Errorf("%d rows, %d processes; want %d and %d", len(rows), done, tt.wantRows, tt.wantDone)
+			}
+		})
+	}
+}
+
+// TestReadLines makes sure a continued run finds the results of the run it
+// continues, and that a fresh run starts from nothing. It covers how the
+// benchmark driver reads speed.jsonl: every line is one result, and a
+// missing file holds none.
+func TestReadLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "speed.jsonl")
+	if rows, err := readLines[result](path); err != nil || rows != nil {
+		t.Fatalf("missing file: %v, %v; want no rows and no error", rows, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"keys":"u64","layout_seed":3}`+"\n"+`{"keys":"str","layout_seed":4}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readLines[result](path)
+	if err != nil || len(rows) != 2 || rows[1].Keys != "str" || rows[1].LayoutSeed != 4 {
+		t.Fatalf("got %+v, %v; want the two rows", rows, err)
+	}
+	if _, err := readLines[result](dir); err == nil {
+		t.Error("a directory must not read as results")
+	}
+}
+
+// TestContinued makes sure run.json still tells when and on what the first
+// run happened after a run continued it, and when the continuation ran. It
+// covers the run record of the benchmark driver: the continuation is
+// appended under "continued", a missing CPU name is filled in, and without
+// an earlier record the continuation's own record is written.
+func TestContinued(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run.json")
+	info := map[string]any{"start": "later", "cpu": "Some CPU"}
+	if got := continued(path, info); got["start"] != "later" {
+		t.Errorf("without an earlier record: %v", got)
+	}
+	if err := os.WriteFile(path, []byte(`{"start":"first","cpu":"","continued":[{"start":"second"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := continued(path, info)
+	list, _ := got["continued"].([]any)
+	if got["start"] != "first" || got["cpu"] != "Some CPU" || len(list) != 2 {
+		t.Errorf("got %v; want the first run with the CPU filled in and two continuations", got)
+	}
+}
+
+// TestCPUInfoModel makes sure the results name the processor they were
+// measured on under Linux too. It covers how the benchmark driver reads the
+// model name from /proc/cpuinfo, and that it gives up quietly without one.
+func TestCPUInfoModel(t *testing.T) {
+	for _, tt := range []struct{ name, in, want string }{
+		{"reads the first model name", "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 9 7900 12-Core Processor\nmodel name\t: other\n", "AMD Ryzen 9 7900 12-Core Processor"},
+		{"returns nothing without a model name", "processor\t: 0\nCPU part\t: 0xd0c\n", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cpuInfoModel(tt.in); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if runtime.GOOS == "linux" && cpuName() == "" {
+		t.Log("no model name in /proc/cpuinfo on this machine")
 	}
 }

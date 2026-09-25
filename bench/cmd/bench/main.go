@@ -17,6 +17,7 @@
 //
 //	go run ./cmd/bench                          # everything; takes hours
 //	go run ./cmd/bench -sizes 4096 -skipmem     # a quicker subset
+//	go run ./cmd/bench -continue -skipmem -maxprocs 40  # more processes where 20 were not enough
 //
 // The driver re-executes its own binary for every process (-child, -memchild).
 package main
@@ -45,6 +46,7 @@ type config struct {
 	cycles             int
 	out                string
 	skipSpeed, skipMem bool
+	cont               bool
 }
 
 func main() {
@@ -69,6 +71,7 @@ func main() {
 	flag.StringVar(&c.out, "out", "results", "directory for results and logs")
 	flag.BoolVar(&c.skipSpeed, "skipspeed", false, "skip the speed comparisons")
 	flag.BoolVar(&c.skipMem, "skipmem", false, "skip the memory measurements")
+	flag.BoolVar(&c.cont, "continue", false, "keep the speed results in -out and add processes to them: every scenario resumes after its last process, under the same stop rule (raise -maxprocs to go on where it stopped)")
 	flag.Parse()
 
 	c.kinds, c.ops, c.profiles = split(*kindsF), split(*opsF), split(*profilesF)
