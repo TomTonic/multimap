@@ -14,6 +14,11 @@
 //     paths are skipped optimistically and verified against the full key,
 //     which every leaf holds (lazy expansion: a subtree with one key is just
 //     its leaf).
+//   - A leaf holds its key inline, in the smallest of four size classes (16,
+//     32, 48 or 64 bytes) that fits, and its values right after it; only a
+//     longer key is a separate string. Comparing a key at the leaf therefore
+//     costs no second pointer chase, and a leaf with uint64 values fills a Go
+//     size class (64 B for integer keys, one cache line).
 //   - A key that ends at an inner node (a prefix of other keys) is stored as
 //     that node's term leaf.
 //
@@ -52,7 +57,11 @@ const (
 	shrink256 = 48
 )
 
-const inlineKey = 16
+// maxInline is the longest key a leaf holds inline, in an array of 16, 32, 48
+// or 64 bytes, whichever is the smallest that fits. A longer key is held as a
+// string, which costs a separate allocation and a pointer chase on every
+// comparison.
+const maxInline = 64
 
 // header is the common start of all inner nodes (24 B).
 type header struct {
@@ -64,20 +73,31 @@ type header struct {
 	term   *leafHead // leaf of the key that ends exactly at this node
 }
 
-// leafHead is the key part every leaf starts with (40 B): the full key,
-// inline up to 16 bytes.
+// leafHead is the start of every leaf (8 B). The key follows it at keyOff,
+// inline or as a string (see maxInline); the key's values follow the key, at
+// valsOff, which depends on the key's size class and on T.
 type leafHead struct {
-	kind   kind
-	_      [3]byte
-	klen   uint32
-	inline [inlineKey]byte
-	ext    string // the key when it is longer than inlineKey
+	kind    kind
+	_       uint8
+	valsOff uint16 // offset of the value set from the start of the leaf
+	klen    uint32
 }
 
-// leaf is a leafHead followed by the values of its key: 80 B for T = uint64,
-// a Go size class.
-type leaf[T comparable] struct {
+// keyOff is the offset of the key in every leaf: right after the leafHead.
+const keyOff = unsafe.Sizeof(leafHead{})
+
+// keyArea is the storage of a leaf's key: an inline array of one of the
+// size classes, or a string for keys longer than maxInline.
+type keyArea interface {
+	[16]byte | [32]byte | [48]byte | [64]byte | string
+}
+
+// leaf is a leafHead followed by its key and the values of its key. For
+// T = uint64 it is 64, 80, 96 or 112 B with an inline key, all Go size
+// classes, and 64 B plus the string with a longer key.
+type leaf[T comparable, K keyArea] struct {
 	leafHead
+	k    K
 	vals vset.Set[T]
 }
 
@@ -130,20 +150,17 @@ func leafHdr(l *leafHead) *header { return (*header)(unsafe.Pointer(l)) }
 // key returns the leaf's key. The slice aliases the leaf and must not be
 // modified.
 func (l *leafHead) key() []byte {
-	if l.klen <= inlineKey {
-		return l.inline[:l.klen]
+	p := unsafe.Add(unsafe.Pointer(l), keyOff)
+	if l.klen <= maxInline {
+		return unsafe.Slice((*byte)(p), l.klen)
 	}
-	return unsafe.Slice(unsafe.StringData(l.ext), len(l.ext))
+	s := *(*string)(p)
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// init stores a copy of key in the leaf.
-func (l *leafHead) init(key []byte) {
-	l.kind, l.klen = kLeaf, uint32(len(key))
-	if len(key) <= inlineKey {
-		copy(l.inline[:], key)
-	} else {
-		l.ext = string(key)
-	}
+// init marks a new leaf for a key of klen bytes whose values lie at valsOff.
+func (l *leafHead) init(klen int, valsOff uintptr) {
+	l.kind, l.klen, l.valsOff = kLeaf, uint32(klen), uint16(valsOff)
 }
 
 func (h *header) setPrefix(p []byte, plen int) {
@@ -153,17 +170,14 @@ func (h *header) setPrefix(p []byte, plen int) {
 }
 
 // sorted returns the child bytes and children of a node that keeps them in
-// sorted arrays (4- and 11-way), or nil slices for the other kinds.
+// sorted arrays: n must be a 4- or 11-way node.
 func sorted(n *header) ([]byte, []*header) {
-	switch n.kind {
-	case kN4:
+	if n.kind == kN4 {
 		x := asN4(n)
 		return x.keys[:x.count], x.child[:x.count]
-	case kN11:
-		x := asN11(n)
-		return x.keys[:x.count], x.child[:x.count]
 	}
-	return nil, nil
+	x := asN11(n)
+	return x.keys[:x.count], x.child[:x.count]
 }
 
 // bitmapOf returns the bitmap and the full child array of a 25- or 57-way

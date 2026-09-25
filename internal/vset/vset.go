@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	// InlineCap keeps a Set[uint64] at 40 bytes, so an ART leaf holding it stays
-	// within Go's 80-byte size class; a fourth value would push it to 96.
+	// InlineCap keeps a Set[uint64] at 40 bytes, so an ART leaf holding it and
+	// a key of up to 16 bytes fills Go's 64-byte size class, one cache line; a
+	// fourth value would push it to 80.
 	InlineCap = 3
 	// ArrayMax is the largest set kept as an array. A linear scan over 64
 	// uint64 values reads 512 contiguous bytes, which is about what a cold hash

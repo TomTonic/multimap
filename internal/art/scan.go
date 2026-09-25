@@ -156,8 +156,8 @@ func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, l
 }
 
 // touchChildren reads one byte from the start of every child of n with byte in
-// [loB, hiB], and from leaves also the byte at leafTail, which lies in the
-// value set. The scan would otherwise take the cache misses for these objects
+// [loB, hiB], and from leaves also the byte at leafTail, the last one of the
+// smallest leaf, which lies in or near the value set. The scan would otherwise take the cache misses for these objects
 // one after another, each only once it has finished the previous child's
 // subtree. These loads do not depend on each other, so the CPU keeps all their
 // misses in flight at once. A node with fewer than two children in range has

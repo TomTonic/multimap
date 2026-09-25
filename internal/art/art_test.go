@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"testing"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/vset"
 )
@@ -16,8 +17,9 @@ type valset = vset.Set[uint64]
 
 // keySets returns key corpora that exercise every structural case: keys that
 // are prefixes of other keys, the empty key, keys longer than the 8 inline
-// path bytes and the 16 inline leaf bytes, zero bytes, dense and sparse
-// integers (which drive nodes through every kind), and shared string prefixes.
+// path bytes, keys of every length from 0 to 99 (every size class of the
+// leaves and beyond), zero bytes, dense and sparse integers (which drive nodes
+// through every kind), and shared string prefixes.
 func keySets() map[string][][]byte {
 	r := rand.New(rand.NewPCG(1, 2))
 	sets := map[string][][]byte{}
@@ -65,6 +67,16 @@ func keySets() map[string][][]byte {
 		small = append(small, k)
 	}
 	sets["random-small-alphabet"] = small
+
+	var lengths [][]byte
+	for range 4000 {
+		k := make([]byte, r.IntN(100))
+		for i := range k {
+			k[i] = 'a' + byte(r.IntN(4))
+		}
+		lengths = append(lengths, k)
+	}
+	sets["every-length"] = lengths
 	return sets
 }
 
@@ -153,6 +165,14 @@ func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
 			return true
 		})
 	}
+	for k := range ref {
+		for _, probe := range nearMisses([]byte(k)) {
+			_, want := ref[string(probe)]
+			if got := m.Values(probe) != nil; got != want {
+				t.Fatalf("Values(%q) found = %v, want %v", probe, got, want)
+			}
+		}
+	}
 	sorted := ref.sortedKeys()
 	if len(sorted) == 0 {
 		return
@@ -164,14 +184,39 @@ func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
 	checkRange(t, m, ref, sorted, &Bounds{}) // everything
 }
 
+// nearMisses returns keys that differ from k only slightly: shorter, longer,
+// or with one byte changed at the end, in the middle, or at positions 9 and
+// 12, which lie beyond the 8 path bytes a node checks itself. The last byte
+// is also changed in its top bit, which a dense node rarely holds.
+func nearMisses(k []byte) [][]byte {
+	out := [][]byte{append(bytes.Clone(k), 0)}
+	if len(k) > 0 {
+		x := bytes.Clone(k)
+		x[len(x)-1] ^= 0x80
+		out = append(out, k[:len(k)-1], x)
+	}
+	for _, p := range []int{len(k) - 1, len(k) / 2, 9, 12} {
+		if p >= 0 && p < len(k) {
+			x := bytes.Clone(k)
+			x[p] ^= 1
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
 func randomBounds(r *rand.Rand, sorted []string, i int) *Bounds {
 	pick := func() []byte {
 		k := []byte(sorted[r.IntN(len(sorted))])
-		switch r.IntN(4) {
+		switch r.IntN(5) {
 		case 0:
 			return append(k, 0) // just above a key
 		case 1:
 			return k[:r.IntN(len(k)+1)] // a prefix of a key
+		case 2:
+			if len(k) > 0 { // leaves the keys mid-path, often inside a compressed path
+				k[r.IntN(len(k))] += byte(1 - 2*r.IntN(2))
+			}
 		}
 		return k
 	}
@@ -222,19 +267,170 @@ func checkRange(t *testing.T, m *Map[uint64], ref reference, sorted []string, b 
 	if n != min(3, len(want)) {
 		t.Fatalf("Range did not stop when asked: %d calls", n)
 	}
+	// RangeValues yields the values of exactly these keys (Range above
+	// checked their order and counts)
+	var wantN, wantSum, gotN, gotSum uint64
+	for _, k := range want {
+		for v := range ref[k] {
+			wantN, wantSum = wantN+1, wantSum+v
+		}
+	}
+	m.RangeValues(b, func(v uint64) bool { gotN, gotSum = gotN+1, gotSum+v; return true })
+	if gotN != wantN || gotSum != wantSum {
+		t.Fatalf("RangeValues(%+v) yielded %d values summing to %d, want %d summing to %d", *b, gotN, gotSum, wantN, wantSum)
+	}
+	n = 0
+	m.RangeValues(b, func(uint64) bool { n++; return n < 3 })
+	if n != min(3, int(wantN)) {
+		t.Fatalf("RangeValues did not stop when asked: %d calls", n)
+	}
 }
 
-// TestLeafTail makes sure that range queries touch ahead only memory that
-// belongs to the leaf, for any value type. It covers the scan of the ART behind
-// multimap.Ordered, which reads the last byte of every leaf it is about to
-// visit: that byte must be the leaf's last one for uint64 values (80 B leaf)
-// and for string values (104 B leaf), whose value sets differ in size.
-func TestLeafTail(t *testing.T) {
-	if got := leafTail[uint64](); got != 79 {
-		t.Fatalf("leafTail[uint64] = %d, want 79", got)
+// TestBoundsContains makes sure that a range query on multimap.Hashed, which
+// filters every key, selects exactly the keys an ordered range query on
+// multimap.Ordered visits. It covers Bounds.Contains in the ART package,
+// which both multimaps share, and checks each combination of open, inclusive
+// and exclusive bounds at, below, above and between the bounds.
+func TestBoundsContains(t *testing.T) {
+	b := func(from, to string, hasFrom, hasTo, fromIncl, toIncl bool) *Bounds {
+		return &Bounds{From: []byte(from), To: []byte(to), HasFrom: hasFrom, HasTo: hasTo, FromIncl: fromIncl, ToIncl: toIncl}
 	}
-	if got := leafTail[string](); got != 103 {
-		t.Fatalf("leafTail[string] = %d, want 103", got)
+	for _, tc := range []struct {
+		name string
+		b    *Bounds
+		key  string
+		want bool
+	}{
+		{"open bounds contain every key", b("", "", false, false, false, false), "anything", true},
+		{"open bounds contain the empty key", b("", "", false, false, false, false), "", true},
+		{"inclusive From contains From", b("b", "", true, false, true, false), "b", true},
+		{"exclusive From excludes From", b("b", "", true, false, false, false), "b", false},
+		{"From excludes a key below", b("b", "", true, false, true, false), "a", false},
+		{"From excludes a prefix of From", b("bb", "", true, false, true, false), "b", false},
+		{"From contains an extension of From", b("b", "", true, false, false, false), "b\x00", true},
+		{"inclusive To contains To", b("", "d", false, true, false, true), "d", true},
+		{"exclusive To excludes To", b("", "d", false, true, false, false), "d", false},
+		{"To excludes a key above", b("", "d", false, true, false, true), "e", false},
+		{"To excludes an extension of To", b("", "d", false, true, false, true), "da", false},
+		{"To contains a prefix of To", b("", "dd", false, true, false, false), "d", true},
+		{"both bounds contain a key between", b("b", "d", true, true, false, false), "c", true},
+		{"both bounds exclude a key above", b("b", "d", true, true, true, true), "z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.b.Contains([]byte(tc.key)); got != tc.want {
+				t.Fatalf("Contains(%q) = %v, want %v", tc.key, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmptyMap makes sure that a new, empty multimap.Ordered answers every
+// query with nothing. It covers the ART package's Map with no keys, where the
+// tree has no root: lookups find nothing, removals are ignored and range
+// queries of any kind call back not once.
+func TestEmptyMap(t *testing.T) {
+	var m Map[uint64]
+	m.Remove([]byte("k"), 1)
+	m.RemoveKey([]byte("k"))
+	if m.Len() != 0 || m.Values([]byte("k")) != nil || m.Values(nil) != nil {
+		t.Fatalf("empty map: Len %d, or a key was found", m.Len())
+	}
+	for _, b := range []*Bounds{{}, {From: []byte("a"), To: []byte("z"), HasFrom: true, HasTo: true}} {
+		m.Range(b, func([]byte, *valset) bool { t.Fatalf("Range called back on an empty map"); return false })
+		m.RangeValues(b, func(uint64) bool { t.Fatalf("RangeValues called back on an empty map"); return false })
+	}
+}
+
+// leafLayout returns the size of a leaf[T, K] and the offsets of its key and
+// its values, as the compiler lays them out.
+func leafLayout[T comparable, K keyArea]() (size, kOff, vOff uintptr) {
+	var l leaf[T, K]
+	return unsafe.Sizeof(l), unsafe.Offsetof(l.k), unsafe.Offsetof(l.vals)
+}
+
+// TestLeafLayout makes sure that every key of multimap.Ordered keeps its bytes
+// and its values, whatever its length and whatever the value type. It covers
+// the leaves of the ART behind Ordered, which hold a key inline in the
+// smallest of four size classes, or as a string beyond 64 bytes, and which the
+// untyped tree code reads through fixed offsets. For each class boundary it
+// checks that the leaf returns an independent copy of its key, that its values
+// lie where the compiler put them, that the byte the range scan touches ahead
+// lies inside even the smallest leaf, and that leaves with uint64 values fill
+// Go size classes exactly.
+func TestLeafLayout(t *testing.T) {
+	type class struct{ size, kOff, vOff uintptr }
+	classes := func(get [5]func() (uintptr, uintptr, uintptr)) (out [5]class) {
+		for i, f := range get {
+			out[i].size, out[i].kOff, out[i].vOff = f()
+		}
+		return out
+	}
+	u64 := classes([5]func() (uintptr, uintptr, uintptr){
+		leafLayout[uint64, [16]byte], leafLayout[uint64, [32]byte], leafLayout[uint64, [48]byte],
+		leafLayout[uint64, [64]byte], leafLayout[uint64, string]})
+	str := classes([5]func() (uintptr, uintptr, uintptr){
+		leafLayout[string, [16]byte], leafLayout[string, [32]byte], leafLayout[string, [48]byte],
+		leafLayout[string, [64]byte], leafLayout[string, string]})
+
+	if got := [5]uintptr{u64[0].size, u64[1].size, u64[2].size, u64[3].size, u64[4].size}; got != [5]uintptr{64, 80, 96, 112, 64} {
+		t.Errorf("leaf sizes for uint64 values = %v, want Go size classes [64 80 96 112 64]", got)
+	}
+	for _, cs := range [][5]class{u64, str} {
+		for i, c := range cs {
+			if c.kOff != keyOff {
+				t.Errorf("class %d: key at offset %d, want keyOff = %d", i, c.kOff, keyOff)
+			}
+		}
+	}
+	if tail := leafTail[uint64](); tail >= u64[0].size {
+		t.Errorf("leafTail[uint64] = %d lies outside the smallest leaf (%d B)", tail, u64[0].size)
+	}
+	if tail := leafTail[string](); tail >= str[0].size {
+		t.Errorf("leafTail[string] = %d lies outside the smallest leaf (%d B)", tail, str[0].size)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		n     int
+		class int
+	}{
+		{"empty key is inline", 0, 0},
+		{"1 byte is inline in 16", 1, 0},
+		{"16 bytes are inline in 16", 16, 0},
+		{"17 bytes are inline in 32", 17, 1},
+		{"32 bytes are inline in 32", 32, 1},
+		{"33 bytes are inline in 48", 33, 2},
+		{"48 bytes are inline in 48", 48, 2},
+		{"49 bytes are inline in 64", 49, 3},
+		{"64 bytes are inline in 64", 64, 3},
+		{"65 bytes are a string", 65, 4},
+		{"300 bytes are a string", 300, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := make([]byte, tc.n)
+			for i := range key {
+				key[i] = byte(i*7 + 1)
+			}
+			want := bytes.Clone(key)
+
+			l := newLeaf[uint64](key)
+			ls := newLeaf[string](key)
+			clear(key) // the leaves must hold copies
+			for _, x := range []*leafHead{l, ls} {
+				if x.kind != kLeaf || int(x.klen) != tc.n || !bytes.Equal(x.key(), want) {
+					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a leaf of %d bytes %v", x.kind, x.klen, x.key(), tc.n, want)
+				}
+			}
+			if uintptr(l.valsOff) != u64[tc.class].vOff || uintptr(ls.valsOff) != str[tc.class].vOff {
+				t.Fatalf("values at offsets %d and %d, want %d and %d (size class %d)",
+					l.valsOff, ls.valsOff, u64[tc.class].vOff, str[tc.class].vOff, tc.class)
+			}
+			vals[uint64](l).Add(42)
+			vals[string](ls).Add("v")
+			if !vals[uint64](l).Contains(42) || !vals[string](ls).Contains("v") || !bytes.Equal(l.key(), want) {
+				t.Fatalf("adding values changed the key or lost the values")
+			}
+		})
 	}
 }
 

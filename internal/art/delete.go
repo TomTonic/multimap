@@ -61,15 +61,16 @@ func del(loc **header, key []byte, depth int) *leafHead {
 }
 
 // collapse replaces an inner node that no longer branches: without children
-// it becomes its term leaf (or disappears), and with a single child and no
+// it becomes its term leaf, and with a single child and no
 // term it merges into that child, whose compressed path grows by n's path
 // plus the child's byte. It returns what should stand in n's place.
 func collapse(n *header) *header {
 	switch {
-	case n.count == 0 && n.term == nil:
-		return nil
 	case n.count == 0:
-		return leafHdr(n.term) // the leaf holds its full key: lazy expansion
+		// The node held only its term leaf, which holds its full key (lazy
+		// expansion). A node without a term never gets here: it collapsed
+		// when it fell to one child.
+		return leafHdr(n.term)
 	case n.count > 1 || n.term != nil:
 		return n
 	}

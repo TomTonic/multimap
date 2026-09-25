@@ -28,10 +28,16 @@ func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 func (t *Tree) find(key []byte) *leafHead {
 	n := t.root
 	depth := 0
+	skipped := false // whether path bytes beyond the eighth went unchecked
 	for n != nil {
 		if n.kind == kLeaf {
-			l := asLeaf(n)
-			if bytes.Equal(l.key(), key) {
+			// Every key below a path starts with it, so once the whole path
+			// to the leaf is checked, only the rest of the key needs comparing.
+			from := depth
+			if skipped {
+				from = 0
+			}
+			if l := asLeaf(n); bytes.Equal(l.key()[from:], key[from:]) {
 				return l
 			}
 			return nil
@@ -39,6 +45,9 @@ func (t *Tree) find(key []byte) *leafHead {
 		if n.plen != 0 {
 			if !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
 				return nil
+			}
+			if n.plen > 8 {
+				skipped = true
 			}
 			depth += int(n.plen)
 		}
@@ -104,13 +113,18 @@ func findLoc(n *header, b byte) **header {
 		}
 		return nil
 	}
-	keys, child := sorted(n)
-	for i, k := range keys {
-		if k == b {
-			return &child[i]
-		}
+	x := asN4(n) // a 4- and an 11-way node start alike
+	i := swar.Index8(swar.Word(x.keys[:]), b)
+	if i == 8 && n.kind == kN11 {
+		i = 8 + swar.Index8(swar.Word(asN11(n).keys[8:16]), b)
 	}
-	return nil
+	if i >= int(n.count) {
+		return nil
+	}
+	if n.kind == kN4 {
+		return &x.child[i&3]
+	}
+	return &asN11(n).child[i]
 }
 
 // minLeaf returns the leaf with the smallest key below n.

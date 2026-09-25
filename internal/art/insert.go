@@ -7,46 +7,52 @@ import (
 )
 
 // upsert returns the leaf of key, creating it with nl when it is missing.
+//
+// It descends like find, checking compressed paths and searching nodes the
+// same fast way, and keeps the slot it came through. A missing key is then
+// added right where the descent stopped, without a second traversal.
 func (t *Tree) upsert(key []byte, nl newLeafFunc) *leafHead {
-	return t.insert(&t.root, key, 0, nl)
-}
-
-// insert returns the leaf of key in the subtree at *loc, whose compressed
-// path starts at key depth depth, creating the leaf when it is missing.
-func (t *Tree) insert(loc **header, key []byte, depth int, nl newLeafFunc) *leafHead {
-	n := *loc
-	if n == nil {
-		l := nl(key)
-		*loc = leafHdr(l)
-		t.size++
-		return l
-	}
-	if n.kind == kLeaf {
-		return t.splitLeaf(loc, asLeaf(n), key, depth, nl)
-	}
-	if n.plen > 0 {
-		var buf [8]byte
-		pk := fullPrefix(n, depth, &buf)
-		if mis := swar.Lcp(pk, key[depth:]); mis < len(pk) {
-			return t.splitPrefix(loc, n, pk, mis, key, depth, nl)
-		}
-		depth += int(n.plen)
-	}
-	if depth == len(key) {
-		if n.term == nil {
-			n.term = nl(key)
+	loc, depth := &t.root, 0
+	for {
+		n := *loc
+		if n == nil {
+			l := nl(key)
+			*loc = leafHdr(l)
 			t.size++
+			return l
 		}
-		return n.term
+		if n.kind == kLeaf {
+			return t.splitLeaf(loc, asLeaf(n), key, depth, nl)
+		}
+		if n.plen > 0 {
+			// MatchPrefix settles paths of up to 8 bytes; a longer path, or
+			// one that does not match, needs the position of the mismatch.
+			if n.plen > 8 || !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
+				var buf [8]byte
+				pk := fullPrefix(n, depth, &buf)
+				if mis := swar.Lcp(pk, key[depth:]); mis < len(pk) {
+					return t.splitPrefix(loc, n, pk, mis, key, depth, nl)
+				}
+			}
+			depth += int(n.plen)
+		}
+		if depth == len(key) {
+			if n.term == nil {
+				n.term = nl(key)
+				t.size++
+			}
+			return n.term
+		}
+		b := key[depth]
+		c := findLoc(n, b)
+		if c == nil {
+			l := nl(key)
+			*loc = addChild(n, b, leafHdr(l))
+			t.size++
+			return l
+		}
+		loc, depth = c, depth+1
 	}
-	b := key[depth]
-	if c := findLoc(n, b); c != nil {
-		return t.insert(c, key, depth+1, nl)
-	}
-	l := nl(key)
-	*loc = addChild(n, b, leafHdr(l))
-	t.size++
-	return l
 }
 
 // splitLeaf handles an insert that reaches leaf l: either it is the key's

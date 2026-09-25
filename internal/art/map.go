@@ -13,17 +13,36 @@ type Map[T comparable] struct {
 	t Tree
 }
 
-// newLeaf allocates a leaf[T] holding a copy of key. It captures nothing, so
-// passing it as a newLeafFunc allocates no closure.
+// newLeaf allocates a leaf holding a copy of key, in the smallest size class
+// that fits it. It captures nothing, so passing it as a newLeafFunc allocates
+// no closure.
 func newLeaf[T comparable](key []byte) *leafHead {
-	l := &leaf[T]{}
-	l.init(key)
+	switch n := len(key); {
+	case n <= 16:
+		return newInline[T, [16]byte](key)
+	case n <= 32:
+		return newInline[T, [32]byte](key)
+	case n <= 48:
+		return newInline[T, [48]byte](key)
+	case n <= maxInline:
+		return newInline[T, [64]byte](key)
+	}
+	l := &leaf[T, string]{k: string(key)}
+	l.init(len(key), unsafe.Offsetof(l.vals))
+	return &l.leafHead
+}
+
+// newInline allocates a leaf that holds key inline in an array of type K.
+func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte](key []byte) *leafHead {
+	l := &leaf[T, K]{}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), key)
+	l.init(len(key), unsafe.Offsetof(l.vals))
 	return &l.leafHead
 }
 
 // vals returns the values of a leaf that was created by newLeaf[T].
 func vals[T comparable](l *leafHead) *vset.Set[T] {
-	return &(*leaf[T])(unsafe.Pointer(l)).vals
+	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), l.valsOff))
 }
 
 // Len returns the number of keys.
@@ -63,9 +82,10 @@ func (m *Map[T]) Values(key []byte) *vset.Set[T] {
 	return nil
 }
 
-// leafTail is the offset of the last byte of a leaf[T], which the scan
-// touches ahead (see touchChildren).
-func leafTail[T comparable]() uintptr { return unsafe.Sizeof(leaf[T]{}) - 1 }
+// leafTail is the offset of the last byte of the smallest leaf[T], which the
+// scan touches ahead (see touchChildren). Every leaf is at least that large,
+// and a constant offset keeps the load independent of the leaf's head.
+func leafTail[T comparable]() uintptr { return unsafe.Sizeof(leaf[T, [16]byte]{}) - 1 }
 
 // Range calls fn for every key within b, in ascending key order, until fn
 // returns false. The key and the set belong to the map: fn must not modify or
