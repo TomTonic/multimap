@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/multimap/bench/rtopt"
@@ -19,27 +20,20 @@ var sink uint64
 // pair is one comparison a user would ask for.
 type pair struct{ op, a, b string }
 
-// pairsFor lists the comparisons of one scenario. Ordered is compared with
-// every alternative, Hashed with the hand-written map it replaces. Range
-// queries on Hashed scan every key, so they are compared only up to
-// hashedRangeMax keys; building is compared only up to buildMax keys, because
-// one build of a large multimap takes too long for a batch.
-func pairsFor(n int, ops []string, hashedRangeMax, buildMax int) []pair {
+// pairsFor lists the comparisons of one scenario: Ordered against every
+// other candidate. Range queries on hashed and map-sets scan every key, so
+// they are compared only up to scanMax keys; building is compared only up to
+// buildMax keys. Both take too long per operation beyond that for the batch
+// size the fast Ordered side needs.
+func pairsFor(n int, ops []string, scanMax, buildMax int) []pair {
 	var ps []pair
 	for _, op := range ops {
-		switch op {
-		case "valuesFor", "addRemove":
-			ps = append(ps, pair{op, ordered, hashed}, pair{op, ordered, btreeSets},
-				pair{op, ordered, mapSets}, pair{op, hashed, mapSets})
-		case "valuesBetween":
-			ps = append(ps, pair{op, ordered, btreeSets})
-			if n <= hashedRangeMax {
-				ps = append(ps, pair{op, ordered, hashed})
-			}
-		case "build":
-			if n <= buildMax {
-				ps = append(ps, pair{op, ordered, hashed}, pair{op, ordered, btreeSets},
-					pair{op, ordered, mapSets}, pair{op, hashed, mapSets})
+		for _, b := range []string{hashed, btreeSets, mapSets} {
+			switch {
+			case op == "valuesBetween" && b != btreeSets && n > scanMax:
+			case op == "build" && n > buildMax:
+			default:
+				ps = append(ps, pair{op, ordered, b})
 			}
 		}
 	}
@@ -68,15 +62,18 @@ type result struct {
 // runSpeed is one child process: it builds every candidate, checks that they
 // agree, runs the comparisons of the scenario and writes one JSON line per
 // comparison to out. Reports go to stderr.
-func runSpeed(kind keys.Kind, n int, ps []pair, out io.Writer) error {
+func runSpeed(kind keys.Kind, n int, ratio float64, ps []pair, out io.Writer) error {
 	f := newFixture(kind, n, allImpls)
+	f.ratio = ratio
 	if err := f.verify(); err != nil {
 		return err
 	}
 	enc := json.NewEncoder(out)
-	for _, p := range ps {
-		if p.op == "addRemove" {
-			f.warmAddRemove()
+	for i, p := range ps {
+		if p.op == "build" {
+			if err := f.verifyBuild(p.a, p.b); err != nil {
+				return err
+			}
 		}
 		a, b := f.candidate(p.op, p.a), f.candidate(p.op, p.b)
 		fmt.Fprintf(os.Stderr, "== %s n=%d %s: %s vs %s\n", kind, n, p.op, p.a, p.b)
@@ -92,6 +89,12 @@ func runSpeed(kind keys.Kind, n int, ps []pair, out io.Writer) error {
 			LayoutSeed: layout.Seed(), Warnings: rep.Warnings,
 		}); err != nil {
 			return err
+		}
+		if p.op == "churn" && (i+1 == len(ps) || ps[i+1].op != "churn") {
+			f.settle()
+			if err := f.verify(); err != nil {
+				return fmt.Errorf("after churn: %w", err)
+			}
 		}
 	}
 	fmt.Fprintf(os.Stderr, "checksum %d\n", sink) // the batches' results stay observable
@@ -118,30 +121,54 @@ func (f *fixture) verify() error {
 			if got := sum(f.hsh.ValuesBetweenInclusiveSeq(f.from.B[i], f.to.B[i])); got != want {
 				return fmt.Errorf("hashed disagrees on range %q..%q", f.from.S[i], f.to.S[i])
 			}
+			if got := mapRangeSum(f.gm, f.from.S[i], f.to.S[i]); got != want {
+				return fmt.Errorf("map-sets disagrees on range %q..%q", f.from.S[i], f.to.S[i])
+			}
 		}
 	}
 	return nil
 }
 
-// warmAddRemove adds and removes one absent value at every key once, so that
-// every value set has reached the representation the timed operations
-// alternate within.
-func (f *fixture) warmAddRemove() {
-	for i := range f.c.Hits.B {
-		v := absent(i)
-		f.ord.AddValue(f.c.Hits.B[i], v)
-		f.ord.RemoveValue(f.c.Hits.B[i], v)
-		f.hsh.AddValue(f.c.Hits.B[i], v)
-		f.hsh.RemoveValue(f.c.Hits.B[i], v)
-		btreeAdd(f.bt, f.c.Hits.S[i], v)
-		btreeRemove(f.bt, f.c.Hits.S[i], v)
-		mapAdd(f.gm, f.c.Hits.S[i], v)
-		mapRemove(f.gm, f.c.Hits.S[i], v)
+// verifyBuild makes sure the build workload leaves both candidates with
+// exactly the corpus: as many keys, and the same values for every key.
+func (f *fixture) verifyBuild(impls ...string) error {
+	ms, n := f.buildWorkload(), len(f.c.Keys.B)
+	for _, impl := range impls {
+		var keys int
+		var got func(i int) uint64
+		switch impl {
+		case ordered:
+			m := multimap.NewOrdered[uint64]()
+			applyOrdered(m, f.ck.B, ms)
+			keys, got = int(m.NumberOfKeys()), func(i int) uint64 { return sum(m.ValuesForSeq(f.c.Keys.B[i])) }
+		case hashed:
+			m := multimap.NewHashed[uint64]()
+			applyHashed(m, f.ck.B, ms)
+			keys, got = int(m.NumberOfKeys()), func(i int) uint64 { return sum(m.ValuesForSeq(f.c.Keys.B[i])) }
+		case btreeSets:
+			m := &btreeMM{}
+			applyBtree(m, f.ck.S, ms)
+			keys, got = m.Len(), func(i int) uint64 { return btreeSum(m, f.c.Keys.S[i]) }
+		case mapSets:
+			m := mapMM{}
+			applyMap(m, f.ck.S, ms)
+			keys, got = len(m), func(i int) uint64 { return mapSum(m, f.c.Keys.S[i]) }
+		}
+		if keys != n {
+			return fmt.Errorf("build workload leaves %s with %d keys, want %d", impl, keys, n)
+		}
+		for i := range n {
+			var want uint64
+			for _, v := range f.vals[f.offs[i]:f.offs[i+1]] {
+				want += v
+			}
+			if got(i) != want {
+				return fmt.Errorf("build workload leaves %s with wrong values for %q", impl, f.c.Keys.S[i])
+			}
+		}
 	}
+	return nil
 }
-
-// absent returns a value no key holds: the corpus values have the top bit clear.
-func absent(i int) uint64 { return 1<<63 | uint64(i) }
 
 func sum(s func(func(uint64) bool)) uint64 {
 	var a uint64
@@ -180,5 +207,17 @@ func btreeRangeSum(m *btreeMM, from, to string) uint64 {
 		}
 		return true
 	})
+	return a
+}
+
+func mapRangeSum(m mapMM, from, to string) uint64 {
+	var a uint64
+	for k, s := range m {
+		if k >= from && k <= to {
+			for v := range s {
+				a += v
+			}
+		}
+	}
 	return a
 }

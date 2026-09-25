@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -18,8 +19,8 @@ func (f *fixture) candidate(op, impl string) rtcompare.Candidate {
 		b = f.valuesFor(impl)
 	case "valuesBetween":
 		b = f.valuesBetween(impl)
-	case "addRemove":
-		b = f.addRemove(impl)
+	case "churn":
+		b = f.churn(impl)
 	case "build":
 		b = f.build(impl)
 	}
@@ -96,7 +97,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 }
 
 // valuesBetween iterates over all values of rangeKeys consecutive keys.
-// map-sets has no order and therefore no such operation.
+// hashed and map-sets have no order and scan every key.
 func (f *fixture) valuesBetween(impl string) func(uint64) {
 	from, to, j := f.from, f.to, 0
 	switch impl {
@@ -140,97 +141,95 @@ func (f *fixture) valuesBetween(impl string) func(uint64) {
 			}
 			sink += acc
 		}
-	}
-	return nil
-}
-
-// addRemove adds a value a random existing key does not hold, then removes
-// it again; the key keeps its other values throughout.
-func (f *fixture) addRemove(impl string) func(uint64) {
-	p, j := f.c.Hits, 0
-	switch impl {
-	case ordered:
-		m := f.ord
-		return func(n uint64) {
-			for range n {
-				k, v := p.B[j], absent(j)
-				m.AddValue(k, v)
-				m.RemoveValue(k, v)
-				if j++; j == len(p.B) {
-					j = 0
-				}
-			}
-			sink++
-		}
-	case hashed:
-		m := f.hsh
-		return func(n uint64) {
-			for range n {
-				k, v := p.B[j], absent(j)
-				m.AddValue(k, v)
-				m.RemoveValue(k, v)
-				if j++; j == len(p.B) {
-					j = 0
-				}
-			}
-			sink++
-		}
-	case btreeSets:
-		m := f.bt
-		return func(n uint64) {
-			for range n {
-				k, v := p.S[j], absent(j)
-				btreeAdd(m, k, v)
-				btreeRemove(m, k, v)
-				if j++; j == len(p.B) {
-					j = 0
-				}
-			}
-			sink++
-		}
 	case mapSets:
 		m := f.gm
 		return func(n uint64) {
+			var acc uint64
 			for range n {
-				k, v := p.S[j], absent(j)
-				mapAdd(m, k, v)
-				mapRemove(m, k, v)
-				if j++; j == len(p.B) {
+				acc += mapRangeSum(m, from.S[j], to.S[j])
+				if j++; j == len(from.B) {
 					j = 0
 				}
 			}
-			sink++
+			sink += acc
 		}
 	}
 	return nil
 }
 
-// build constructs the whole multimap from the corpus as one operation.
+// churn applies the next mutations of the churn cycle, wrapping around at
+// its end. The candidate's position persists across comparisons, because the
+// multimap is only in the matching state there.
+func (f *fixture) churn(impl string) func(uint64) {
+	ms, j := f.churnWorkload(), f.cur[impl]
+	if j == nil {
+		return nil
+	}
+	// step replays n mutations from *j on, in slices that end at the cycle's end.
+	step := func(n uint64, apply func([]mutation)) {
+		for n > 0 {
+			c := min(n, uint64(len(ms)-*j))
+			apply(ms[*j : *j+int(c)])
+			if *j += int(c); *j == len(ms) {
+				*j = 0
+			}
+			n -= c
+		}
+		sink++
+	}
+	kb, ks := f.ck.B, f.ck.S
+	switch impl {
+	case ordered:
+		m := f.ord
+		return func(n uint64) { step(n, func(s []mutation) { applyOrdered(m, kb, s) }) }
+	case hashed:
+		m := f.hsh
+		return func(n uint64) { step(n, func(s []mutation) { applyHashed(m, kb, s) }) }
+	case btreeSets:
+		m := f.bt
+		return func(n uint64) { step(n, func(s []mutation) { applyBtree(m, ks, s) }) }
+	case mapSets:
+		m := f.gm
+		return func(n uint64) { step(n, func(s []mutation) { applyMap(m, ks, s) }) }
+	}
+	return nil
+}
+
+// build replays the build workload on an empty multimap as one operation:
+// the corpus with as many transient values inserted and deleted in between.
 func (f *fixture) build(impl string) func(uint64) {
-	kb, ks, vals, offs := f.c.Keys.B, f.c.Keys.S, f.vals, f.offs
+	ms, kb, ks := f.buildWorkload(), f.ck.B, f.ck.S
 	switch impl {
 	case ordered:
 		return func(n uint64) {
 			for range n {
-				sink += buildOrdered(kb, vals, offs).NumberOfKeys()
+				m := multimap.NewOrdered[uint64]()
+				applyOrdered(m, kb, ms)
+				sink += m.NumberOfKeys()
 			}
 		}
 	case hashed:
 		return func(n uint64) {
 			for range n {
-				sink += buildHashed(kb, vals, offs).NumberOfKeys()
+				m := multimap.NewHashed[uint64]()
+				applyHashed(m, kb, ms)
+				sink += m.NumberOfKeys()
 			}
 		}
 	case btreeSets:
 		return func(n uint64) {
 			for range n {
-				sink += uint64(buildBtree(ks, vals, offs).Len())
+				m := &btreeMM{}
+				applyBtree(m, ks, ms)
+				sink += uint64(m.Len())
 			}
 		}
 	case mapSets:
 		return func(n uint64) {
 			for range n {
-				sink += uint64(len(buildMap(ks, vals, offs)))
+				m := mapMM{}
+				applyMap(m, ks, ms)
+				sink += uint64(len(m))
 			}
 		}
 	}

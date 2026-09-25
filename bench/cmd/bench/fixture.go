@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/tidwall/btree"
@@ -40,6 +41,13 @@ type fixture struct {
 	gm   mapMM
 	// ranges of rangeKeys consecutive keys, as []byte and string views
 	from, to keys.Set
+	// index workloads: churn keys (corpus keys, then extra keys), the ratio of
+	// insertions to final values, the workloads (made on first use) and each
+	// candidate's position in the churn cycle
+	ck             keys.Set
+	ratio          float64
+	buildW, churnW []mutation
+	cur            map[string]*int
 }
 
 const rangeKeys = 100
@@ -63,7 +71,48 @@ func newFixture(kind keys.Kind, n int, impls []string) *fixture {
 		builds[name]()
 	}
 	f.from, f.to = ranges(f.c.Keys, n)
+	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:max(1, n/2)]...))
+	f.ratio, f.cur = 2, map[string]*int{}
+	for _, name := range impls {
+		f.cur[name] = new(int)
+	}
 	return f
+}
+
+// buildWorkload returns the build workload, computing it on first use.
+func (f *fixture) buildWorkload() []mutation {
+	if f.buildW == nil {
+		f.buildW = buildWorkload(len(f.c.Keys.B), f.vals, f.offs, f.ratio, 0xB11D)
+	}
+	return f.buildW
+}
+
+// churnWorkload returns the churn cycle, computing it on first use.
+func (f *fixture) churnWorkload() []mutation {
+	if f.churnW == nil {
+		f.churnW = churnWorkload(len(f.c.Keys.B), f.vals, f.ratio, 0xC4A2)
+	}
+	return f.churnW
+}
+
+// settle plays every candidate's churn cycle to its end, untimed, so that
+// each holds exactly the corpus again before other operations are timed.
+func (f *fixture) settle() {
+	ms := f.churnWorkload()
+	for name, j := range f.cur {
+		rest := ms[*j:]
+		switch name {
+		case ordered:
+			applyOrdered(f.ord, f.ck.B, rest)
+		case hashed:
+			applyHashed(f.hsh, f.ck.B, rest)
+		case btreeSets:
+			applyBtree(f.bt, f.ck.S, rest)
+		case mapSets:
+			applyMap(f.gm, f.ck.S, rest)
+		}
+		*j = 0
+	}
 }
 
 // ranges picks the probe ranges: rangeKeys consecutive keys in key order,

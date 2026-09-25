@@ -18,14 +18,21 @@ inherit the benchmark's dependencies.
 
 The hand-written candidates own their keys, as the library does, and remove
 a key once its last value is gone. Every candidate is called through its
-concrete type, as you would call it.
+concrete type, as you would call it. Every comparison is `ordered` against one
+of the others.
+
+The insertions and deletions of `churn` and `build` are computed before
+timing starts, by simulating the workload: a deletion is drawn only from
+values that are already in. The timed loop reads the next mutation from an
+array and applies it. New values are running row IDs, as a database index
+stores them, so every insertion adds a value its key does not hold yet.
 
 ## What is measured
 
 - **`valuesFor`:** iterate over all values of a random existing key.
-- **`valuesBetween`:** iterate over all values of 100 consecutive keys. `map-sets` has no order. `hashed` scans every key, so it is compared only up to 64K keys: its cost grows linearly with the number of keys.
-- **`addRemove`:** add a value that a random existing key does not hold, then remove it again.
-- **`build`:** build the whole multimap from scratch. Only up to 64K keys, because at 1M one build takes too long for a timing sample.
+- **`valuesBetween`:** iterate over all values of 100 consecutive keys. `hashed` and `map-sets` have no order and scan every key, so they are compared only up to 64K keys: their cost grows linearly with the number of keys.
+- **`churn`:** add and remove values like a database index in use. On the filled multimap, bursts of 1-16 insertions alternate with bursts of deletions of values inserted earlier. Half of the new values go to existing keys, whose value sets grow and shrink; half go to keys that appear and disappear. The cycle inserts as many values as the multimap holds (`-ratio 2`) and ends in its start state, so it repeats endlessly. Timed per insertion or deletion.
+- **`build`:** build the whole multimap from empty with the same bursts: twice as many insertions as values in the end, until exactly the corpus is left. Only up to 64K keys, because at 1M one build takes too long for a timing sample.
 - **Memory**, at 1M keys: retained heap per key, including the keys' copies and values but excluding the input corpus. Also the CPU time of a full GC cycle while the multimap is alive, and the heap still retained after removing every second key. Go maps do not shrink.
 
 Each comparison runs with 4,096 keys, which fit in the CPU caches, and with
@@ -36,6 +43,10 @@ a real index: 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and 3%
 hold 17-200.
 
 ## Results
+
+These results predate `churn` and the new `build`: they were measured with
+`addRemove` (add one value to a random key and remove it again) and a build
+without deletions. The next run replaces them.
 
 Apple M1 Pro, Go 1.27.1, 2026-09-24. Every factor is how many operations the
 first candidate completes in the time the second needs for one: above 1 it is
@@ -66,10 +77,6 @@ keys, slower with string keys, far faster for range queries.
 | `valuesFor` | `map-sets` | 2.25× | 2.19× | 1.22× | 1.11× |
 | `addRemove` | `map-sets` | 1.11× | 1.54× | 0.44× | 0.85× |
 | `build` | `map-sets` | 1.33× | | 0.78× | |
-
-**`hashed` against `map-sets`:** 2.0-2.2× for `valuesFor`, 1.0-1.7× for
-`addRemove`, 1.2× for `build`. Same data structure, but the value sets are
-smaller and the key is stored once.
 
 **Memory at 1M keys** (bytes per key; GC CPU time per full cycle, minus a
 process that holds only the input):

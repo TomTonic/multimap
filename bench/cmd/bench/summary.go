@@ -11,7 +11,7 @@ import (
 	"github.com/TomTonic/multimap/bench/stats"
 )
 
-var opOrder = []string{"valuesFor", "valuesBetween", "addRemove", "build"}
+var opOrder = []string{"valuesFor", "valuesBetween", "churn", "build"}
 
 // writeSpeed writes speed-summary.md: one row per comparison with the median
 // time per operation of both candidates, the median difference, its 95%

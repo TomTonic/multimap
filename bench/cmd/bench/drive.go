@@ -72,14 +72,15 @@ func drive(c config) error {
 // driveScenario runs speed processes for one key kind and size until every
 // comparison is precise (after at least c.minProcs) or c.maxProcs is reached.
 func driveScenario(c config, self, kind string, n int) ([]result, error) {
-	ps := pairsFor(n, c.ops, c.hashedRangeMax, c.buildMax)
+	ps := pairsFor(n, c.ops, c.scanMax, c.buildMax)
 	if len(ps) == 0 {
 		return nil, nil
 	}
 	var rows []result
 	for i := 1; i <= c.maxProcs; i++ {
 		args := []string{"-child", "-keys", kind, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
-			"-hashedrangemax", strconv.Itoa(c.hashedRangeMax), "-buildmax", strconv.Itoa(c.buildMax),
+			"-scanmax", strconv.Itoa(c.scanMax), "-buildmax", strconv.Itoa(c.buildMax),
+			"-ratio", strconv.FormatFloat(c.ratio, 'g', -1, 64),
 			"-layoutseed", strconv.Itoa(i)}
 		out, err := runChild(self, append(args, rtopt.Forward()...), filepath.Join(c.out, "logs", fmt.Sprintf("speed-%s-%d-p%02d.log", kind, n, i)))
 		if err != nil {
@@ -244,7 +245,7 @@ func writeRunInfo(c config, start time.Time) error {
 		"start": start.Format(time.RFC3339), "end": time.Now().Format(time.RFC3339),
 		"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
 		"cpu": strings.TrimSpace(string(cpu)), "args": os.Args[1:],
-		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "abs": c.abs, "rel": c.rel,
+		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
 	}
 	b, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {

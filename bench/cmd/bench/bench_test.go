@@ -1,44 +1,43 @@
 package main
 
 import (
+	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"testing"
+
+	"github.com/TomTonic/multimap/bench/keys"
 )
 
 // TestPairsFor makes sure the benchmark compares exactly what a user choosing
 // a multimap wants compared, and skips what cannot be timed sensibly. It
 // covers the scenario plan of the benchmark driver: Ordered against every
-// alternative and Hashed against the hand-written map for point operations,
-// no range queries for the unordered map-sets, Hashed range queries (a scan of
-// all keys) and builds only up to their size limits.
+// other candidate in every operation, range queries on the scanning
+// candidates and builds only up to their size limits.
 func TestPairsFor(t *testing.T) {
-	ops := []string{"valuesFor", "valuesBetween", "addRemove", "build"}
+	ops := []string{"valuesFor", "valuesBetween", "churn", "build"}
 	tests := []struct {
-		name string
-		n    int
-		want []pair
-		skip []pair
+		name  string
+		n     int
+		count int
+		skip  []pair
 	}{
+		{name: "compares ordered with all three others in every operation", n: 4096, count: 12},
 		{
-			name: "compares everything for small scenarios",
-			n:    4096,
-			want: []pair{{"valuesFor", ordered, mapSets}, {"valuesFor", hashed, mapSets},
-				{"valuesBetween", ordered, hashed}, {"valuesBetween", ordered, btreeSets}, {"build", ordered, btreeSets}},
-		},
-		{
-			name: "drops hashed range queries and builds for large scenarios",
-			n:    1 << 20,
-			want: []pair{{"valuesBetween", ordered, btreeSets}, {"addRemove", hashed, mapSets}},
-			skip: []pair{{"valuesBetween", ordered, hashed}, {"build", ordered, hashed}},
+			name: "drops scanning range queries and builds for large scenarios", n: 1 << 20, count: 7,
+			skip: []pair{{"valuesBetween", ordered, hashed}, {"valuesBetween", ordered, mapSets}, {"build", ordered, btreeSets}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := pairsFor(tt.n, ops, 1<<16, 1<<16)
-			for _, p := range tt.want {
-				if !slices.Contains(got, p) {
-					t.Errorf("missing %v", p)
+			if len(got) != tt.count {
+				t.Errorf("%d pairs, want %d: %v", len(got), tt.count, got)
+			}
+			for _, p := range got {
+				if p.a != ordered || p.b == ordered {
+					t.Errorf("not ordered against another candidate: %v", p)
 				}
 			}
 			for _, p := range tt.skip {
@@ -46,12 +45,63 @@ func TestPairsFor(t *testing.T) {
 					t.Errorf("unexpected %v", p)
 				}
 			}
-			for _, p := range got {
-				if p.op == "valuesBetween" && (p.a == mapSets || p.b == mapSets) {
-					t.Errorf("range query on the unordered map-sets: %v", p)
-				}
-			}
 		})
+	}
+}
+
+// TestWorkloads makes sure the index workloads behave like a database index
+// and never ask a multimap for something impossible. It covers the build and
+// churn workloads of the benchmark driver: every insertion adds a value the
+// key does not hold, every deletion removes a value inserted earlier,
+// insertions and deletions interleave, the ratio of insertions to final
+// values is as requested, and the multimap ends up holding exactly the corpus.
+func TestWorkloads(t *testing.T) {
+	const n = 3000
+	vals, offs := keys.Values(n, 0xFA11)
+	corpus := map[kv]bool{}
+	for i := range n {
+		for _, v := range vals[offs[i]:offs[i+1]] {
+			corpus[kv{uint32(i), v}] = true
+		}
+	}
+	for _, r := range []float64{1, 1.5, 2, 3} {
+		t.Run(fmt.Sprintf("build with ratio %v", r), func(t *testing.T) {
+			checkWorkload(t, buildWorkload(n, vals, offs, r, 1), map[kv]bool{}, corpus, r*float64(len(vals)))
+		})
+		t.Run(fmt.Sprintf("churn with ratio %v", r), func(t *testing.T) {
+			checkWorkload(t, churnWorkload(n, vals, r, 1), maps.Clone(corpus), corpus, (r-1)*float64(len(vals)))
+		})
+	}
+}
+
+// checkWorkload replays ms on start and checks it against the expectations
+// of TestWorkloads.
+func checkWorkload(t *testing.T, ms []mutation, start, end map[kv]bool, inserts float64) {
+	t.Helper()
+	state, adds, switches := start, 0, 0
+	for i, m := range ms {
+		p := kv{m.key, m.val}
+		if m.del != state[p] {
+			t.Fatalf("mutation %d: del=%v but present=%v", i, m.del, state[p])
+		}
+		if m.del {
+			delete(state, p)
+		} else {
+			state[p] = true
+			adds++
+		}
+		if i > 0 && m.del != ms[i-1].del {
+			switches++
+		}
+	}
+	if !maps.Equal(state, end) {
+		t.Errorf("ends with %d pairs, want the corpus of %d", len(state), len(end))
+	}
+	if math.Abs(float64(adds)-inserts) > 1 {
+		t.Errorf("%d insertions, want %.0f", adds, inserts)
+	}
+	if inserts > float64(len(end)) && switches < adds/100 {
+		t.Errorf("only %d switches between inserting and deleting in %d mutations", switches, len(ms))
 	}
 }
 
