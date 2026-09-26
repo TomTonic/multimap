@@ -19,7 +19,8 @@ import (
 var corpora embed.FS
 
 // streets is the street corpus: names in ascending order and, for each, the
-// indexes of the localities that have a street of that name.
+// localities that have a street of that name, as their index plus one: the
+// benchmark takes a value sum of zero for a missing key.
 type streets struct {
 	names []string
 	locs  [][]uint64
@@ -76,7 +77,7 @@ func loadStreets() streets {
 			if err != nil {
 				panic(fmt.Sprintf("streets: line %q: %v", row, err))
 			}
-			s.locs[i] = append(s.locs[i], v)
+			s.locs[i] = append(s.locs[i], v+1)
 		}
 	}
 	return s

@@ -44,8 +44,8 @@ func TestGenerate(t *testing.T) {
 				t.Fatalf("natural values: %v", c.Natural != nil)
 			}
 			for i, vs := range c.Natural {
-				if len(vs) == 0 {
-					t.Fatalf("street %q has no localities", c.Keys.S[i])
+				if len(vs) == 0 || slices.Contains(vs, 0) {
+					t.Fatalf("street %q has localities %v; want at least one, none of them 0", c.Keys.S[i], vs)
 				}
 			}
 		})
@@ -109,6 +109,20 @@ func TestPrefix(t *testing.T) {
 	} {
 		if got := Prefix(tt.kind, []byte(tt.key)); string(got) != tt.want {
 			t.Errorf("Prefix(%s, %q) = %q, want %q", tt.kind, tt.key, got, tt.want)
+		}
+	}
+}
+
+// TestStreetValues makes sure every street of the real-world corpus maps to
+// localities the benchmark can tell from a missing key. Package keys numbers
+// the localities of streets.tsv.gz for the street kind's natural values; the
+// benchmark reads a value sum of zero as a missing key, so no street of the
+// whole corpus may have the value 0 or no value at all.
+func TestStreetValues(t *testing.T) {
+	s := streetCorpus()
+	for i, vs := range s.locs {
+		if len(vs) == 0 || slices.Contains(vs, 0) {
+			t.Fatalf("street %q has localities %v; want at least one, none of them 0", s.names[i], vs)
 		}
 	}
 }
