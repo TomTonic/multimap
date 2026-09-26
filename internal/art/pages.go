@@ -93,49 +93,44 @@ func newPageS(class int) *pageHead {
 	return p
 }
 
-// sLayout is where an S page keeps its arrays. It follows from the page's
-// class and capacities; the part that U8-n pages share is an nLayout.
-type sLayout struct {
-	nLayout
-	offsOff, lensOff, bytesOff, end uintptr
-}
-
-func (p *pageHead) sLayout() sLayout {
-	n := p.sValLayout()
-	oo := n.valsOff + 8*uintptr(n.vals)
-	lo := oo + 2*uintptr(n.keys)
-	return sLayout{n, oo, lo, n.cntOff + uintptr(n.keys), 64 << (p.class & 3)}
-}
-
-// sValLayout is the nLayout part of sLayout. It is on the path of every
-// lookup, so it computes the external slots of class c as (1<<c)>>1 (see
-// sExt) without loading them, and is small enough to be inlined.
-func (p *pageHead) sValLayout() nLayout {
-	e := uintptr(1) << (p.class & 3) >> 1
-	k, v := uintptr(p.kcap), uintptr(p.vcap)
-	h := headsOff + 8*e
+// sLayout returns where an S page keeps its arrays. It follows from the
+// page's class and capacities. It is on the path of every lookup, so it
+// computes the external slots of class c as (1<<c)>>1 (see sExt) without
+// loading them, and is small enough to be inlined.
+func (p *pageHead) sLayout() nLayout {
+	c := uint64(p.class & 3)
+	e := uint64(1) << c >> 1
+	k, v := uint64(p.kcap), uint64(p.vcap)
+	h := uint64(headsOff) + 8*e
 	vo := h + 8*k
-	return nLayout{int(k), int(v), int(e), h, vo + 8*v + 3*k, headsOff, vo}
+	return nLayout(k | v<<8 | e<<16 | h<<19 | (vo+8*v+3*k)<<29 | uint64(headsOff)<<39 | vo<<49 | c<<59)
 }
+
+// offsOff, lensOff, bytesOff and end are where the key arrays and the byte
+// area of an S page with layout l lie; they follow the value arrays.
+func (l nLayout) offsOff() uintptr  { return l.valsOff() + 8*uintptr(l.vals()) }
+func (l nLayout) lensOff() uintptr  { return l.offsOff() + 2*uintptr(l.keys()) }
+func (l nLayout) bytesOff() uintptr { return l.cntOff() + uintptr(l.keys()) }
+func (l nLayout) end() uintptr      { return 64 << l.sizeClass() }
 
 // sKeys returns the head words of the page's keys; sLens, sOffs and sBytes
 // the other key arrays, over their full capacity.
-func (p *pageHead) sKeys(l *sLayout) []uint64 {
-	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.headsOff)), p.count)
+func (p *pageHead) sKeys(l nLayout) []uint64 {
+	return unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.headsOff())), p.count)
 }
 
-func (p *pageHead) sLens(l *sLayout) []uint8 {
-	return unsafe.Slice((*uint8)(unsafe.Add(unsafe.Pointer(p), l.lensOff)), l.keys)
+func (p *pageHead) sLens(l nLayout) []uint8 {
+	return unsafe.Slice((*uint8)(unsafe.Add(unsafe.Pointer(p), l.lensOff())), l.keys())
 }
 
-func (p *pageHead) sOffs(l *sLayout) []uint16 {
-	return unsafe.Slice((*uint16)(unsafe.Add(unsafe.Pointer(p), l.offsOff)), l.keys)
+func (p *pageHead) sOffs(l nLayout) []uint16 {
+	return unsafe.Slice((*uint16)(unsafe.Add(unsafe.Pointer(p), l.offsOff())), l.keys())
 }
 
 // The byte area may be empty and end with the page, so it is cut from the
 // whole page: a pointer to its start would point past the page.
-func (p *pageHead) sBytes(l *sLayout) []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(p)), l.end)[l.bytesOff:]
+func (p *pageHead) sBytes(l nLayout) []byte {
+	return unsafe.Slice((*byte)(unsafe.Pointer(p)), l.end())[l.bytesOff():]
 }
 
 // tailLen is the length of the tail of a suffix of n bytes.
@@ -153,7 +148,7 @@ func headWord(s []byte) uint64 {
 
 // sUsed returns how many bytes of the byte area are in use: the tails end
 // with the last key's. A page always holds a key.
-func (p *pageHead) sUsed(l *sLayout) int {
+func (p *pageHead) sUsed(l nLayout) int {
 	n := int(p.count)
 	return int(p.sOffs(l)[n-1]) + tailLen(p.sLens(l)[n-1])
 }
@@ -170,18 +165,18 @@ func (p *pageHead) sFind(key []byte, from int) (i int, found, match bool) {
 		return 0, false, false
 	}
 	l := p.sLayout()
-	by := p.sBytes(&l)
+	by := p.sBytes(l)
 	if from = min(from, b); !bytes.Equal(key[from:b], by[from:b]) {
 		return 0, false, false
 	}
-	i, found = p.sSearch(&l, by, key[b:])
+	i, found = p.sSearch(l, by, key[b:])
 	return i, found, true
 }
 
 // sSearch returns the position of the key with suffix s in the page with
 // layout l and byte area by, or where it would be inserted, and whether it is
 // there.
-func (p *pageHead) sSearch(l *sLayout, by []byte, s []byte) (int, bool) {
+func (p *pageHead) sSearch(l nLayout, by []byte, s []byte) (int, bool) {
 	h := p.sKeys(l)
 	w := headWord(s)
 	i, ok := search(h, w)
@@ -210,12 +205,12 @@ func (p *pageHead) sSearch(l *sLayout, by []byte, s []byte) (int, bool) {
 // sKey returns key i of the page, rebuilt in buf.
 func (p *pageHead) sKey(i int, buf *keyBuf) []byte {
 	l := p.sLayout()
-	by := p.sBytes(&l)
+	by := p.sBytes(l)
 	b := copy(buf[:], by[:p.base])
-	binary.BigEndian.PutUint64(buf[b:], p.sKeys(&l)[i])
-	n := int(p.sLens(&l)[i])
+	binary.BigEndian.PutUint64(buf[b:], p.sKeys(l)[i])
+	n := int(p.sLens(l)[i])
 	if n > 8 {
-		o := int(p.sOffs(&l)[i])
+		o := int(p.sOffs(l)[i])
 		copy(buf[b+8:], by[o:o+n-8])
 	}
 	return buf[:b+n]
@@ -225,7 +220,7 @@ func (p *pageHead) sKey(i int, buf *keyBuf) []byte {
 // prefix, goes: before all keys of the page or after them.
 func (p *pageHead) sBefore(key []byte) int {
 	l := p.sLayout()
-	if bytes.Compare(key, p.sBytes(&l)[:p.base]) < 0 {
+	if bytes.Compare(key, p.sBytes(l)[:p.base]) < 0 {
 		return 0
 	}
 	return int(p.count)
@@ -247,7 +242,7 @@ func (p *pageHead) sRepackVals(i int, v uint64) *pageHead {
 // page without repacking.
 func (p *pageHead) sRoom(n int) bool {
 	l := p.sLayout()
-	return p.count < p.kcap && p.nv < p.vcap && p.sUsed(&l)+tailLen(n) <= len(p.sBytes(&l))
+	return p.count < p.kcap && p.nv < p.vcap && p.sUsed(l)+tailLen(n) <= len(p.sBytes(l))
 }
 
 // sInsertKey inserts the key with suffix s and the one value v at position i.
@@ -255,8 +250,8 @@ func (p *pageHead) sRoom(n int) bool {
 func (p *pageHead) sInsertKey(i int, s []byte, v uint64) {
 	l := p.sLayout()
 	n := int(p.count)
-	lens, offs, by := p.sLens(&l), p.sOffs(&l), p.sBytes(&l)
-	used, t := p.sUsed(&l), tailLen(len(s))
+	lens, offs, by := p.sLens(l), p.sOffs(l), p.sBytes(l)
+	used, t := p.sUsed(l), tailLen(len(s))
 	start := used
 	if i < n {
 		start = int(offs[i])
@@ -281,8 +276,8 @@ func (p *pageHead) sRemoveKey(i int) *pageHead {
 		return nil
 	}
 	l := p.sLayout()
-	lens, offs, by := p.sLens(&l), p.sOffs(&l), p.sBytes(&l)
-	used, t, start := p.sUsed(&l), tailLen(lens[i]), int(offs[i])
+	lens, offs, by := p.sLens(l), p.sOffs(l), p.sBytes(l)
+	used, t, start := p.sUsed(l), tailLen(lens[i]), int(offs[i])
 	copy(by[start:used-t], by[start+t:used])
 	copy(lens[i:n-1], lens[i+1:n])
 	copy(offs[i:n-1], offs[i+1:n])
@@ -429,8 +424,8 @@ func sPack(src *sSource) *pageHead {
 // capacities are set.
 func (p *pageHead) sFill(src *sSource) {
 	l := p.sLayout()
-	h := unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.headsOff)), l.keys)
-	lens, offs, by := p.sLens(&l), p.sOffs(&l), p.sBytes(&l)
+	h := unsafe.Slice((*uint64)(unsafe.Add(unsafe.Pointer(p), l.headsOff())), l.keys())
+	lens, offs, by := p.sLens(l), p.sOffs(l), p.sBytes(l)
 	cs, ex, vs := p.cnts(), p.exts(), p.nvals()
 	b := int(p.base)
 	var buf keyBuf

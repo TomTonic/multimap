@@ -495,7 +495,7 @@ func TestPageLayout(t *testing.T) {
 			// computes the rest up to the class size
 			p := newPageS(c)
 			if tc.size != uintptr(sSizes[c]) || tc.ext != uintptr(sExt[c]) || tc.body != headsOff+8*tc.ext ||
-				p.sLayout().end != tc.size || p.sLayout().headsOff != tc.body {
+				p.sLayout().end() != tc.size || p.sLayout().headsOff() != tc.body {
 				t.Fatalf("size %d, %d external slots, body at %d; want %d, %d and %d", tc.size, tc.ext, tc.body, sSizes[c], sExt[c], headsOff+8*tc.ext)
 			}
 		})
@@ -661,7 +661,7 @@ func checkPage(t *testing.T, p *pageHead, depth int) int {
 func checkVals(t *testing.T, p *pageHead, l nLayout) {
 	t.Helper()
 	n := int(p.count)
-	if n < 1 || n > l.keys || int(p.nv) > l.vals {
+	if n < 1 || n > l.keys() || int(p.nv) > l.vals() {
 		t.Fatalf("page of kind %d, class %d holds %d keys and %d values", p.kind, p.class, n, p.nv)
 	}
 	inline, used := 0, map[int]bool{}
@@ -669,7 +669,7 @@ func checkVals(t *testing.T, p *pageHead, l nLayout) {
 		switch {
 		case x >= extBit:
 			e := int(x &^ extBit)
-			if e >= l.ext || used[e] || p.exts()[e] == nil {
+			if e >= l.ext() || used[e] || p.exts()[e] == nil {
 				t.Fatalf("key %d refers to external slot %d, which is out of range, shared or empty", i, e)
 			}
 			used[e] = true
@@ -691,14 +691,16 @@ func checkVals(t *testing.T, p *pageHead, l nLayout) {
 func checkPageS(t *testing.T, p *pageHead, depth int) int {
 	t.Helper()
 	l := p.sLayout()
-	if int(p.class) >= len(sSizes) || l.bytesOff > l.end || p.count > p.kcap {
+	// The capacities are checked unpacked: an overflowing layout could wrap
+	// the 10-bit offsets of l.
+	if int(p.class) >= len(sSizes) || sNeed(int(p.class), int(p.kcap), int(p.vcap), 0) > sSizes[p.class] || p.count > p.kcap {
 		t.Fatalf("S page of class %d with %d of %d keys and %d value slots overflows", p.class, p.count, p.kcap, p.vcap)
 	}
-	checkVals(t, p, l.nLayout)
+	checkVals(t, p, l)
 	n, b := int(p.count), int(p.base)
-	lens, offs := p.sLens(&l), p.sOffs(&l)
-	if p.sUsed(&l) > len(p.sBytes(&l)) || int(offs[0]) != b {
-		t.Fatalf("S page uses %d of %d bytes, first tail at %d after a prefix of %d", p.sUsed(&l), len(p.sBytes(&l)), offs[0], b)
+	lens, offs := p.sLens(l), p.sOffs(l)
+	if p.sUsed(l) > len(p.sBytes(l)) || int(offs[0]) != b {
+		t.Fatalf("S page uses %d of %d bytes, first tail at %d after a prefix of %d", p.sUsed(l), len(p.sBytes(l)), offs[0], b)
 	}
 	var buf, prev keyBuf
 	var last []byte
@@ -707,8 +709,8 @@ func checkPageS(t *testing.T, p *pageHead, depth int) int {
 		if i > 0 && int(offs[i]) != int(offs[i-1])+tailLen(lens[i-1]) {
 			t.Fatalf("tail %d starts at %d, not right after the one before", i, offs[i])
 		}
-		if len(k) < depth || len(k) > maxPageKey || p.sKeys(&l)[i] != headWord(k[b:]) {
-			t.Fatalf("S page key %q at depth %d: bad length or head word %x", k, depth, p.sKeys(&l)[i])
+		if len(k) < depth || len(k) > maxPageKey || p.sKeys(l)[i] != headWord(k[b:]) {
+			t.Fatalf("S page key %q at depth %d: bad length or head word %x", k, depth, p.sKeys(l)[i])
 		}
 		if i > 0 && bytes.Compare(last, k) >= 0 {
 			t.Fatalf("S page keys not strictly ascending: %q, %q", last, k)

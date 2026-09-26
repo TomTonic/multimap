@@ -172,7 +172,7 @@ func (t *Tree) rebuild(sp spot, change func(*item)) {
 // subtree is rebuilt.
 func (t *Tree) addToSingle(sp spot, v uint64) {
 	p := asPage(*sp.at)
-	if int(p.count) <= nLayouts[len(nLayouts)-1].keys {
+	if int(p.count) <= nLayouts[len(nLayouts)-1].keys() {
 		q := p.toN(1)
 		q.nAddVal(sp.i, v)
 		*sp.at = pageHdr(q)
@@ -187,7 +187,7 @@ func (t *Tree) addToSingle(sp spot, v uint64) {
 // rebuilt.
 func (t *Tree) addInline(sp spot, v uint64) {
 	p := asPage(*sp.at)
-	if int(p.nv) == p.layout().vals {
+	if int(p.nv) == p.layout().vals() {
 		c := -1
 		if p.kind == kPageN {
 			c = nClassFor(int(p.count), int(p.nv)+1, p.extUsed())
@@ -211,7 +211,7 @@ func (t *Tree) addInline(sp spot, v uint64) {
 // is repacked); beyond the largest, the subtree is rebuilt.
 func (t *Tree) externalize(sp spot, s unsafe.Pointer) {
 	p := asPage(*sp.at)
-	if p.extUsed() == p.layout().ext {
+	if p.extUsed() == p.layout().ext() {
 		c := -1
 		if p.kind == kPageN {
 			_, n, _ := p.run(sp.i)
