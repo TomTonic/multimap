@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/TomTonic/multimap"
+	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/rtcompare"
 )
 
@@ -18,7 +19,9 @@ func (f *fixture) candidate(op, impl string) rtcompare.Candidate {
 	case "valuesFor":
 		b = f.valuesFor(impl)
 	case "valuesBetween":
-		b = f.valuesBetween(impl)
+		b = f.valuesBetween(impl, f.from, f.to)
+	case "prefix":
+		b = f.valuesBetween(impl, f.pfrom, f.pto)
 	case "churn":
 		b = f.churn(impl)
 	case "build":
@@ -110,10 +113,11 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 	return nil
 }
 
-// valuesBetween iterates over all values of rangeKeys consecutive keys.
-// hashed and map-sets have no order and scan every key.
-func (f *fixture) valuesBetween(impl string) func(uint64) {
-	from, to, j := f.from, f.to, 0
+// valuesBetween iterates over all values of the keys in [from[j], to[j]] for
+// successive j: rangeKeys consecutive keys (valuesBetween), or all keys with
+// a prefix (prefix). hashed and map-sets have no order and scan every key.
+func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
+	j := 0
 	switch impl {
 	case ordered:
 		m := f.ord

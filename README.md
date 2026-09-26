@@ -157,3 +157,10 @@ in generated GoDoc.
   [tidwall/btree](https://github.com/tidwall/btree) served as yardsticks while
   the design took shape (see [`bench/_archive`](bench/_archive/README.md)). No
   code of theirs is included.
+- The benchmark measures real keys thanks to the **OpenStreetMap
+  contributors**, whose German street names reach it through the
+  [OpenPLZ API](https://www.openplzapi.org/) project's data extract (© OpenStreetMap
+  contributors, [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/)), and
+  to the **Debian project**, whose package contents lists supply its file
+  paths. Both corpora and their licenses are described in
+  [`bench/keys/testdata`](bench/keys/testdata/README.md).

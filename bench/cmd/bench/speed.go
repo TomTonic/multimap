@@ -21,16 +21,19 @@ var sink uint64
 type pair struct{ op, a, b string }
 
 // pairsFor lists the comparisons of one scenario: Ordered against every
-// other candidate of the value profile. Range queries on hashed and map-sets
-// scan every key, so they are compared only up to scanMax keys; building is
-// compared only up to buildMax keys. Both take too long per operation beyond
-// that for the batch size the fast Ordered side needs.
-func pairsFor(n int, profile string, ops []string, scanMax, buildMax int) []pair {
+// other candidate of the value profile. Range and prefix queries on hashed
+// and map-sets scan every key, so they are compared only up to scanMax keys;
+// building is compared only up to buildMax keys. Both take too long per
+// operation beyond that for the batch size the fast Ordered side needs.
+// Prefix queries need text keys (see keys.Text).
+func pairsFor(kind keys.Kind, n int, profile string, ops []string, scanMax, buildMax int) []pair {
 	var ps []pair
 	for _, op := range ops {
 		for _, b := range implsFor(profile)[1:] {
+			ranged := op == "valuesBetween" || op == "prefix"
 			switch {
-			case op == "valuesBetween" && (b == hashed || b == mapSets) && n > scanMax:
+			case op == "prefix" && !keys.Text(kind):
+			case ranged && (b == hashed || b == mapSets) && n > scanMax:
 			case op == "build" && n > buildMax:
 			default:
 				ps = append(ps, pair{op, ordered, b})
@@ -103,8 +106,14 @@ func runSpeed(kind keys.Kind, profile string, n int, ratio float64, ps []pair, o
 }
 
 // verify makes sure all candidates answer identically before anything is
-// timed, so that a fast wrong answer cannot win.
+// timed, so that a fast wrong answer cannot win: point queries, ranges and
+// prefix ranges.
 func (f *fixture) verify() error {
+	for _, r := range [][2]keys.Set{{f.from, f.to}, {f.pfrom, f.pto}} {
+		if err := f.verifyRanges(r[0], r[1]); err != nil {
+			return err
+		}
+	}
 	if f.profile == unique {
 		return f.verifyUnique()
 	}
@@ -116,17 +125,28 @@ func (f *fixture) verify() error {
 			return fmt.Errorf("candidates disagree on the values of %q", f.c.Hits.S[i])
 		}
 	}
-	for i := range min(len(f.from.B), 2000) {
-		want := sum(f.ord.ValuesBetweenInclusiveSeq(f.from.B[i], f.to.B[i]))
-		if got := btreeRangeSum(f.bt, f.from.S[i], f.to.S[i]); got != want {
-			return fmt.Errorf("btree-sets disagrees on range %q..%q", f.from.S[i], f.to.S[i])
-		}
-		if i < 20 {
-			if got := sum(f.hsh.ValuesBetweenInclusiveSeq(f.from.B[i], f.to.B[i])); got != want {
-				return fmt.Errorf("hashed disagrees on range %q..%q", f.from.S[i], f.to.S[i])
+	return nil
+}
+
+// verifyRanges makes sure all candidates of the profile return the same
+// values for the ranges [from[i], to[i]]; the scanning candidates are checked
+// on a few ranges only, as each check scans every key.
+func (f *fixture) verifyRanges(from, to keys.Set) error {
+	for i := range min(len(from.B), 2000) {
+		want := sum(f.ord.ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
+		var got map[string]uint64
+		if f.profile == unique {
+			got = map[string]uint64{btreeMapC: btreeMapRangeSum(f.bm, from.S[i], to.S[i])}
+		} else {
+			got = map[string]uint64{btreeSets: btreeRangeSum(f.bt, from.S[i], to.S[i])}
+			if i < 20 {
+				got[hashed] = sum(f.hsh.ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
+				got[mapSets] = mapRangeSum(f.gm, from.S[i], to.S[i])
 			}
-			if got := mapRangeSum(f.gm, f.from.S[i], f.to.S[i]); got != want {
-				return fmt.Errorf("map-sets disagrees on range %q..%q", f.from.S[i], f.to.S[i])
+		}
+		for impl, g := range got {
+			if g != want {
+				return fmt.Errorf("%s disagrees on range %q..%q", impl, from.S[i], to.S[i])
 			}
 		}
 	}
@@ -139,12 +159,6 @@ func (f *fixture) verifyUnique() error {
 		want := sum(f.ord.ValuesForSeq(f.c.Hits.B[i]))
 		if got, ok := f.bm.Get(f.c.Hits.S[i]); !ok || got != want {
 			return fmt.Errorf("btree-map disagrees on the value of %q", f.c.Hits.S[i])
-		}
-	}
-	for i := range min(len(f.from.B), 2000) {
-		want := sum(f.ord.ValuesBetweenInclusiveSeq(f.from.B[i], f.to.B[i]))
-		if got := btreeMapRangeSum(f.bm, f.from.S[i], f.to.S[i]); got != want {
-			return fmt.Errorf("btree-map disagrees on range %q..%q", f.from.S[i], f.to.S[i])
 		}
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/TomTonic/multimap/bench/awake"
+	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/multimap/bench/stats"
 )
@@ -86,8 +88,12 @@ func drive(c config) error {
 // is reached. The processes of prior that belong to the scenario count as
 // already run, so -continue resumes after the last of them.
 func driveScenario(c config, self, kind, profile string, n int, prior []result) error {
-	ps := pairsFor(n, profile, c.ops, c.scanMax, c.buildMax)
+	ps := pairsFor(keys.Kind(kind), n, profile, c.ops, c.scanMax, c.buildMax)
 	if len(ps) == 0 {
+		return nil
+	}
+	if limit := keys.Capacity(keys.Kind(kind)); n > limit {
+		logf("%s %s n=%d: skipped, the corpus holds keys for n <= %d", kind, profile, n, limit)
 		return nil
 	}
 	rows, done := scenarioRows(prior, kind, profile, n, ps)
@@ -198,7 +204,7 @@ func driveMem(c config, self string) error {
 		rand.New(rand.NewPCG(uint64(round), 7)).Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
 		for _, kind := range c.kinds {
 			for _, jb := range order {
-				args := []string{"-memchild", jb.impl, "-keys", kind, "-values", jb.profile, "-n", strconv.Itoa(c.memN),
+				args := []string{"-memchild", jb.impl, "-keys", kind, "-values", jb.profile, "-n", strconv.Itoa(memN(c, kind)),
 					"-cycles", strconv.Itoa(c.cycles), "-layoutseed", strconv.Itoa(round)}
 				out, err := runChild(self, args, filepath.Join(c.out, "logs", fmt.Sprintf("mem-%s-%s-%s-r%d.log", kind, jb.profile, jb.impl, round)))
 				if err != nil {
@@ -218,6 +224,10 @@ func driveMem(c config, self string) error {
 	}
 	return writeMem(c, rows)
 }
+
+// memN is the number of keys the memory measurements use for kind: c.memN,
+// or less where the kind's corpus is smaller (see keys.Capacity).
+func memN(c config, kind string) int { return min(c.memN, keys.Capacity(keys.Kind(kind))) }
 
 // runChild runs this binary with args, returns its stdout and writes its
 // stderr (the rtcompare reports) to logPath.
@@ -299,7 +309,8 @@ func writeRunInfo(c config, start time.Time) error {
 		"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
 		"cpu": cpuName(), "args": os.Args[1:],
 		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
-		"values": c.profiles,
+		"values": c.profiles, "keys": c.kinds, "sizes": c.sizes, "ops": c.ops, "memn": c.memN,
+		"suite": flag.Lookup("suite").Value.String(),
 	}
 	if c.cont {
 		info = continued(path, info)

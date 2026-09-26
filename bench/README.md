@@ -33,16 +33,33 @@ stores them, so every insertion adds a value its key does not hold yet.
 
 - **`valuesFor`:** iterate over all values of a random existing key.
 - **`valuesBetween`:** iterate over all values of 100 consecutive keys. `hashed` and `map-sets` have no order and scan every key, so they are compared only up to 64K keys: their cost grows linearly with the number of keys.
+- **`prefix`:** iterate over all values of the keys that start with what a user searches by: the first four characters of a random key, as typed into a search field, or, for paths and URLs, the directory the key lies in. Frequent prefixes come up as often as users would search them. Text keys only; `hashed` and `map-sets` again only up to 64K keys.
 - **`churn`:** add and remove values like a database index in use. On the filled multimap, bursts of 1-16 insertions alternate with bursts of deletions of values inserted earlier. Half of the new values go to existing keys, whose value sets grow and shrink; half go to keys that appear and disappear. The cycle inserts as many values as the multimap holds (`-ratio 2`) and ends in its start state, so it repeats endlessly. Timed per insertion or deletion.
 - **`build`:** build the whole multimap from empty with the same bursts: twice as many insertions as values in the end, until exactly the corpus is left. Only up to 64K keys, because at 1M one build takes too long for a timing sample.
-- **Memory**, at 1M keys: retained heap per key, including the keys' copies and values but excluding the input corpus. Also the CPU time of a full GC cycle while the multimap is alive, and the heap still retained after removing every second key. Go maps do not shrink.
+- **Memory**, at 1M keys (`-suite release`) or 128K keys (`-suite dev`), or fewer where a real-world corpus holds fewer keys: retained heap per key, including the keys' copies and values but excluding the input corpus. Also the CPU time of a full GC cycle while the multimap is alive, and the heap still retained after removing every second key. Go maps do not shrink.
 
-Each comparison runs with 4,096 keys, which fit in the CPU caches, and with
-1,048,576 keys, which do not. Keys are either `u64` (random 64-bit integers,
-8 bytes big endian) or `str` (path-like strings such as `tenant/category/word/12345`,
-about 26 bytes). Values are `uint64`, and their number per key is skewed like
-a real index (`-values multi`): 50% of keys hold 1 value, 35% hold 2-4, 12%
-hold 5-16 and 3% hold 17-200.
+Each comparison runs with 4,096 and 16,384 keys, which fit in the CPU caches,
+with 262,144 keys, which fit only partly, and in the release suite with
+1,048,576 keys, which do not. The key kinds:
+
+| kind | what | length |
+|---|---|---|
+| `u64` | random 64-bit integers, 8 bytes big endian | 8 B |
+| `str` | synthetic paths such as `tenant/category/word/12345` | about 26 B |
+| `uuid` | random UUIDs in lowercase hex: no shared prefixes | 36 B |
+| `email` | `first.last@domain` over five domains: the shared part comes last | about 25 B |
+| `url` | three hosts, 2-4 path segments and a query: long shared prefixes | about 66 B |
+| `path` | real file paths from the packages of Debian 12 | about 65 B, up to 300 |
+| `street` | real German street names from OpenStreetMap | about 14 B |
+
+`path` and `street` come from [`keys/testdata`](keys/testdata/README.md),
+where their sources and licenses are documented; they hold enough keys for
+262,144 and 212,000 keys respectively, and larger scenarios are skipped.
+
+Values are `uint64`, and their number per key is skewed like a real index
+(`-values multi`): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and
+3% hold 17-200. Street names hold their real localities instead: 79% of the
+names have one, "Hauptstr." has 5,913.
 
 With `-values unique`, every key holds exactly one value, like an index on a
 unique column, and `ordered` is compared with `btree-map`. In `churn` and
@@ -145,7 +162,7 @@ The driver `cmd/bench` therefore runs every scenario (key kind × number of
 keys) in separate processes:
 - Each process gets its own `-layoutseed`. Package [`layout`](layout/layout.go) then puts random spacers between the candidates and builds them in a random order, so the processes sample different layouts instead of repeating one biased layout.
 - Each process counts as one observation. Package [`stats`](stats/stats.go) reports the median difference and a 95% t-interval across processes.
-- Five processes are the minimum. After that, the driver adds processes until every comparison's interval is within ±2 percentage points or within ±10% of the difference itself, up to 20. Five are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points gives ±2.5-6 with five processes and needs 10-20 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M.
+- Five processes are the minimum in the release suite (the dev suite runs 3-5 and accepts wider intervals). After that, the driver adds processes until every comparison's interval is within ±2 percentage points or within ±10% of the difference itself, up to 20. Five are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points gives ±2.5-6 with five processes and needs 10-20 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M.
 - Fewer than five would estimate the spread from too few processes, and a run that happened to scatter little would stop early by luck.
 - Where 20 were not enough, `-continue` adds processes to an existing `results/` under a higher `-maxprocs`: every scenario resumes after its last process, and scenarios that are already precise are skipped. The run of 2026-09-25 went on this way at 1M keys with several values: `str` became precise after 27 processes, `u64` stopped at 40.
 
@@ -157,12 +174,19 @@ order each, and the tables show medians.
 ## Running
 
 ```sh
-go run ./cmd/bench                                  # the full suite: about 3 hours on an M1 Pro
-go run ./cmd/bench -sizes 4096 -skipmem             # a quicker subset
+go run ./cmd/bench                                  # the dev suite, for frequent runs while trying a change
+go run ./cmd/bench -suite release                   # the complete suite, before a release
+go run ./cmd/bench -keys str,street -sizes 16384    # a quicker subset
 go run ./cmd/bench -continue -skipmem -maxprocs 40  # more processes where 20 were not enough
 go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 2 -maxprocs 2 -memn 16384 -memrounds 1
 go run ./cmd/summarize results/speed.jsonl          # pool the raw results again
 ```
+
+The two suites:
+- **`dev`** (the default) leaves out 1M keys and measures 4K, 16K and 256K instead: small indexes are the common case and must never get worse, and the trend up to 256K shows where larger ones are headed. It trades precision for time: 3-5 processes per scenario, 2 A/A runs and 41 samples per rtcompare comparison, about 1.5 hours on a Ryzen 9 7900.
+- **`release`** adds 1M keys and measures at full precision: 5-20 processes, rtcompare's defaults.
+
+Flags given on the command line override the suite's presets.
 
 The driver starts its own binary for every process and writes to `results/`:
 - `speed.jsonl` and `mem.jsonl`: one line per comparison per process;

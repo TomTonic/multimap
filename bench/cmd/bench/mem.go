@@ -34,7 +34,7 @@ type memResult struct {
 // candidates in one process would each pay for the other.
 func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, out io.Writer) error {
 	c := keys.Generate(kind, n, 0x5EED)
-	vals, offs := profileValues(profile, n)
+	vals, offs := profileValues(c, profile, n)
 	layout.Spacer()
 	runtime.GC()
 	before := heapStats()

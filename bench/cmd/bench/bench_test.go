@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"maps"
 	"math"
@@ -9,6 +10,8 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+
+	"github.com/TomTonic/multimap/bench/keys"
 )
 
 // TestPairsFor makes sure the benchmark compares exactly what a user choosing
@@ -38,7 +41,7 @@ func TestPairsFor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := pairsFor(tt.n, tt.profile, ops, 1<<16, 1<<16)
+			got := pairsFor(keys.U64, tt.n, tt.profile, ops, 1<<16, 1<<16)
 			if len(got) != tt.count {
 				t.Errorf("%d pairs, want %d: %v", len(got), tt.count, got)
 			}
@@ -67,7 +70,7 @@ func TestPairsFor(t *testing.T) {
 func TestWorkloads(t *testing.T) {
 	const n = 3000
 	for _, profile := range []string{multi, unique} {
-		vals, offs := profileValues(profile, n)
+		vals, offs := profileValues(keys.Corpus{}, profile, n)
 		corpus := map[kv]bool{}
 		for i := range n {
 			for _, v := range vals[offs[i]:offs[i+1]] {
@@ -130,8 +133,8 @@ func checkWorkload(t *testing.T, ms []mutation, start, end map[kv]bool, inserts 
 // exactly one value, taken from the same values as the multi profile. It
 // covers the value profiles of the benchmark driver.
 func TestProfileValues(t *testing.T) {
-	mv, mo := profileValues(multi, 1000)
-	uv, uo := profileValues(unique, 1000)
+	mv, mo := profileValues(keys.Corpus{}, multi, 1000)
+	uv, uo := profileValues(keys.Corpus{}, unique, 1000)
 	if len(uv) != 1000 || len(uo) != 1001 {
 		t.Fatalf("unique: %d values, %d offsets; want 1000 and 1001", len(uv), len(uo))
 	}
@@ -199,7 +202,7 @@ func TestMedian(t *testing.T) {
 // rows of the same key kind, value profile, size and planned comparisons
 // count, and the number of processes run is the highest layout seed.
 func TestScenarioRows(t *testing.T) {
-	ps := pairsFor(1<<20, multi, []string{"valuesFor"}, 1<<16, 1<<16)
+	ps := pairsFor(keys.U64, 1<<20, multi, []string{"valuesFor"}, 1<<16, 1<<16)
 	row := func(keys, values string, n int, op, b string, seed uint64) result {
 		return result{Keys: keys, Values: values, N: n, Op: op, A: ordered, B: b, LayoutSeed: seed}
 	}
@@ -289,5 +292,84 @@ func TestCPUInfoModel(t *testing.T) {
 	}
 	if runtime.GOOS == "linux" && cpuName() == "" {
 		t.Log("no model name in /proc/cpuinfo on this machine")
+	}
+}
+
+// TestPairsForPrefix makes sure prefix searches are compared only where they
+// mean something: on text keys, where a user types the first characters, and
+// on the scanning candidates only while a scan of all keys stays affordable.
+// It covers the scenario plan of the benchmark driver for the prefix
+// operation.
+func TestPairsForPrefix(t *testing.T) {
+	ops := []string{"prefix"}
+	for _, tt := range []struct {
+		name  string
+		kind  keys.Kind
+		n     int
+		count int
+	}{
+		{"skips integer keys", keys.U64, 4096, 0},
+		{"compares text keys with all three others", keys.Street, 4096, 3},
+		{"drops the scanning candidates for large scenarios", keys.Path, 1 << 20, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pairsFor(tt.kind, tt.n, multi, ops, 1<<16, 1<<16); len(got) != tt.count {
+				t.Errorf("%d pairs, want %d: %v", len(got), tt.count, got)
+			}
+		})
+	}
+}
+
+// TestApplySuite makes sure a suite preset fills in what the user left open
+// and never overrides what the user asked for. It covers the -suite presets
+// of the benchmark driver: every preset names only existing flags, and a
+// flag given on the command line keeps its value.
+func TestApplySuite(t *testing.T) {
+	for name := range suites {
+		t.Run(name, func(t *testing.T) {
+			fs := flag.NewFlagSet("bench", flag.ContinueOnError)
+			vals := map[string]*string{}
+			for k := range suites[name] {
+				vals[k] = fs.String(k, "unset", "")
+			}
+			if err := fs.Parse([]string{"-maxprocs", "7"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := applySuite(fs, name); err != nil {
+				t.Fatal(err)
+			}
+			for k, v := range vals {
+				want := suites[name][k]
+				if k == "maxprocs" {
+					want = "7"
+				}
+				if *v != want {
+					t.Errorf("-%s = %q, want %q", k, *v, want)
+				}
+			}
+		})
+	}
+	if err := applySuite(flag.NewFlagSet("bench", flag.ContinueOnError), "nightly"); err == nil {
+		t.Error("an unknown suite must be an error")
+	}
+	if err := applySuite(flag.NewFlagSet("bench", flag.ContinueOnError), "dev"); err == nil {
+		t.Error("a preset for flags that do not exist must be an error")
+	}
+}
+
+// TestProfileValuesNatural makes sure street names keep their real
+// localities as values under the multi profile, and one value each under
+// unique. It covers how the benchmark driver chooses values for a corpus
+// with natural values.
+func TestProfileValuesNatural(t *testing.T) {
+	c := keys.Generate(keys.Street, 1000, 1)
+	vals, offs := profileValues(c, multi, 1000)
+	for i := range 1000 {
+		if !slices.Equal(vals[offs[i]:offs[i+1]], c.Natural[i]) {
+			t.Fatalf("key %q: values %v, want its localities %v", c.Keys.S[i], vals[offs[i]:offs[i+1]], c.Natural[i])
+		}
+	}
+	if uv, uo := profileValues(c, unique, 1000); len(uv) != 1000 || uo[1000] != 1000 {
+		t.Errorf("unique: %d values for 1000 keys", len(uv))
 	}
 }

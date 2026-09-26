@@ -57,8 +57,11 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
-	// ranges of rangeKeys consecutive keys, as []byte and string views
-	from, to keys.Set
+	// ranges of rangeKeys consecutive keys, as []byte and string views, and
+	// the ranges of the keys that start with the prefix of a random key (see
+	// keys.Prefix; text keys only)
+	from, to   keys.Set
+	pfrom, pto keys.Set
 	// index workloads: churn keys (corpus keys, then extra keys), the ratio of
 	// insertions to final values, the workloads (made on first use) and each
 	// candidate's position in the churn cycle
@@ -76,7 +79,7 @@ const rangeKeys = 100
 // that each process samples its own layout.
 func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture {
 	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
-	f.vals, f.offs = profileValues(profile, n)
+	f.vals, f.offs = profileValues(f.c, profile, n)
 	builds := map[string]func(){
 		ordered:   func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
 		hashed:    func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
@@ -91,6 +94,9 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture 
 		builds[name]()
 	}
 	f.from, f.to = ranges(f.c.Keys, n)
+	if keys.Text(kind) {
+		f.pfrom, f.pto = prefixes(kind, f.c.Keys, n)
+	}
 	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:extraKeys(profile, n)]...))
 	f.ratio, f.cur = 2, map[string]*int{}
 	for _, name := range impls {
@@ -99,10 +105,19 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture 
 	return f
 }
 
-// profileValues returns the values of n keys under a value profile: key i
-// holds vals[offs[i]:offs[i+1]].
-func profileValues(profile string, n int) (vals []uint64, offs []int) {
+// profileValues returns the values of the n keys of c under a value profile:
+// key i holds vals[offs[i]:offs[i+1]]. Under multi, keys with natural values
+// (street names: their localities) hold those, others a skewed number of
+// synthetic ones (see keys.Values).
+func profileValues(c keys.Corpus, profile string, n int) (vals []uint64, offs []int) {
 	vals, offs = keys.Values(n, 0xFA11)
+	if c.Natural != nil {
+		vals, offs = nil, make([]int, n+1)
+		for i, vs := range c.Natural[:n] {
+			vals = append(vals, vs...)
+			offs[i+1] = len(vals)
+		}
+	}
 	if profile != unique {
 		return vals, offs
 	}
@@ -164,6 +179,20 @@ func (f *fixture) settle() {
 
 // ranges picks the probe ranges: rangeKeys consecutive keys in key order,
 // starting at random keys.
+// prefixes returns the bounds of prefix searches: the prefixes of random keys
+// (see keys.Prefix), so that frequent prefixes are searched as often as users
+// would search them, and the end of each prefix's range (see keys.PrefixEnd).
+func prefixes(kind keys.Kind, all keys.Set, n int) (from, to keys.Set) {
+	rng := rtcompare.NewDPRNG(0x9F1F)
+	var f, t [][]byte
+	for range min(n, 1<<16) {
+		k := all.B[rng.Uint64()%uint64(n)]
+		p := keys.Prefix(kind, k)
+		f, t = append(f, p), append(t, keys.PrefixEnd(p))
+	}
+	return keys.Pack(f), keys.Pack(t)
+}
+
 func ranges(all keys.Set, n int) (from, to keys.Set) {
 	sorted := keys.Sorted(all)
 	rng := rtcompare.NewDPRNG(0xB0B)
