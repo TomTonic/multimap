@@ -9,13 +9,16 @@ import (
 )
 
 // spot is where upsert left a key: in a leaf, or at position i of the page
-// that the slot at points to, whose path starts at depth.
+// that the slot at points to, whose path starts at depth. A page below a
+// range node is child pi of the node at *par.
 type spot struct {
 	leaf    *leafHead // the key's leaf, or nil when the key is in a page
 	at      **header
 	i       int
 	depth   int
 	created bool // the key is new; in a page it already holds the value
+	par     **header
+	pi      int
 }
 
 // upsert returns where key is, creating it when it is missing: in a page with
@@ -27,14 +30,16 @@ type spot struct {
 // added right where the descent stopped, without a second traversal.
 func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 	loc, depth := &t.root, 0
+	var par **header // the range node *loc is a child of, or nil
+	pi := 0
 	for {
 		n := *loc
 		if n == nil {
 			*loc = t.newChild(key, v, nl)
 			return t.created(*loc)
 		}
-		if n.kind != kLeaf && n.kind <= kLastPage {
-			return t.upsertPage(loc, key, depth, v, nl)
+		if isPage(n) {
+			return t.upsertPage(loc, par, pi, key, depth, v, nl)
 		}
 		if n.kind == kLeaf {
 			return t.splitLeaf(loc, asLeaf(n), key, depth, v, nl)
@@ -60,6 +65,25 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			return spot{leaf: n.term}
 		}
 		b := key[depth]
+		if n.kind == kR {
+			x := asR(n)
+			i := swar.Floor(&x.starts, b)
+			c := &x.children()[i]
+			if cb, ok := firstByte(*c, depth); ok && cb != b {
+				// The child's keys all have byte cb: the key gets a range of
+				// its own, next to it.
+				nc := t.newChild(key, v, nl)
+				rs := []rng{{0, *c}, {b, nc}}
+				if b < cb {
+					rs = []rng{{0, nc}, {cb, *c}}
+				}
+				*loc = rSplice(n, i, rs)
+				return t.created(nc)
+			}
+			par, pi, loc = loc, i, c
+			continue
+		}
+		par = nil
 		c := findLoc(n, b)
 		if c == nil {
 			nc := t.newChild(key, v, nl)
@@ -73,6 +97,19 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 // pageable reports whether key may go into a page.
 func (t *Tree) pageable(key []byte) bool { return t.small && len(key) <= maxPageKey }
 
+// firstByte returns byte depth of every key below c, a child of a range
+// node, if they all share it: the byte of a leaf, or the first path byte of a
+// node. A page's keys may differ there.
+func firstByte(c *header, depth int) (byte, bool) {
+	switch {
+	case c.kind == kLeaf:
+		return asLeaf(c).key()[depth], true
+	case isPage(c) || c.plen == 0:
+		return 0, false
+	}
+	return c.prefix[0], true
+}
+
 // newChild returns a new page holding key with the raw value v when the key
 // fits a page, else a new leaf made by nl.
 func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc) *header {
@@ -84,7 +121,7 @@ func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc) *header {
 		p.count, p.klen = 1, uint8(len(key))
 		p.heads()[0], p.vals()[0] = keyWord(key), v
 		return pageHdr(p)
-	case t.kpages:
+	case !t.spages:
 		return pageHdr(kPack([]item{{key: key, vals: []uint64{v}}}))
 	}
 	return pageHdr(sPack(newKeySource(nil, 0, key, v)))
@@ -102,13 +139,13 @@ func (t *Tree) created(c *header) spot {
 // upsertPage handles a key whose descent reaches the page at *loc: the key is
 // there, or goes in, or the subtree is rebuilt with it (see build) because
 // the page is full or the key does not fit it.
-func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newLeafFunc) spot {
+func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v uint64, nl newLeafFunc) spot {
 	p := asPage(*loc)
 	if p.kind == kPageK {
 		i, found, match := p.kFind(key, depth)
 		switch {
 		case found:
-			return spot{at: loc, i: i, depth: depth}
+			return spot{at: loc, i: i, depth: depth, par: par, pi: pi}
 		case match && t.pageable(key) && (p.count < p.kcap || int(p.class) < len(kCaps)-1):
 			if p.count == p.kcap {
 				p = p.kResize(int(p.class) + 1)
@@ -122,7 +159,7 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 		i, found, match := p.sFind(key, depth) // the descent checked every path
 		switch {
 		case found:
-			return spot{at: loc, i: i, depth: depth}
+			return spot{at: loc, i: i, depth: depth, par: par, pi: pi}
 		case match && p.sRoom(len(key)-int(p.base)):
 			p.sInsertKey(i, key[p.base:], v)
 			t.size++
@@ -145,7 +182,7 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 		i, ok := p.search(w)
 		switch {
 		case ok:
-			return spot{at: loc, i: i, depth: depth}
+			return spot{at: loc, i: i, depth: depth, par: par, pi: pi}
 		case p.kind == kPage && int(p.count) < pageCaps[len(pageCaps)-1]:
 			*loc = pageHdr(p.insertAt(i, w, v))
 			t.size++
@@ -168,7 +205,7 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 	}
 	items := pageItems(p)
 	i, _ := slices.BinarySearchFunc(items, key, func(x item, k []byte) int { return bytes.Compare(x.key, k) })
-	*loc = t.build(slices.Insert(items, i, it), depth)
+	t.replace(loc, par, pi, slices.Insert(items, i, it), depth)
 	t.size++
 	sp := t.upsert(key, v, nl) // finds the key in the rebuilt subtree
 	sp.created = true
@@ -176,11 +213,22 @@ func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newL
 }
 
 // rebuild rebuilds the subtree of the page at sp after change modified the
-// key at sp (see build).
+// key at sp (see replace).
 func (t *Tree) rebuild(sp spot, change func(*item)) {
 	items := pageItems(asPage(*sp.at))
 	change(&items[sp.i])
-	*sp.at = t.build(items, sp.depth)
+	t.replace(sp.at, sp.par, sp.pi, items, sp.depth)
+}
+
+// replace puts items, the keys of the page at *at, in the page's place: as a
+// subtree (see build), or, for a page below a range node, as ranges that
+// take over the page's range (see ranges).
+func (t *Tree) replace(at, par **header, pi int, items []item, depth int) {
+	if par == nil {
+		*at = t.build(items, depth)
+		return
+	}
+	*par = rSplice(*par, pi, t.ranges(items, depth, nil))
 }
 
 // addToSingle gives the key at sp, in a U8-1 page, the second raw value v:
@@ -254,6 +302,10 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uin
 		return spot{leaf: l}
 	}
 	p := swar.Lcp(lk[depth:], key[depth:])
+	if t.small {
+		d := depth + p
+		return t.fork(loc, leafHdr(l), d == len(lk), key, depth, d, v, nl)
+	}
 	nn := &node4{}
 	nn.kind = kN4
 	nn.setPrefix(key[depth:depth+p], p)
@@ -264,6 +316,11 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uin
 // splitPrefix handles an insert whose key leaves n's compressed path pk after
 // mis bytes: a new node takes the common part, with n and the new key below.
 func (t *Tree) splitPrefix(loc **header, n *header, pk []byte, mis int, key []byte, depth int, v uint64, nl newLeafFunc) spot {
+	if t.small {
+		// Below a range node, n keeps the byte it branches on in its path.
+		n.setPrefix(pk[mis:], len(pk)-mis)
+		return t.fork(loc, n, false, key, depth, depth+mis, v, nl)
+	}
 	nn := &node4{}
 	nn.kind = kN4
 	nn.setPrefix(pk[:mis], mis)
@@ -271,6 +328,32 @@ func (t *Tree) splitPrefix(loc **header, n *header, pk []byte, mis int, key []by
 	n.setPrefix(pk[mis+1:], len(pk)-mis-1) // pk is a copy or a leaf key: safe to read while n changes
 	h := addChild(&nn.header, old, n)
 	return t.attachNew(loc, h, key, depth+mis, v, nl)
+}
+
+// fork puts a range node with the path key[depth:d] at *loc, in a tree with
+// pages, that holds old and the new key: old is a leaf whose key ends at d
+// (oend), or its keys continue with one byte at d, as the new key does
+// unless it ends there.
+func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d int, v uint64, nl newLeafFunc) spot {
+	var h header
+	h.setPrefix(key[depth:d], d-depth)
+	if d == len(key) {
+		h.term = nl(key)
+		*loc = makeR(h, []rng{{0, old}})
+		t.size++
+		return spot{leaf: h.term, created: true}
+	}
+	nc := t.newChild(key, v, nl)
+	rs := []rng{{0, nc}}
+	if oend {
+		h.term = asLeaf(old)
+	} else if ob, _ := firstByte(old, d); key[d] < ob {
+		rs = append(rs, rng{ob, old})
+	} else {
+		rs = []rng{{0, old}, {key[d], nc}}
+	}
+	*loc = makeR(h, rs)
+	return t.created(nc)
 }
 
 // attachNew adds the new key below node h at key depth d, as h's term leaf if

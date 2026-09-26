@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -14,7 +15,7 @@ import (
 // keySets returns key corpora that exercise every structural case: keys that
 // are prefixes of other keys, the empty key, keys longer than the 8 inline
 // path bytes, keys of every length from 0 to 99 (every size class of the
-// leaves and beyond), zero bytes, dense and sparse integers (which drive nodes
+// leaves and beyond), keys longer than a page holds, zero bytes, dense and sparse integers (which drive nodes
 // through every kind), and shared string prefixes.
 func keySets() map[string][][]byte {
 	r := rand.New(rand.NewPCG(1, 2))
@@ -73,6 +74,18 @@ func keySets() map[string][][]byte {
 		lengths = append(lengths, k)
 	}
 	sets["every-length"] = lengths
+
+	// Keys longer than a page holds stay leaves even in trees with pages;
+	// some are prefixes of others, and short keys share their first bytes.
+	var huge [][]byte
+	l := bytes.Repeat([]byte("k"), maxPageKey+20)
+	for i := maxPageKey - 5; i <= len(l); i += 3 {
+		huge = append(huge, l[:i:i])
+	}
+	for _, b := range []byte{0, 'a', 'k', 'z', 0xff} {
+		huge = append(huge, append(l[:maxPageKey+1:maxPageKey+1], b, 't'), append(l[:40:40], b))
+	}
+	sets["longer-than-a-page"] = append(huge, l[:1], l[:9], []byte("j"), []byte("l"))
 	return sets
 }
 
@@ -113,12 +126,13 @@ func withoutPages() *Map[uint64] {
 	return m
 }
 
-// withKPages returns an empty map that keeps keys with one value in K pages
-// (prototype, see pagek.go).
-func withKPages() *Map[uint64] {
+// withSPages returns an empty map that keeps keys with one value in S pages
+// like all others instead of in K pages, so that S pages of such keys are
+// tested too.
+func withSPages() *Map[uint64] {
 	m := &Map[uint64]{}
 	m.prep()
-	m.t.kpages = true
+	m.t.spages = true
 	return m
 }
 
@@ -127,13 +141,13 @@ func withKPages() *Map[uint64] {
 // exactly like a trivially correct reference, through phases of growth and
 // of heavy deletion, and that after every phase the tree has the shape its
 // invariants demand (see checkInvariants). It runs every key set four times:
-// with pages, as for small plain values; with generic leaves only, as for any
-// other value type; and with the K pages of the prototype (see pagek.go), once
-// with several values per key and once with exactly one, which keeps the keys
-// in K pages.
+// with pages, as for small plain values, once with several values per key
+// and once with exactly one, which keeps longer keys in K pages; with generic
+// leaves only, as for any other value type; and with exactly one value per
+// key in S pages instead of K pages (see withSPages).
 func TestAgainstReference(t *testing.T) {
 	for name, keys := range keySets() {
-		for _, mode := range []string{"pages", "leaves", "kpages", "kpages-unique"} {
+		for _, mode := range []string{"pages", "pages-unique", "leaves", "spages-unique"} {
 			t.Run(fmt.Sprintf("%s/%s", name, mode), func(t *testing.T) {
 				checkAgainstReference(t, keys, mode)
 			})
@@ -148,10 +162,10 @@ func checkAgainstReference(t *testing.T, keys [][]byte, mode string) {
 	switch mode {
 	case "leaves":
 		m = withoutPages()
-	case "kpages", "kpages-unique":
-		m = withKPages()
+	case "spages-unique":
+		m = withSPages()
 	}
-	unique := mode == "kpages-unique"
+	unique := strings.HasSuffix(mode, "-unique")
 	ref := reference{}
 	for phase := range 6 {
 		removing := phase%2 == 1
@@ -530,7 +544,37 @@ func TestPageLayout(t *testing.T) {
 	}
 }
 
-// TestPageKLayout makes sure the K pages of the prototype (see pagek.go) are
+// TestRNodeLayout makes sure range nodes (see rnode.go) take the object
+// sizes the tree is built from, so that the nodes above the pages cost whole
+// cache lines and no malloc header. It covers every class of range node: the
+// children follow the header and the range bitmap at one offset in all of
+// them, where the lookup reads them, and a class holds as many children as
+// rCaps says.
+func TestRNodeLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		size, child uintptr
+		class       int
+		want        uintptr
+	}{
+		{"9 ranges fit 128 bytes", unsafe.Sizeof(rnode9{}), unsafe.Offsetof(rnode9{}.child), 0, 128},
+		{"25 ranges fit 256 bytes", unsafe.Sizeof(rnode25{}), unsafe.Offsetof(rnode25{}.child), 1, 256},
+		{"57 ranges fit 512 bytes", unsafe.Sizeof(rnode57{}), unsafe.Offsetof(rnode57{}.child), 2, 512},
+		{"256 ranges take 2104 bytes", unsafe.Sizeof(rnode256{}), unsafe.Offsetof(rnode256{}.child), 3, 2104},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newR(tc.class)
+			ch := r.children()
+			at := uintptr(unsafe.Pointer(&ch[0])) - uintptr(unsafe.Pointer(r))
+			if tc.size != tc.want || tc.child != rChildOff || at != rChildOff || rChildOff+8*uintptr(len(ch)) != tc.want {
+				t.Fatalf("size %d, children at %d (accessor %d, %d of them); want size %d, children at %d",
+					tc.size, tc.child, at, len(ch), tc.want, rChildOff)
+			}
+		})
+	}
+}
+
+// TestPageKLayout makes sure the K pages (see pagek.go) are
 // Go size classes and keep their arrays where the accessors look for them.
 // It covers the fixed layout of every K class: the pointers first, then head
 // words, values and suffix lengths, each at a fixed offset per capacity.
@@ -588,6 +632,9 @@ func checkNode(t *testing.T, n *header, depth int) int {
 	if n.kind <= kLastPage {
 		return checkPage(t, asPage(n), depth)
 	}
+	if n.kind == kR {
+		return checkR(t, n, depth)
+	}
 	limits := map[kind][2]int{kN4: {1, 4}, kN11: {shrink11 + 1, 11}, kN25: {shrink25 + 1, 25},
 		kN57: {shrink57 + 1, 57}, kN256: {shrink256 + 1, 256}}[n.kind]
 	if lo, hi := limits[0], limits[1]; int(n.count) < lo || int(n.count) > hi {
@@ -633,6 +680,10 @@ func checkNode(t *testing.T, n *header, depth int) int {
 
 func eachChild(n *header, fn func(byte, *header)) {
 	switch n.kind {
+	case kR:
+		for _, x := range asR(n).ranges() {
+			fn(x.b, x.c)
+		}
 	case kN25, kN57:
 		bm, child := bitmapOf(n)
 		i := 0
@@ -654,6 +705,62 @@ func eachChild(n *header, fn func(byte, *header)) {
 			fn(k, child[i])
 		}
 	}
+}
+
+// checkR checks a range node whose path starts at key depth depth and
+// returns its number of keys: its class fits its number of ranges without
+// being one a removal should have shrunk, it branches, the first range
+// starts at 0, and every child holds only keys that share the node's path
+// and whose next byte lies in the child's range. A child that is an inner
+// node is a range node whose path starts with the one byte all its keys
+// share there (see firstByte).
+func checkR(t *testing.T, n *header, depth int) int {
+	t.Helper()
+	r := asR(n)
+	c, cnt := int(r.class), int(r.count)
+	if cnt > rCaps[c] || (c > 0 && cnt <= rShrink[c]) || cnt+b2i(n.term != nil) < 2 || r.starts[0]&1 == 0 {
+		t.Fatalf("range node of class %d holds %d ranges (term %v, starts %x)", c, cnt, n.term != nil, r.starts)
+	}
+	for _, x := range r.children()[cnt:] {
+		if x != nil {
+			t.Fatalf("range node keeps a child beyond its count")
+		}
+	}
+	end := depth + int(n.plen)
+	checkKey := func(k []byte) {
+		if len(k) < end || !bytes.Equal(k[depth:depth+min(int(n.plen), 8)], n.prefix[:min(n.plen, 8)]) {
+			t.Fatalf("key %q does not match the range node path at depth %d (plen %d)", k, depth, n.plen)
+		}
+	}
+	keys := 0
+	if n.term != nil {
+		checkKey(n.term.key())
+		if len(n.term.key()) != end {
+			t.Fatalf("term key %q does not end at depth %d", n.term.key(), end)
+		}
+		keys++
+	}
+	rs := r.ranges()
+	if len(rs) != cnt {
+		t.Fatalf("count %d but %d range starts", cnt, len(rs))
+	}
+	for i, x := range rs {
+		hi := 255
+		if i+1 < len(rs) {
+			hi = int(rs[i+1].b) - 1
+		}
+		if x.c.kind > kLastPage && (x.c.kind != kR || x.c.plen == 0) {
+			t.Fatalf("range node child of kind %d with path length %d", x.c.kind, x.c.plen)
+		}
+		walkKeys(x.c, func(k []byte) {
+			checkKey(k)
+			if len(k) <= end || int(k[end]) < int(x.b) || int(k[end]) > hi {
+				t.Fatalf("key %q sits in range %d..%d at depth %d", k, x.b, hi, end)
+			}
+		})
+		keys += checkNode(t, x.c, end)
+	}
+	return keys
 }
 
 // walkKeys calls fn with every key below n, in order.
@@ -777,62 +884,74 @@ func checkPageS(t *testing.T, p *pageHead, depth int) int {
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
 // kind back down through each smaller kind to nothing, collapsing and
 // re-merging compressed paths (short and longer than 8 bytes) on the way, and
-// that the tree satisfies its invariants after every single delete.
+// that the tree satisfies its invariants after every single delete. It runs
+// with pages, where the nodes are range nodes, and with generic leaves only,
+// where they are inner nodes of every kind.
 func TestShrinkAndCollapse(t *testing.T) {
 	for _, prefix := range []string{"", "p", "a-path-longer-than-eight-bytes"} {
 		for _, fan := range []int{2, 4, 11, 25, 57, 256} {
-			t.Run(fmt.Sprintf("%q/%d", prefix, fan), func(t *testing.T) {
-				r := rand.New(rand.NewPCG(uint64(fan), 9))
-				var m Map[uint64]
-				var keys [][]byte
-				for b := range fan {
-					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
-						k := append([]byte(prefix), byte(b))
-						keys = append(keys, append(k, tail...))
-					}
-				}
-				for _, k := range keys {
-					m.Add(k, 1)
-				}
-				checkInvariants(t, &m.t)
-				r.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-				for i, k := range keys {
-					m.RemoveKey(k)
-					checkInvariants(t, &m.t)
-					if m.Len() != len(keys)-i-1 {
-						t.Fatalf("Len = %d after %d deletes", m.Len(), i+1)
-					}
-					for _, other := range keys[i+1:] {
-						if !m.Values(other).Found() {
-							t.Fatalf("deleting %q lost %q", k, other)
-						}
-					}
-				}
-				if m.t.root != nil {
-					t.Fatalf("tree not empty after deleting every key")
-				}
-				m.Add(keys[0], 1)
-				m.Clear()
-				if m.Len() != 0 || m.Values(keys[0]).Found() {
-					t.Fatalf("Clear left keys behind")
-				}
-			})
+			for _, leaves := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%q/%d/leaves=%v", prefix, fan, leaves), func(t *testing.T) {
+					checkShrinkAndCollapse(t, prefix, fan, leaves)
+				})
+			}
 		}
+	}
+}
+
+// checkShrinkAndCollapse runs TestShrinkAndCollapse for one prefix and fan.
+func checkShrinkAndCollapse(t *testing.T, prefix string, fan int, leaves bool) {
+	r := rand.New(rand.NewPCG(uint64(fan), 9))
+	m := &Map[uint64]{}
+	if leaves {
+		m = withoutPages()
+	}
+	var keys [][]byte
+	for b := range fan {
+		for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
+			k := append([]byte(prefix), byte(b))
+			keys = append(keys, append(k, tail...))
+		}
+	}
+	for _, k := range keys {
+		m.Add(k, 1)
+	}
+	checkInvariants(t, &m.t)
+	r.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+	for i, k := range keys {
+		m.RemoveKey(k)
+		checkInvariants(t, &m.t)
+		if m.Len() != len(keys)-i-1 {
+			t.Fatalf("Len = %d after %d deletes", m.Len(), i+1)
+		}
+		for _, other := range keys[i+1:] {
+			if !m.Values(other).Found() {
+				t.Fatalf("deleting %q lost %q", k, other)
+			}
+		}
+	}
+	if m.t.root != nil {
+		t.Fatalf("tree not empty after deleting every key")
+	}
+	m.Add(keys[0], 1)
+	m.Clear()
+	if m.Len() != 0 || m.Values(keys[0]).Found() {
+		t.Fatalf("Clear left keys behind")
 	}
 }
 
 // FuzzOperations drives the tree with arbitrary operation sequences over
 // short keys from a tiny alphabet (which maximises shared paths, splits and
 // merges), checking every result against the reference and the structural
-// invariants at the end: with pages, with generic leaves only, and with the K
-// pages of the prototype.
+// invariants at the end: with pages, with generic leaves only, and with S
+// pages instead of K pages for keys with one value.
 func FuzzOperations(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		checkOperations(t, &Map[uint64]{}, ops)
 		checkOperations(t, withoutPages(), ops)
-		checkOperations(t, withKPages(), ops)
+		checkOperations(t, withSPages(), ops)
 	})
 }
 
@@ -868,7 +987,7 @@ func checkOperations(t *testing.T, m *Map[uint64], ops []byte) {
 	checkInvariants(t, &m.t)
 }
 
-// checkPageK checks a K page (prototype): its count fits its class without
+// checkPageK checks a K page: its count fits its class without
 // being one a removal should have shrunk, its keys ascend strictly, are no
 // shorter than its depth, share its prefix, keep a full copy exactly when
 // their suffix is longer than 16 bytes, and have head words that match them.

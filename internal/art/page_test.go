@@ -10,10 +10,10 @@ import (
 
 // TestPageLifecycle makes sure that integer keys with one value each stay
 // compact however their number changes. It covers the pages of the ART behind
-// multimap.Ordered: a page grows through every class as keys arrive, bursts
-// into a node with smaller pages when it overflows, shrinks back through the
-// classes as keys leave, moves up when its sibling is gone, and every key
-// keeps its value throughout.
+// multimap.Ordered: a page grows through every class as keys arrive, splits
+// into two half-full pages below a range node when it overflows, shrinks back
+// through the classes as keys leave, moves up when its sibling is gone, and
+// every key keeps its value throughout.
 func TestPageLifecycle(t *testing.T) {
 	var keys [][]byte // 6 shared bytes, then two groups of 16
 	for a := range 2 {
@@ -38,15 +38,15 @@ func TestPageLifecycle(t *testing.T) {
 			t.Fatalf("after %d keys: root kind %d, want a page of class %d", i+1, r.kind, classFor(i+1))
 		}
 	}
-	m.Add(keys[31], 31) // the 32nd key bursts the full page
+	m.Add(keys[31], 31) // the 32nd key splits the full page
 	checkInvariants(t, &m.t)
 	r := m.t.root
-	if r.kind != kN4 || r.plen != 6 || r.count != 2 {
-		t.Fatalf("after the burst: root kind %d, path %d, %d children; want a 4-way node, path 6, 2 children", r.kind, r.plen, r.count)
+	if r.kind != kR || r.plen != 6 || r.count != 2 {
+		t.Fatalf("after the split: root kind %d, path %d, %d ranges; want a range node, path 6, 2 ranges", r.kind, r.plen, r.count)
 	}
 	eachChild(r, func(_ byte, c *header) {
 		if c.kind != kPage || asPage(c).count != 16 {
-			t.Fatalf("after the burst: child kind %d, want a page of 16 keys", c.kind)
+			t.Fatalf("after the split: child kind %d, want a page of 16 keys", c.kind)
 		}
 	})
 	checkValues(0)
@@ -57,8 +57,7 @@ func TestPageLifecycle(t *testing.T) {
 		checkInvariants(t, &m.t)
 		checkValues(i + 1)
 		if i < 15 {
-			_, child := sorted(m.t.root)
-			classes = append(classes, int(asPage(child[0]).class))
+			classes = append(classes, int(asPage(asR(m.t.root).children()[0]).class))
 		}
 	}
 	if want := []int{3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 0, 0}; !slices.Equal(classes, want) {
@@ -258,15 +257,15 @@ func TestPageNLifecycle(t *testing.T) {
 // values while the pages that hold them change underneath. It covers the S
 // pages of the ART behind multimap.Ordered: a page grows through every class
 // as keys arrive and learns a shorter shared prefix when a key does not share
-// the one it has, bursts into a node with smaller pages when it overflows,
+// the one it has, splits into pages below a range node when it overflows,
 // finds keys that differ only beyond their first 8 suffix bytes or in
 // trailing zero bytes, moves values out to external sets, sends a key too long
 // for any page to a leaf, and shrinks back through the classes as keys leave.
-// After every step the map must match a reference and satisfy the structural
-// invariants.
+// Keys with one value stay in S pages too (see withSPages). After every step
+// the map must match a reference and satisfy the structural invariants.
 func TestPageSLifecycle(t *testing.T) {
 	r := rand.New(rand.NewPCG(5, 6))
-	var m Map[uint64]
+	m := withSPages()
 	ref := reference{}
 	add := func(k string, vs ...uint64) {
 		t.Helper()
@@ -274,7 +273,7 @@ func TestPageSLifecycle(t *testing.T) {
 			m.Add([]byte(k), v)
 			ref.add([]byte(k), v)
 		}
-		compare(t, &m, ref, r)
+		compare(t, m, ref, r)
 		checkInvariants(t, &m.t)
 	}
 	page := func(k string) *pageHead {
@@ -344,7 +343,7 @@ func TestPageSLifecycle(t *testing.T) {
 		m.Remove([]byte("vv/key-1-string"), 10+v)
 		ref.remove([]byte("vv/key-1-string"), 10+v)
 	}
-	compare(t, &m, ref, r)
+	compare(t, m, ref, r)
 	checkInvariants(t, &m.t)
 
 	// Removing the keys again shrinks the pages back through the classes.
@@ -357,7 +356,7 @@ func TestPageSLifecycle(t *testing.T) {
 			shrunk = true
 		}
 	}
-	compare(t, &m, ref, r)
+	compare(t, m, ref, r)
 	checkInvariants(t, &m.t)
 	if !shrunk {
 		t.Fatalf("no page shrank while its keys were removed")

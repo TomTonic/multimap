@@ -15,13 +15,15 @@ import (
 // contiguous memory.
 //
 // Pages hold values of a small pointer-free type only (see Tree.small). There
-// are three page types:
+// are four page types:
 //
 //   - U8-1 (this file): keys of one common length of at most 8 bytes (integer
 //     keys are 8), each with exactly one value. The keys are stored as
 //     big-endian words; keys and values are plain words, so the page contains
 //     no pointers and the garbage collector never scans it.
 //   - U8-n (pagen.go): keys like U8-1, with any number of values each.
+//   - K (pagek.go): keys of any lengths up to maxPageKey, each with exactly
+//     one value, in a fixed layout.
 //   - S (pages.go): keys of any lengths up to maxPageKey, with any number of
 //     values each.
 //
@@ -272,14 +274,15 @@ func pageItems(p *pageHead) []item {
 }
 
 // pageFor returns the page that holds items, or nil if they do not fit one.
-// Keys of one length of at most 8 bytes go into a U8 page, all others into an
-// S page (see sPack). Only trees with pages rebuild subtrees, so the values
+// Keys of one length of at most 8 bytes go into a U8 page, all others into a
+// K page if each has exactly one value (see kPack), else into an S page (see
+// sPack). Only trees with pages rebuild subtrees, so the values
 // may go into pages.
 func (t *Tree) pageFor(items []item) *pageHead {
 	l := len(items[0].key)
 	for _, it := range items {
 		if len(it.key) != l || l > 8 {
-			if t.kpages && kSingle(items) {
+			if !t.spages && kSingle(items) {
 				return kPack(items)
 			}
 			return sPack(&sSource{items: items})
@@ -332,8 +335,8 @@ func u8Pack(items []item) *pageHead {
 // build returns a subtree holding exactly items, which are sorted by key,
 // distinct, and all start with the same depth bytes. It is how pages burst
 // and how pages change type when nothing simpler fits: the subtree is rebuilt
-// from its keys. Groups of keys that fit a page become pages; the rest becomes
-// nodes and leaves.
+// from its keys. Items that fit a page become one; otherwise a range node
+// takes their common path and splits them into ranges (see ranges).
 func (t *Tree) build(items []item, depth int) *header {
 	if len(items) == 1 && items[0].leaf != nil {
 		return leafHdr(items[0].leaf)
@@ -343,25 +346,18 @@ func (t *Tree) build(items []item, depth int) *header {
 	}
 	first, last := items[0].key, items[len(items)-1].key
 	plen := swar.Lcp(first[depth:], last[depth:])
-	n := &node4{}
-	n.kind = kN4
-	n.setPrefix(first[depth:depth+plen], plen)
 	d := depth + plen
-	h := &n.header
-	if len(items[0].key) == d {
-		// A key that ends here sorts first. It is never a leaf already: a key
-		// that must be a leaf is longer than any key a page holds, and all
-		// other items come from one page.
-		h.term = t.mk(items[0])
+	var h header
+	h.setPrefix(first[depth:d], plen)
+	if len(first) == d {
+		// A key that ends here sorts first.
+		h.term = items[0].leaf
+		if h.term == nil {
+			h.term = t.mk(items[0])
+		}
 		items = items[1:]
 	}
-	for len(items) > 0 {
-		b, j := items[0].key[d], 1
-		for j < len(items) && items[j].key[d] == b {
-			j++
-		}
-		h = addChild(h, b, t.build(items[:j], d+1))
-		items = items[j:]
-	}
-	return h
+	rs := t.ranges(items, d, nil)
+	rs[0].b = 0
+	return makeR(h, rs)
 }

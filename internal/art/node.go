@@ -52,6 +52,7 @@ const (
 	kN25
 	kN57
 	kN256
+	kR // range node, see rnode.go
 )
 
 // kLastPage is the last kind that ends a descent.
@@ -75,7 +76,7 @@ const maxInline = 16
 // header is the common start of all inner nodes (24 B).
 type header struct {
 	kind   kind
-	_      uint8
+	class  uint8     // range nodes: index into rCaps
 	count  uint16    // number of children
 	plen   uint32    // length of the compressed path
 	prefix [8]byte   // first min(plen, 8) bytes of the compressed path

@@ -9,7 +9,7 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// Prototype (Tree.kpages): K pages hold keys of any length up to maxPageKey,
+// K pages hold keys of any length up to maxPageKey,
 // each with exactly one value, in a fixed layout. The prefix all keys share is
 // held once; of each key's rest, the suffix, the first 16 bytes are two words
 // in heads (big endian, zero-padded), which order and find the keys. A key

@@ -142,6 +142,18 @@ func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, l
 		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, fn)
 	}
 	switch n.kind {
+	case kR:
+		// The children of a range node start at its depth; only the ranges
+		// holding loB and hiB lie on the bounds' paths.
+		r := asR(n)
+		ch := r.children()
+		i0, i1 := swar.Floor(&r.starts, loB), swar.Floor(&r.starts, hiB)
+		for i := i0; i <= i1; i++ {
+			if !scanRange(ch[i], b, depth, lo && i == i0, hi && i == i1, leafTail, fn) {
+				return false
+			}
+		}
+		return true
 	case kN25, kN57:
 		bm, child := bitmapOf(n)
 		i := swar.Rank(bm, loB)
@@ -211,6 +223,15 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 		}
 	}
 	switch n.kind {
+	case kR:
+		r := asR(n)
+		i0, i1 := swar.Floor(&r.starts, loB), swar.Floor(&r.starts, hiB)
+		if i1 == i0 {
+			return
+		}
+		for _, c := range r.children()[i0 : i1+1] {
+			touch(c)
+		}
 	case kN25, kN57:
 		bm, child := bitmapOf(n)
 		end := swar.Rank(bm, hiB)

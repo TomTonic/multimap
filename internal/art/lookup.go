@@ -2,6 +2,7 @@ package art
 
 import (
 	"bytes"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
 )
@@ -17,8 +18,9 @@ type Tree struct {
 	// rebuild needs it as a term.
 	small bool
 	mk    func(it item) *leafHead
-	// Prototype: keys with one value go into K pages instead of S pages.
-	kpages bool
+	// Test switch: keys with one value go into S pages like all others,
+	// instead of K pages, so that the tests reach S pages of such keys.
+	spages bool
 }
 
 // Len returns the number of keys.
@@ -89,6 +91,12 @@ func (t *Tree) find(key []byte) (*header, int) {
 			continue
 		}
 		b := key[depth]
+		if n.kind == kR {
+			// The child checks byte b itself (see rnode.go).
+			x := asR(n)
+			n = *(**header)(unsafe.Add(unsafe.Pointer(x), rChildOff+8*uintptr(swar.Floor(&x.starts, b))))
+			continue
+		}
 		depth++
 		switch n.kind {
 		case kN4:
@@ -170,6 +178,8 @@ func minKey(n *header, buf *keyBuf) []byte {
 			return n.term.key() // a prefix of every other key below n
 		}
 		switch n.kind {
+		case kR:
+			n = asR(n).children()[0]
 		case kN25, kN57:
 			_, child := bitmapOf(n)
 			n = child[0]

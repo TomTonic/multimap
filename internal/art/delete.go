@@ -8,7 +8,7 @@ import (
 
 // remove deletes key and reports whether it was there.
 func (t *Tree) remove(key []byte) bool {
-	ok := del(&t.root, key, 0)
+	ok := t.del(&t.root, key, 0)
 	if ok {
 		t.size--
 	}
@@ -19,8 +19,10 @@ func (t *Tree) remove(key []byte) bool {
 // key depth depth, and reports whether it was there. On the way back up,
 // every node on the path shrinks to the smallest kind that fits and collapses
 // when it no longer branches, so the tree after a delete has the shape it
-// would have had if the key had never been inserted.
-func del(loc **header, key []byte, depth int) bool {
+// would have had if the key had never been inserted. Below a range node,
+// a range whose child is gone goes to its neighbour, and a page merges with a
+// neighbouring page once both are thin (see rMerge).
+func (t *Tree) del(loc **header, key []byte, depth int) bool {
 	n := *loc
 	if n == nil {
 		return false
@@ -70,10 +72,23 @@ func del(loc **header, key []byte, depth int) bool {
 			return false
 		}
 		n.term = nil
+	} else if n.kind == kR {
+		r := asR(n)
+		i := swar.Floor(&r.starts, key[d])
+		c := &r.children()[i]
+		if !t.del(c, key, d) {
+			return false
+		}
+		switch {
+		case *c == nil:
+			n = rRemove(n, i)
+		case isPage(*c):
+			n = t.rMerge(n, i)
+		}
 	} else {
 		b := key[d]
 		c := findLoc(n, b)
-		if c == nil || !del(c, key, d+1) {
+		if c == nil || !t.del(c, key, d+1) {
 			return false
 		}
 		if *c == nil {
@@ -87,7 +102,8 @@ func del(loc **header, key []byte, depth int) bool {
 // collapse replaces an inner node that no longer branches: without children
 // it becomes its term leaf, and with a single child and no
 // term it merges into that child, whose compressed path grows by n's path
-// plus the child's byte. It returns what should stand in n's place.
+// plus the child's byte (which a range node's child already starts with). It
+// returns what should stand in n's place.
 func collapse(n *header) *header {
 	switch {
 	case n.count == 0:
@@ -104,19 +120,27 @@ func collapse(n *header) *header {
 	}
 	var buf [8]byte
 	m := copy(buf[:], n.prefix[:min(n.plen, 8)])
-	if m < 8 {
-		buf[m] = b
-		m++
-		copy(buf[m:], c.prefix[:min(c.plen, 8)])
+	add := n.plen
+	if n.kind != kR { // an inner node consumes its byte, a range node does not
+		if m < 8 {
+			buf[m] = b
+			m++
+		}
+		add++
 	}
+	copy(buf[m:], c.prefix[:min(c.plen, 8)])
 	c.prefix = buf
-	c.plen += n.plen + 1
+	c.plen += add
 	return c
 }
 
-// onlyChild returns the single child of n. Only a 4-way node can fall to one
-// child: every larger kind shrinks into the next smaller one well before.
+// onlyChild returns the single child of n. Only a 4-way node or a range node
+// of the smallest class can fall to one child: every larger kind shrinks
+// into the next smaller one well before.
 func onlyChild(n *header) (byte, *header) {
+	if n.kind == kR {
+		return 0, asR(n).children()[0]
+	}
 	x := asN4(n)
 	return x.keys[0], x.child[0]
 }
