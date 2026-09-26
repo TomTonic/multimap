@@ -3,7 +3,6 @@ package art
 import (
 	"bytes"
 	"slices"
-	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
 )
@@ -67,7 +66,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 		b := key[depth]
 		if n.kind == kR {
 			x := asR(n)
-			i := swar.Floor(&x.starts, b)
+			i := x.index(b)
 			c := &x.children()[i]
 			if cb, ok := firstByte(*c, depth); ok && cb != b {
 				// The child's keys all have byte cb: the key gets a range of
@@ -121,10 +120,8 @@ func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc) *header {
 		p.count, p.klen = 1, uint8(len(key))
 		p.heads()[0], p.vals()[0] = keyWord(key), v
 		return pageHdr(p)
-	case !t.spages:
-		return pageHdr(kPack([]item{{key: key, vals: []uint64{v}}}))
 	}
-	return pageHdr(sPack(newKeySource(nil, 0, key, v)))
+	return pageHdr(kPack([]item{{key: key, val: v}}))
 }
 
 // created counts the new key held by c, a child made by newChild.
@@ -141,6 +138,7 @@ func (t *Tree) created(c *header) spot {
 // the page is full or the key does not fit it.
 func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v uint64, nl newLeafFunc) spot {
 	p := asPage(*loc)
+	full := false // the key fits the page but for its room
 	if p.kind == kPageK {
 		i, found, match := p.kFind(key, depth)
 		switch {
@@ -155,51 +153,26 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v ui
 			t.size++
 			return spot{created: true}
 		}
-	} else if p.kind == kPageS {
-		i, found, match := p.sFind(key, depth) // the descent checked every path
-		switch {
-		case found:
-			return spot{at: loc, i: i, depth: depth, par: par, pi: pi}
-		case match && p.sRoom(len(key)-int(p.base)):
-			p.sInsertKey(i, key[p.base:], v)
-			t.size++
-			return spot{created: true}
-		case !t.pageable(key):
-		default:
-			// The page is repacked with the key: into a larger class, or
-			// with a shorter shared prefix when the key does not share it.
-			if !match {
-				i = p.sBefore(key)
-			}
-			if q := sPack(newKeySource(p, i, key, v)); q != nil {
-				*loc = pageHdr(q)
-				t.size++
-				return spot{created: true}
-			}
-		}
+		full = match && t.pageable(key)
 	} else if len(key) == int(p.klen) {
 		w := keyWord(key)
 		i, ok := p.search(w)
 		switch {
 		case ok:
 			return spot{at: loc, i: i, depth: depth, par: par, pi: pi}
-		case p.kind == kPage && int(p.count) < pageCaps[len(pageCaps)-1]:
+		case int(p.count) < pageCaps[len(pageCaps)-1]:
 			*loc = pageHdr(p.insertAt(i, w, v))
 			t.size++
 			return spot{created: true}
-		case p.kind == kPageN:
-			if c := nClassFor(int(p.count)+1, int(p.nv)+1, p.extUsed()); c >= 0 {
-				if c > int(p.class) {
-					p = p.nResize(c)
-				}
-				p.nInsertKey(i, w, v)
-				*loc = pageHdr(p)
-				t.size++
-				return spot{created: true}
-			}
 		}
+		full = true
 	}
-	it := item{key: key, vals: []uint64{v}}
+	if full && par != nil && splitFull(loc, par, pi, depth) {
+		r := asR(*par)
+		i := r.index(key[depth])
+		return t.upsertPage(&r.children()[i], par, i, key, depth, v, nl)
+	}
+	it := item{key: key, val: v}
 	if !t.pageable(key) {
 		it = item{key: key, leaf: nl(key)}
 	}
@@ -212,12 +185,60 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v ui
 	return sp
 }
 
-// rebuild rebuilds the subtree of the page at sp after change modified the
-// key at sp (see replace).
-func (t *Tree) rebuild(sp spot, change func(*item)) {
-	items := pageItems(asPage(*sp.at))
-	change(&items[sp.i])
-	t.replace(sp.at, sp.par, sp.pi, items, sp.depth)
+// splitFull splits the full page at *loc, child pi of the range node at
+// *par, whose keys start at depth, at the byte boundary nearest its middle
+// (see ranges): the page keeps the keys before it and a new page takes the
+// others, with a range of its own. Unlike a rebuild, it copies half a page
+// and allocates one, and the keys keep their encoding: a K page's half keeps
+// the shared prefix, which its keys may share beyond. It reports false and
+// changes nothing when all keys share their byte at depth.
+func splitFull(loc, par **header, pi, depth int) bool {
+	p := asPage(*loc)
+	n := int(p.count)
+	at := p.byteAt(depth)
+	if at == nil || at(0) == at(n-1) {
+		return false // all keys share byte depth
+	}
+	m := n / 2
+	b, lo, hi := at(m), m, m
+	for lo > 0 && at(lo-1) == b {
+		lo--
+	}
+	for hi < n && at(hi) == b {
+		hi++
+	}
+	s := lo
+	if lo == 0 || (hi < n && hi-m < m-lo) {
+		s = hi
+	}
+	rb := at(s)
+	left, right := p.cut(s)
+	*par = rSplice(*par, pi, []rng{{0, pageHdr(left)}, {rb, pageHdr(right)}})
+	return true
+}
+
+// byteAt returns a function that returns byte depth of key i of p, below a
+// range node at depth, or nil if all its keys share that byte: a K page
+// whose shared prefix reaches beyond depth.
+func (p *pageHead) byteAt(depth int) func(i int) byte {
+	if p.kind == kPageK {
+		if int(p.base) != depth {
+			return nil
+		}
+		h := p.kHeads()
+		return func(i int) byte { return byte(h[2*i] >> 56) }
+	}
+	h, sh := p.keys(), 56-8*depth
+	return func(i int) byte { return byte(h[i] >> sh) }
+}
+
+// cut returns the page with the keys before s, or its smaller
+// replacement, and a new page with the keys from s on (see split, kSplit).
+func (p *pageHead) cut(s int) (*pageHead, *pageHead) {
+	if p.kind == kPageK {
+		return p.kSplit(s)
+	}
+	return p.split(s)
 }
 
 // replace puts items, the keys of the page at *at, in the page's place: as a
@@ -231,67 +252,44 @@ func (t *Tree) replace(at, par **header, pi int, items []item, depth int) {
 	*par = rSplice(*par, pi, t.ranges(items, depth, nil))
 }
 
-// addToSingle gives the key at sp, in a U8-1 page, the second raw value v:
-// the page becomes a U8-n page, or, with more keys than one holds, the
-// subtree is rebuilt.
-func (t *Tree) addToSingle(sp spot, v uint64) {
-	p := asPage(*sp.at)
-	if int(p.count) <= nLayouts[len(nLayouts)-1].keys() {
-		q := p.toN(1)
-		q.nAddVal(sp.i, v)
-		*sp.at = pageHdr(q)
+// promote gives the key at sp, which has one value in its page, the leaf
+// l, which holds its key and its values. A page cannot hold the leaf, so it
+// gets a range of its own: the page is cut around the key when the key is
+// alone with its byte below a range node, else the page's keys are rebuilt
+// with the leaf in the key's place (see ranges), which gives it a range or
+// a subtree of its own.
+func (t *Tree) promote(sp spot, l *leafHead) {
+	p, i, n := asPage(*sp.at), sp.i, int(asPage(*sp.at).count)
+	if n == 1 {
+		*sp.at = leafHdr(l) // the page held only this key
 		return
 	}
-	t.rebuild(sp, func(it *item) { it.vals = append(it.vals, v) })
-}
-
-// addInline adds the raw value v to the inline values of the key at sp, in a
-// U8-n or S page, which holds fewer than inlineMax. A full page grows into a
-// larger class (an S page is repacked); beyond the largest, the subtree is
-// rebuilt.
-func (t *Tree) addInline(sp spot, v uint64) {
-	p := asPage(*sp.at)
-	if int(p.nv) == p.layout().vals() {
-		c := -1
-		if p.kind == kPageN {
-			c = nClassFor(int(p.count), int(p.nv)+1, p.extUsed())
-		} else if q := p.sRepackVals(sp.i, v); q != nil {
-			*sp.at = pageHdr(q)
-			return
+	// Below a range node, a key alone with its byte gets a range of its own
+	// by cutting the page around it.
+	if at := p.byteAt(sp.depth); sp.par != nil && at != nil &&
+		(i == 0 || at(i-1) != at(i)) && (i == n-1 || at(i+1) != at(i)) {
+		b := at(i)
+		var after byte
+		if i < n-1 {
+			after = at(i + 1)
 		}
-		if c < 0 {
-			t.rebuild(sp, func(it *item) { it.vals = append(it.vals, v) })
-			return
+		var rs []rng
+		if i > 0 {
+			var left *pageHead
+			left, p = p.cut(i)
+			rs = append(rs, rng{0, pageHdr(left)})
 		}
-		p = p.nResize(c)
-		*sp.at = pageHdr(p)
+		rs = append(rs, rng{b, leafHdr(l)})
+		if i < n-1 {
+			_, right := p.cut(1)
+			rs = append(rs, rng{after, pageHdr(right)})
+		}
+		*sp.par = rSplice(*sp.par, sp.pi, rs)
+		return
 	}
-	p.nAddVal(sp.i, v)
-}
-
-// externalize moves the inline values of the key at sp, in a U8-n or S page,
-// to the external set s, which the caller filled with them and the new value.
-// A page without a free external slot grows into a class with one (an S page
-// is repacked); beyond the largest, the subtree is rebuilt.
-func (t *Tree) externalize(sp spot, s unsafe.Pointer) {
-	p := asPage(*sp.at)
-	if p.extUsed() == p.layout().ext() {
-		c := -1
-		if p.kind == kPageN {
-			_, n, _ := p.run(sp.i)
-			c = nClassFor(int(p.count), int(p.nv)-n, p.extUsed()+1)
-		} else if q := sPack(&sSource{p: p, at: sp.i, set: s}); q != nil {
-			*sp.at = pageHdr(q)
-			return
-		}
-		if c < 0 {
-			t.rebuild(sp, func(it *item) { it.vals, it.set = nil, s })
-			return
-		}
-		p = p.nResize(c)
-		*sp.at = pageHdr(p)
-	}
-	p.nExternalize(sp.i, s)
+	items := pageItems(p)
+	items[sp.i] = item{key: l.key(), leaf: l}
+	t.replace(sp.at, sp.par, sp.pi, items, sp.depth)
 }
 
 // splitLeaf handles an insert that reaches leaf l: either it is the key's

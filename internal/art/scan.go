@@ -109,30 +109,39 @@ func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) 
 }
 
 // scanPage hands fn the run of the page's keys within b. A page's keys are
-// full keys, so the bounds are compared directly, and only on their paths.
+// full keys, so the bounds are compared directly, and only on their paths:
+// with the words the page keeps, not with rebuilt keys (see seek).
 func scanPage(p *pageHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
 	i, j := 0, int(p.count)
-	var buf keyBuf
 	if lo {
-		for i < j {
-			if c := bytes.Compare(p.key(i, &buf), b.From); c > 0 || (c == 0 && b.FromIncl) {
-				break
-			}
-			i++
-		}
+		i = p.seek(b.From, !b.FromIncl)
 	}
 	if hi {
-		for j > i {
-			if c := bytes.Compare(p.key(j-1, &buf), b.To); c < 0 || (c == 0 && b.ToIncl) {
-				break
-			}
-			j--
-		}
+		j = max(i, p.seek(b.To, b.ToIncl))
 	}
 	if i < j && !fn(pageHdr(p), i, j) {
 		return false
 	}
 	return !hi // on To's path, everything after the page is above To
+}
+
+// seek returns how many keys of p are below bound, or at most bound with
+// orEqual.
+func (p *pageHead) seek(bound []byte, orEqual bool) int {
+	if p.kind == kPageK {
+		return p.kSeek(bound, orEqual)
+	}
+	// Keys and bound compare as their zero-padded first 8 bytes, then, if
+	// those are equal, by length.
+	w, l := keyWord(bound[:min(len(bound), 8)]), int(p.klen)
+	i := 0
+	for _, k := range p.keys() {
+		if k > w || k == w && (l > len(bound) || l == len(bound) && !orEqual) {
+			break
+		}
+		i++
+	}
+	return i
 }
 
 // scanChildren visits the children with byte in [loB, hiB] in order. Only the
@@ -147,7 +156,7 @@ func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, l
 		// holding loB and hiB lie on the bounds' paths.
 		r := asR(n)
 		ch := r.children()
-		i0, i1 := swar.Floor(&r.starts, loB), swar.Floor(&r.starts, hiB)
+		i0, i1 := r.index(loB), r.index(hiB)
 		for i := i0; i <= i1; i++ {
 			if !scanRange(ch[i], b, depth, lo && i == i0, hi && i == i1, leafTail, fn) {
 				return false
@@ -225,7 +234,7 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 	switch n.kind {
 	case kR:
 		r := asR(n)
-		i0, i1 := swar.Floor(&r.starts, loB), swar.Floor(&r.starts, hiB)
+		i0, i1 := r.index(loB), r.index(hiB)
 		if i1 == i0 {
 			return
 		}

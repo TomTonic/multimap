@@ -14,13 +14,10 @@ type Tree struct {
 	size int
 	// Set by Map[T] before the first write: whether its values may go into
 	// pages (small and pointer-free, see smallPlain), and how to make a leaf
-	// for a key of a page, with its raw values or its external set, when a
-	// rebuild needs it as a term.
+	// for a key of a page with its one raw value, when a rebuild needs it as
+	// a term or the key gets a second value.
 	small bool
 	mk    func(it item) *leafHead
-	// Test switch: keys with one value go into S pages like all others,
-	// instead of K pages, so that the tests reach S pages of such keys.
-	spages bool
 }
 
 // Len returns the number of keys.
@@ -44,16 +41,12 @@ func (t *Tree) find(key []byte) (*header, int) {
 		if n.kind <= kLastPage {
 			if n.kind != kLeaf { // pages hold full keys
 				p := asPage(n)
-				if n.kind >= kPageS {
+				if n.kind == kPageK {
 					from := depth
 					if skipped {
 						from = 0
 					}
-					if n.kind == kPageK {
-						if i, ok, _ := p.kFind(key, from); ok {
-							return n, i
-						}
-					} else if i, ok, _ := p.sFind(key, from); ok {
+					if i, ok, _ := p.kFind(key, from); ok {
 						return n, i
 					}
 				} else if len(key) == int(p.klen) {
@@ -94,7 +87,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 		if n.kind == kR {
 			// The child checks byte b itself (see rnode.go).
 			x := asR(n)
-			n = *(**header)(unsafe.Add(unsafe.Pointer(x), rChildOff+8*uintptr(swar.Floor(&x.starts, b))))
+			n = *(**header)(unsafe.Add(unsafe.Pointer(x), rChildOff+8*uintptr(x.index(b))))
 			continue
 		}
 		depth++

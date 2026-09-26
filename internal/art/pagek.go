@@ -9,16 +9,16 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// K pages hold keys of any length up to maxPageKey,
-// each with exactly one value, in a fixed layout. The prefix all keys share is
-// held once; of each key's rest, the suffix, the first 16 bytes are two words
-// in heads (big endian, zero-padded), which order and find the keys. A key
-// whose suffix is longer than 16 bytes keeps a copy of its full key, which
-// only a hit on it, a burst and the bounds of a range read.
+// K pages hold keys of any length up to maxPageKey, each with exactly one
+// value, in a fixed layout. The prefix all keys share is held once; of each
+// key's rest, the suffix, the first 16 bytes are two words in heads (big
+// endian, zero-padded), which order and find the keys. A key whose suffix is
+// longer than 16 bytes keeps a copy of its full key, which only a hit on it,
+// a split and the bounds of a range read.
 //
-// Unlike S pages, nothing is packed: every array has a fixed place per class,
-// so no offsets or counts are summed up, and inserting or removing a key only
-// shifts the keys after it.
+// Nothing is packed: every array has a fixed place per class, so no offsets
+// or counts are summed up, and inserting or removing a key only shifts the
+// keys after it.
 //
 // Layout, after the pageKHead:
 //
@@ -167,13 +167,17 @@ func (p *pageHead) kFind(key []byte, from int) (i int, found, match bool) {
 	return i, false, true
 }
 
+// kFull returns the full key of key i, whose suffix is longer than 16 bytes.
+func (p *pageHead) kFull(i int) []byte {
+	return unsafe.Slice((*byte)(p.kTails()[i]), int(p.base)+int(p.kLens()[i]))
+}
+
 // kCmp compares the suffix of key i with s, whose head words are equal.
 func (p *pageHead) kCmp(i int, s []byte) int {
 	var kt, st []byte
 	l := int(p.kLens()[i])
 	if l > 16 {
-		b := int(p.base)
-		kt = unsafe.Slice((*byte)(p.kTails()[i]), b+l)[b+16:]
+		kt = p.kFull(i)[int(p.base)+16:]
 	}
 	if len(s) > 16 {
 		st = s[16:]
@@ -184,11 +188,37 @@ func (p *pageHead) kCmp(i int, s []byte) int {
 	return cmp.Compare(l, len(s))
 }
 
+// kSeek returns how many keys of the page are below bound, or at most bound
+// with orEqual. The bound may have any length: the shared prefix decides
+// first, then the head words, then, if those are equal, the rest (see kCmp).
+func (p *pageHead) kSeek(bound []byte, orEqual bool) int {
+	b, n := int(p.base), int(p.count)
+	m := min(b, len(bound))
+	if c := bytes.Compare(bound[:m], p.kPrefix()[:m]); c != 0 || len(bound) < b {
+		if c <= 0 {
+			return 0 // bound sorts before every key, which starts with the prefix
+		}
+		return n
+	}
+	s := bound[b:]
+	w0, w1 := kWords(s[:min(len(s), 16)])
+	h, i := p.kHeads(), 0
+	for i < n && (h[2*i] < w0 || h[2*i] == w0 && h[2*i+1] < w1) {
+		i++
+	}
+	for ; i < n && h[2*i] == w0 && h[2*i+1] == w1; i++ {
+		if c := p.kCmp(i, s); c > 0 || c == 0 && !orEqual {
+			break
+		}
+	}
+	return i
+}
+
 // kKey returns key i, from its full key or rebuilt in buf.
 func (p *pageHead) kKey(i int, buf *keyBuf) []byte {
-	l, b := int(p.kLens()[i]), int(p.base)
+	l := int(p.kLens()[i])
 	if l > 16 {
-		return unsafe.Slice((*byte)(p.kTails()[i]), b+l)
+		return p.kFull(i)
 	}
 	n := copy(buf[:], p.kPrefix())
 	h := p.kHeads()
@@ -235,6 +265,35 @@ func (p *pageHead) kRemoveAt(i int) *pageHead {
 	return p
 }
 
+// kSplit moves the keys from position s on into a new page with the same
+// shared prefix and returns the page with the keys before s, or its smaller
+// replacement, and the new page.
+func (p *pageHead) kSplit(s int) (*pageHead, *pageHead) {
+	n := int(p.count)
+	c := 0
+	for kCaps[c] < n-s {
+		c++
+	}
+	q := newPageK(c)
+	q.count, q.base, q.klen = uint8(n-s), p.base, p.klen
+	q.kh().pre, q.kh().win = p.kh().pre, p.kh().win
+	t := p.kTails()
+	copy(q.kTails(), t[s:n])
+	copy(q.kHeads(), p.kHeads()[2*s:2*n])
+	copy(q.kVals(), p.kVals()[s:n])
+	copy(q.kLens(), p.kLens()[s:n])
+	clear(t[s:n])
+	p.count = uint8(s)
+	if s <= kShrink[p.class] {
+		c := 0
+		for kCaps[c] < s {
+			c++
+		}
+		p = p.kResize(c)
+	}
+	return p, q
+}
+
 // kResize copies the page into a new page of the given class.
 func (p *pageHead) kResize(class int) *pageHead {
 	q := newPageK(class)
@@ -248,19 +307,8 @@ func (p *pageHead) kResize(class int) *pageHead {
 	return q
 }
 
-// kSingle reports whether items can go into a K page as far as their values
-// go: every key with exactly one value, none a leaf.
-func kSingle(items []item) bool {
-	for _, it := range items {
-		if it.leaf != nil || it.set != nil || len(it.vals) != 1 {
-			return false
-		}
-	}
-	return true
-}
-
 // kPack returns the K page that holds items, which are sorted, distinct and
-// single-valued (see kSingle), or nil if there are too many.
+// have no leaves, or nil if there are too many.
 func kPack(items []item) *pageHead {
 	k := len(items)
 	if k > kCaps[len(kCaps)-1] {
@@ -288,7 +336,7 @@ func kPack(items []item) *pageHead {
 			}
 		}
 		h[2*i], h[2*i+1] = kWords(s)
-		vs[i], ls[i] = it.vals[0], uint8(len(s))
+		vs[i], ls[i] = it.val, uint8(len(s))
 	}
 	if b > 0 {
 		if pre == nil {

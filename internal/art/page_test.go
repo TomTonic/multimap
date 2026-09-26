@@ -151,16 +151,15 @@ func checkValueType[T comparable](t *testing.T, vs []T) {
 	}
 }
 
-// TestPageNLifecycle makes sure that integer keys keep all their values, in
+// TestPagePromotion makes sure that integer keys keep all their values, in
 // any mix of one, a few and many values per key, while their pages change
-// shape underneath. It covers the U8-n pages of the ART behind
-// multimap.Ordered: a U8-1 page turning into a U8-n page in place and by
-// rebuilding, values moving out to external sets as a key passes inlineMax,
-// pages growing for lack of external slots and bursting beyond the largest
-// class, an externally stored key becoming a node's term key, and the removal
-// of values and keys. After every step the map must match a reference and
-// satisfy the structural invariants.
-func TestPageNLifecycle(t *testing.T) {
+// shape underneath. It covers the ART behind multimap.Ordered where a key of
+// a page, which holds exactly one value per key, gets a second value: the key
+// gets a leaf with a value set and a range of its own, and the page's other
+// keys stay in pages around it. A key with a leaf can become a node's term
+// key, and values and keys are removed again. After every step the map must
+// match a reference and satisfy the structural invariants.
+func TestPagePromotion(t *testing.T) {
 	r := rand.New(rand.NewPCG(3, 4))
 	var m Map[uint64]
 	ref := reference{}
@@ -173,43 +172,41 @@ func TestPageNLifecycle(t *testing.T) {
 		compare(t, &m, ref, r)
 		checkInvariants(t, &m.t)
 	}
-	kind := func(k []byte) kind {
+	isLeaf := func(k []byte) bool {
 		n, _ := m.t.find(k)
-		return n.kind
-	}
-	many := func(from, n int) []uint64 {
-		out := make([]uint64, n)
-		for i := range out {
-			out[i] = uint64(from + i)
-		}
-		return out
+		return n.kind == kLeaf
 	}
 	key := func(a, b byte) []byte { return []byte{9, 9, 9, 9, 9, 9, a, b} }
 
-	// 16 keys with one value each, then a second value: U8-1 turns into U8-n in place
-	for b := range byte(16) {
+	// 10 keys with one value each share a U8-1 page; a second value gives a
+	// key a leaf, with a page on either side.
+	for b := range byte(10) {
 		add(key(0, b), 1)
 	}
+	add(key(0, 3), 1) // the same value again changes nothing
+	if m.t.root.kind != kPage {
+		t.Fatalf("a repeated value changed the page")
+	}
 	add(key(0, 3), 2)
-	if kind(key(0, 3)) != kPageN {
-		t.Fatalf("a second value did not turn the page into a U8-n page")
+	if !isLeaf(key(0, 3)) || m.t.root.kind != kR || m.t.root.count != 3 {
+		t.Fatalf("a second value did not give the key a leaf between two pages")
 	}
-	// two keys with more than inlineMax values: the second needs a larger class for its slot
-	add(key(0, 5), many(100, inlineMax+1)...)
-	add(key(0, 6), many(200, inlineMax+1)...)
-	// three more: the largest class has 4 external slots, so the fifth rebuilds the subtree
-	for _, b := range []byte{7, 8, 9} {
-		add(key(0, b), many(300, inlineMax+2)...)
+	// many values, and more keys than a K page holds
+	for v := range uint64(40) {
+		add(key(0, 5), 100+v)
 	}
-	// a shorter key makes an externally stored key a term
-	add([]byte{9, 9, 9, 9, 9, 9, 0}, 7)
-	// 20 keys with one value each in one page, then a second value: too many keys for U8-n
-	for b := range byte(20) {
+	for b := range byte(40) {
 		add(key(1, b), 1)
 	}
-	add(key(1, 4), 2)
-	// remove values and whole keys, external ones included
-	for _, k := range [][]byte{key(0, 5), key(0, 7), key(0, 3), key(1, 4)} {
+	add(key(1, 0), 2)  // the first key of a page
+	add(key(1, 39), 2) // and the last
+	// A shorter key makes a key with a leaf the term of a range node.
+	add([]byte{9, 9, 9, 9, 9, 9, 0}, 7, 8)
+	for b := range byte(40) {
+		add([]byte{9, 9, 9, 9, 9, 9, 0, b, 1}, 1)
+	}
+	// remove values and whole keys
+	for _, k := range [][]byte{key(0, 5), key(0, 3), {9, 9, 9, 9, 9, 9, 0}} {
 		for v := range ref[string(k)] {
 			m.Remove(k, v)
 			ref.remove(k, v)
@@ -225,47 +222,21 @@ func TestPageNLifecycle(t *testing.T) {
 	if m.Len() != 0 {
 		t.Fatalf("%d keys left", m.Len())
 	}
-
-	// In the smallest class (4 keys, 1 external slot), a second key with many
-	// values needs a larger class for its slot.
-	add([]byte("ab"), many(0, inlineMax+1)...)
-	add([]byte("ac"), many(50, inlineMax+1)...)
-	if n, _ := m.t.find([]byte("ab")); n.kind != kPageN || asPage(n).extUsed() != 2 {
-		t.Fatalf("two externally stored keys do not share one U8-n page")
-	}
-	// Removing an externally stored key from a page that keeps other keys.
-	add([]byte("ad"), 1, 2)
-	m.RemoveKey([]byte("ac"))
-	delete(ref, "ac")
-	compare(t, &m, ref, r)
-	checkInvariants(t, &m.t)
-	// Longer keys join "ab" in an S page, and once they overflow the largest
-	// one, the externally stored "ab" becomes the term of a new node.
-	add([]byte("abx"), 1)
-	if n, _ := m.t.find([]byte("ab")); n.kind != kPageS {
-		t.Fatalf("keys of different lengths do not share an S page")
-	}
-	for b := range byte(40) {
-		add([]byte{'a', 'b', 'x', b}, 1)
-	}
-	if n, _ := m.t.find([]byte("ab")); n.kind != kLeaf {
-		t.Fatalf("the term key \"ab\" is not a leaf")
-	}
 }
 
-// TestPageSLifecycle makes sure that string keys of any length keep all their
-// values while the pages that hold them change underneath. It covers the S
+// TestPageKLifecycle makes sure that string keys of any length keep all their
+// values while the pages that hold them change underneath. It covers the K
 // pages of the ART behind multimap.Ordered: a page grows through every class
 // as keys arrive and learns a shorter shared prefix when a key does not share
 // the one it has, splits into pages below a range node when it overflows,
-// finds keys that differ only beyond their first 8 suffix bytes or in
-// trailing zero bytes, moves values out to external sets, sends a key too long
-// for any page to a leaf, and shrinks back through the classes as keys leave.
-// Keys with one value stay in S pages too (see withSPages). After every step
-// the map must match a reference and satisfy the structural invariants.
-func TestPageSLifecycle(t *testing.T) {
+// finds keys that differ only beyond their first 16 suffix bytes or in
+// trailing zero bytes, gives a key a leaf of its own when it gets a second
+// value, sends a key too long for any page to a leaf, and shrinks back
+// through the classes as keys leave. After every step the map must match a
+// reference and satisfy the structural invariants.
+func TestPageKLifecycle(t *testing.T) {
 	r := rand.New(rand.NewPCG(5, 6))
-	m := withSPages()
+	var m Map[uint64]
 	ref := reference{}
 	add := func(k string, vs ...uint64) {
 		t.Helper()
@@ -273,14 +244,14 @@ func TestPageSLifecycle(t *testing.T) {
 			m.Add([]byte(k), v)
 			ref.add([]byte(k), v)
 		}
-		compare(t, m, ref, r)
+		compare(t, &m, ref, r)
 		checkInvariants(t, &m.t)
 	}
 	page := func(k string) *pageHead {
 		t.Helper()
 		n, _ := m.t.find([]byte(k))
-		if n == nil || n.kind != kPageS {
-			t.Fatalf("key %q is not in an S page", k)
+		if n == nil || n.kind != kPageK {
+			t.Fatalf("key %q is not in a K page", k)
 		}
 		return asPage(n)
 	}
@@ -289,62 +260,52 @@ func TestPageSLifecycle(t *testing.T) {
 	// Keys that share a page grow it through every class; the first key's
 	// page knows it alone, so the second teaches it a shorter prefix.
 	var classes []int
-	for i := range 22 {
+	for i := range 14 {
 		add(item(i), uint64(i))
 		classes = append(classes, int(page(item(i)).class))
 	}
-	if m.t.root.kind != kPageS || !slices.IsSorted(classes) || classes[0] != 0 || classes[len(classes)-1] != 3 {
+	if m.t.root.kind != kPageK || !slices.IsSorted(classes) || classes[0] != 0 || classes[len(classes)-1] != 3 {
 		t.Fatalf("classes while growing = %v, want one page growing from class 0 to 3", classes)
 	}
 	if b := int(asPage(m.t.root).base); b != len("tenant/category/item-") {
 		t.Fatalf("shared prefix of %d bytes, want %d", b, len("tenant/category/item-"))
 	}
-	// More keys overflow the largest page: it bursts into a node with pages.
-	for i := 22; i < 40; i++ {
+	// More keys overflow the largest page: it splits below a range node.
+	for i := 14; i < 40; i++ {
 		add(item(i), uint64(i))
 	}
-	if m.t.root.kind < kN4 {
-		t.Fatalf("the full page did not burst: root kind %d", m.t.root.kind)
+	if m.t.root.kind != kR {
+		t.Fatalf("the full page did not split: root kind %d", m.t.root.kind)
 	}
 
-	// Keys that share their first 8 suffix bytes, or differ in trailing
-	// zeros, share a head word; the tails and lengths tell them apart.
-	for _, k := range []string{"zz/abcdefgh", "zz/abcdefgh1", "zz/abcdefgh2", "zz/abcdefgh12", "zz/ab", "zz/ab\x00", "zz/ab\x00\x00"} {
+	// Keys that share their first 16 suffix bytes, or differ in trailing
+	// zeros, share head words; the full keys and lengths tell them apart.
+	for _, k := range []string{"zz/abcdefghijklmnop", "zz/abcdefghijklmnop1", "zz/abcdefghijklmnop2",
+		"zz/abcdefghijklmnop12", "zz/ab", "zz/ab\x00", "zz/ab\x00\x00"} {
 		add(k, 1)
 	}
 
 	// A key too long for any page goes to a leaf among pages.
 	long := "zz/abcdefgh1" + string(bytes.Repeat([]byte{'x'}, maxPageKey))
-	add(long, 1)
+	add(long, 1, 2)
 	if n, _ := m.t.find([]byte(long)); n.kind != kLeaf {
 		t.Fatalf("a key of %d bytes is not a leaf", len(long))
 	}
 
-	// Values beyond inlineMax move to external sets. The smallest class has
-	// no external slot, a larger one has a few, and beyond those the
-	// subtree is rebuilt.
-	many := func(from int) []uint64 {
-		out := make([]uint64, inlineMax+1)
-		for i := range out {
-			out[i] = uint64(from + i)
+	// A second value gives a key a leaf of its own, for a short and for a
+	// long suffix; more values go to the leaf.
+	for _, k := range []string{item(3), "zz/abcdefghijklmnop12"} {
+		add(k, 2, 3, 4)
+		if n, _ := m.t.find([]byte(k)); n.kind != kLeaf {
+			t.Fatalf("a second value did not give %q a leaf", k)
 		}
-		return out
 	}
-	add("vv/key-1-string", 1)
-	add("vv/key-2-string", 2)
-	add("vv/key-1-string", many(10)...)
-	if p := page("vv/key-1-string"); p.extUsed() != 1 {
-		t.Fatalf("a key with %d values uses %d external sets", inlineMax+1, p.extUsed())
+	for v := range uint64(4) {
+		m.Remove([]byte(item(3)), 1+v)
+		ref.remove([]byte(item(3)), 1+v)
+		compare(t, &m, ref, r)
+		checkInvariants(t, &m.t)
 	}
-	for i, k := range []string{"vv/key-2-string", "vv/key-3-string", "vv/key-4-string", "vv/key-5-string"} {
-		add(k, many(100*(i+1))...)
-	}
-	for v := range uint64(inlineMax + 1) {
-		m.Remove([]byte("vv/key-1-string"), 10+v)
-		ref.remove([]byte("vv/key-1-string"), 10+v)
-	}
-	compare(t, m, ref, r)
-	checkInvariants(t, &m.t)
 
 	// Removing the keys again shrinks the pages back through the classes.
 	shrunk := false
@@ -356,7 +317,7 @@ func TestPageSLifecycle(t *testing.T) {
 			shrunk = true
 		}
 	}
-	compare(t, m, ref, r)
+	compare(t, &m, ref, r)
 	checkInvariants(t, &m.t)
 	if !shrunk {
 		t.Fatalf("no page shrank while its keys were removed")

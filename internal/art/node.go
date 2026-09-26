@@ -44,9 +44,7 @@ type kind uint8
 const (
 	kLeaf  kind = iota + 1
 	kPage       // U8-1 page, see page.go
-	kPageN      // U8-n page, see pagen.go
-	kPageS      // S page, see pages.go
-	kPageK      // K page, see pagek.go (prototype)
+	kPageK      // K page, see pagek.go
 	kN4
 	kN11
 	kN25

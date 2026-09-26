@@ -28,18 +28,14 @@ func (t *Tree) del(loc **header, key []byte, depth int) bool {
 		return false
 	}
 	switch n.kind {
-	case kPage, kPageN:
+	case kPage:
 		p := asPage(n)
 		if len(key) != int(p.klen) {
 			return false
 		}
 		i, ok := p.search(keyWord(key))
-		switch {
-		case !ok:
-		case n.kind == kPage:
+		if ok {
 			*loc = pageHdr(p.removeAt(i))
-		default:
-			*loc = pageHdr(p.nRemoveKey(i))
 		}
 		return ok
 	case kPageK:
@@ -47,13 +43,6 @@ func (t *Tree) del(loc **header, key []byte, depth int) bool {
 		i, ok, _ := p.kFind(key, 0) // paths above were checked only up to 8 bytes each
 		if ok {
 			*loc = pageHdr(p.kRemoveAt(i))
-		}
-		return ok
-	case kPageS:
-		p := asPage(n)
-		i, ok, _ := p.sFind(key, 0) // paths above were checked only up to 8 bytes each
-		if ok {
-			*loc = pageHdr(p.sRemoveKey(i))
 		}
 		return ok
 	case kLeaf:
@@ -74,7 +63,7 @@ func (t *Tree) del(loc **header, key []byte, depth int) bool {
 		n.term = nil
 	} else if n.kind == kR {
 		r := asR(n)
-		i := swar.Floor(&r.starts, key[d])
+		i := r.index(key[d])
 		c := &r.children()[i]
 		if !t.del(c, key, d) {
 			return false
@@ -83,7 +72,7 @@ func (t *Tree) del(loc **header, key []byte, depth int) bool {
 		case *c == nil:
 			n = rRemove(n, i)
 		case isPage(*c):
-			n = t.rMerge(n, i)
+			n = rMerge(n, i)
 		}
 	} else {
 		b := key[d]

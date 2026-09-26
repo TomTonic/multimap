@@ -40,19 +40,6 @@ func Rank(bm *[4]uint64, b byte) int {
 	return r
 }
 
-// Floor returns the index of the last set bit at or below position b among
-// all set bits, which is the index of the child whose byte range holds b in
-// a range node (range starts as bits, children in byte order). Bit 0 must be
-// set. The mask 2<<63 wraps to 0, so b = 63 keeps the whole word.
-func Floor(bm *[4]uint64, b byte) int {
-	w := b >> 6
-	r := bits.OnesCount64(bm[w&3] & (uint64(2)<<(b&63) - 1))
-	for i := range w {
-		r += bits.OnesCount64(bm[i])
-	}
-	return r - 1
-}
-
 // Has reports whether bit b is set.
 func Has(bm *[4]uint64, b byte) bool {
 	return bm[(b>>6)&3]&(uint64(1)<<(b&63)) != 0

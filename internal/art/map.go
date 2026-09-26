@@ -8,15 +8,15 @@ import (
 )
 
 // Map is a multimap from byte-string keys to sets of T on top of Tree. When T
-// is small and pointer-free, keys of up to maxPageKey bytes sit in pages with
-// their values (see page.go); every other key has a leaf that holds its
-// values in a vset.Set. The zero value is an empty map.
+// is small and pointer-free, keys of up to maxPageKey bytes with exactly one
+// value sit in pages with it (see page.go); every other key has a leaf that
+// holds its values in a vset.Set. The zero value is an empty map.
 type Map[T comparable] struct {
 	t Tree
 }
 
-// View is the values of one key: the value set of its leaf or its page, or
-// its values held inline in a page, as raw words. The zero View stands for an
+// View is the values of one key: the value set of its leaf, or its one value
+// held in a page, as a raw word. The zero View stands for an
 // absent key. It belongs to the map: it must not be modified and is valid
 // only until the next write.
 type View[T comparable] struct {
@@ -73,11 +73,6 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), l.valsOff))
 }
 
-// pageVal returns the value at position i of a U8-1 page of a Map[T].
-func pageVal[T comparable](p *pageHead, i int) *T {
-	return (*T)(unsafe.Pointer(&p.vals()[i]))
-}
-
 // view returns the values found at n, a leaf or a page with position i.
 func view[T comparable](n *header, i int) View[T] {
 	switch n.kind {
@@ -85,16 +80,8 @@ func view[T comparable](n *header, i int) View[T] {
 		return View[T]{set: vals[T](asLeaf(n))}
 	case kPage:
 		return View[T]{raw: asPage(n).vals()[i : i+1]}
-	case kPageK:
-		return View[T]{raw: asPage(n).kVals()[i : i+1]}
 	}
-	p := asPage(n)
-	l := p.layout()
-	off, cnt, e := p.runIn(l, i)
-	if e >= 0 {
-		return View[T]{set: (*vset.Set[T])(p.extsIn(l)[e])}
-	}
-	return View[T]{raw: p.nvalsIn(l)[off : off+cnt]}
+	return View[T]{raw: asPage(n).kVals()[i : i+1]}
 }
 
 // smallPlain reports whether T may be stored in pages: at most 8 bytes and
@@ -132,11 +119,7 @@ func (m *Map[T]) prep() {
 	m.t.small = smallPlain[T]()
 	m.t.mk = func(it item) *leafHead {
 		l := newLeaf[T](it.key)
-		if it.set != nil {
-			*vals[T](l) = *(*vset.Set[T])(it.set)
-			return l
-		}
-		eachRaw(it.vals, func(v T) bool { vals[T](l).Add(v); return true })
+		vals[T](l).Add(*(*T)(unsafe.Pointer(&it.val)))
 		return l
 	}
 }
@@ -160,41 +143,20 @@ func (m *Map[T]) Add(key []byte, v T) {
 	case sp.leaf != nil:
 		vals[T](sp.leaf).Add(v)
 	case sp.created:
-	case (*sp.at).kind == kPage:
-		if *pageVal[T](asPage(*sp.at), sp.i) != v {
-			m.t.addToSingle(sp, raw)
-		}
-	case (*sp.at).kind == kPageK:
-		if *(*T)(unsafe.Pointer(&asPage(*sp.at).kVals()[sp.i])) != v {
-			m.t.rebuild(sp, func(it *item) { it.vals = append(it.vals, raw) })
-		}
 	default:
-		m.addToPageN(sp, v, raw)
+		// The key has one value in a page; a second one gives it a leaf.
+		p := asPage(*sp.at)
+		old := &p.vals()[sp.i]
+		if p.kind == kPageK {
+			old = &p.kVals()[sp.i]
+		}
+		if *(*T)(unsafe.Pointer(old)) == v {
+			return
+		}
+		l := m.t.mk(item{key: key, val: *old})
+		vals[T](l).Add(v)
+		m.t.promote(sp, l)
 	}
-}
-
-// addToPageN adds v to the values of the key at sp, in a U8-n page: to its
-// external set, inline, or, as its (inlineMax+1)-th value, to a new external
-// set that takes over its inline values.
-func (m *Map[T]) addToPageN(sp spot, v T, raw uint64) {
-	p := asPage(*sp.at)
-	off, n, e := p.run(sp.i)
-	if e >= 0 {
-		(*vset.Set[T])(p.exts()[e]).Add(v)
-		return
-	}
-	run := p.nvals()[off : off+n]
-	if !eachRaw(run, func(x T) bool { return x != v }) {
-		return // already there
-	}
-	if n < inlineMax {
-		m.t.addInline(sp, raw)
-		return
-	}
-	s := &vset.Set[T]{}
-	eachRaw(run, func(x T) bool { s.Add(x); return true })
-	s.Add(v)
-	m.t.externalize(sp, unsafe.Pointer(s))
 }
 
 // Remove removes v from the values of key and removes the key once it holds
@@ -204,40 +166,13 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	if n == nil {
 		return
 	}
-	var s *vset.Set[T]
-	switch n.kind {
-	case kLeaf:
-		s = vals[T](asLeaf(n))
-	case kPage:
-		if *pageVal[T](asPage(n), i) == v {
+	vw := view[T](n, i)
+	switch {
+	case vw.set != nil:
+		if vw.set.Remove(v) && vw.set.Len() == 0 {
 			m.t.remove(key)
 		}
-		return
-	case kPageK:
-		if *(*T)(unsafe.Pointer(&asPage(n).kVals()[i])) == v {
-			m.t.remove(key)
-		}
-		return
-	default:
-		p := asPage(n)
-		off, cnt, e := p.run(i)
-		if e >= 0 {
-			s = (*vset.Set[T])(p.exts()[e])
-			break
-		}
-		for k := range cnt {
-			if *(*T)(unsafe.Pointer(&p.nvals()[off+k])) == v {
-				if cnt == 1 {
-					m.t.remove(key)
-				} else {
-					p.nRemoveVal(i, k)
-				}
-				return
-			}
-		}
-		return
-	}
-	if s.Remove(v) && s.Len() == 0 {
+	case *(*T)(unsafe.Pointer(&vw.raw[0])) == v:
 		m.t.remove(key)
 	}
 }
@@ -288,24 +223,7 @@ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 			return vals[T](asLeaf(n)).Each(yield)
 		case kPage:
 			return eachRaw(asPage(n).vals()[i:j], yield)
-		case kPageK:
-			return eachRaw(asPage(n).kVals()[i:j], yield)
 		}
-		p := asPage(n)
-		off, _, _ := p.run(i)
-		vs, ex := p.nvals(), p.exts()
-		for _, c := range p.cnts()[i:j] {
-			if c >= extBit {
-				if !(*vset.Set[T])(ex[c&^extBit]).Each(yield) {
-					return false
-				}
-				continue
-			}
-			if !eachRaw(vs[off:off+int(c)], yield) {
-				return false
-			}
-			off += int(c)
-		}
-		return true
+		return eachRaw(asPage(n).kVals()[i:j], yield)
 	})
 }

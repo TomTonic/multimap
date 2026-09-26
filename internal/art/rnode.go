@@ -36,26 +36,30 @@ import (
 // nodes: every node such a tree creates is a range node.
 //
 // Layout: the header, a 256-bit bitmap of the range starts (bit 0 is always
-// set), and the children in byte order; the child of byte b is
-// child[swar.Floor(starts, b)]. The four classes of 9, 25, 57 and 256
-// children fill 128, 256, 512 and 2104 bytes.
+// set), the number of starts in the words before each word, and the
+// children in byte order; the child of byte b is child[r.index(b)]. The
+// head fills the first 64 bytes, so the children start on a cache line of
+// their own. The four classes of 8, 24, 56 and 256 children fill 128, 256,
+// 512 and 2112 bytes.
 type rhead struct {
 	header
 	starts [4]uint64
+	before [4]uint8 // before[w]: the starts in words 0 to w-1
+	_      [4]byte
 }
 
 type (
-	rnode9 struct {
+	rnode8 struct {
 		rhead
-		child [9]*header
+		child [8]*header
 	}
-	rnode25 struct {
+	rnode24 struct {
 		rhead
-		child [25]*header
+		child [24]*header
 	}
-	rnode57 struct {
+	rnode56 struct {
 		rhead
-		child [57]*header
+		child [56]*header
 	}
 	rnode256 struct {
 		rhead
@@ -66,8 +70,8 @@ type (
 // rCaps are the capacities of the range node classes; a node shrinks into
 // the next smaller class once it holds rShrink ranges or fewer.
 var (
-	rCaps   = [4]int{9, 25, 57, 256}
-	rShrink = [4]int{0, 6, 18, 44}
+	rCaps   = [4]int{8, 24, 56, 256}
+	rShrink = [4]int{0, 5, 17, 44}
 )
 
 // rChildOff is the offset of the children in every range node class.
@@ -79,11 +83,11 @@ func newR(class int) *rhead {
 	var r *rhead
 	switch class {
 	case 0:
-		r = &(&rnode9{}).rhead
+		r = &(&rnode8{}).rhead
 	case 1:
-		r = &(&rnode25{}).rhead
+		r = &(&rnode24{}).rhead
 	case 2:
-		r = &(&rnode57{}).rhead
+		r = &(&rnode56{}).rhead
 	default:
 		r = &(&rnode256{}).rhead
 	}
@@ -95,6 +99,25 @@ func newR(class int) *rhead {
 // first count are in use.
 func (r *rhead) children() []*header {
 	return unsafe.Slice((**header)(unsafe.Add(unsafe.Pointer(r), rChildOff)), rCaps[r.class])
+}
+
+// index returns the index of the range that holds byte b: the range starts
+// up to b, less one. It counts one word, with the count of the words before
+// it at hand, instead of looping over them: how many words come before b's
+// is as random as b, and that loop's branch would mispredict on most
+// lookups.
+func (r *rhead) index(b byte) int {
+	w := b >> 6
+	return int(r.before[w&3]) + bits.OnesCount64(r.starts[w&3]&(uint64(2)<<(b&63)-1)) - 1
+}
+
+// recount updates before after starts changed.
+func (r *rhead) recount() {
+	c := 0
+	for w, set := range r.starts {
+		r.before[w] = uint8(c)
+		c += bits.OnesCount64(set)
+	}
 }
 
 // start returns the first byte of range k.
@@ -145,6 +168,7 @@ func makeR(h header, rs []rng) *header {
 		swar.Set(&r.starts, x.b)
 		ch[i] = x.c
 	}
+	r.recount()
 	return &r.header
 }
 
@@ -168,6 +192,7 @@ func rSplice(n *header, i int, rs []rng) *header {
 		}
 	}
 	r.count = uint16(cnt)
+	r.recount()
 	return n
 }
 
@@ -180,6 +205,7 @@ func rRemove(n *header, i int) *header {
 	if cnt > 0 {
 		s := r.start(max(i, 1))
 		r.starts[s>>6] &^= uint64(1) << (s & 63)
+		r.recount()
 	}
 	ch := r.children()
 	copy(ch[i:cnt], ch[i+1:cnt+1])
@@ -193,12 +219,12 @@ func rRemove(n *header, i int) *header {
 
 // rMerge merges the page of range i of n into a neighbouring page when the
 // two hold at most half the keys the largest page of either type holds (see
-// maxKeys) and fit a page below the largest class, so that pages thinned out
-// by deletes do not stay behind half empty. A page that has just split holds
-// about half of that already, so the two halves do not merge back after a
-// few deletes; and the check costs nothing on most deletes, which leave
-// their page well above it.
-func (t *Tree) rMerge(n *header, i int) *header {
+// maxKeys). Such a merged page always fits, and pages thinned out by deletes
+// do not stay behind half empty. A page that has just split holds about half
+// of that already, so the two halves do not merge back after a few deletes;
+// and the check costs nothing on most deletes, which leave their page well
+// above it. It returns n or its smaller replacement.
+func rMerge(n *header, i int) *header {
 	r := asR(n)
 	ch := r.children()
 	for _, j := range [2]int{i - 1, i + 1} {
@@ -210,11 +236,7 @@ func (t *Tree) rMerge(n *header, i int) *header {
 			2*(int(asPage(a).count)+int(asPage(b).count)) > min(asPage(a).maxKeys(), asPage(b).maxKeys()) {
 			continue
 		}
-		q := t.pageFor(append(pageItems(asPage(a)), pageItems(asPage(b))...))
-		if q == nil || q.largest() {
-			continue
-		}
-		ch[min(i, j)] = pageHdr(q)
+		ch[min(i, j)] = pageHdr(pageFor(append(pageItems(asPage(a)), pageItems(asPage(b))...)))
 		return rRemove(n, max(i, j))
 	}
 	return n
@@ -223,54 +245,55 @@ func (t *Tree) rMerge(n *header, i int) *header {
 // isPage reports whether n is a page of any type.
 func isPage(n *header) bool { return n.kind != kLeaf && n.kind <= kLastPage }
 
-// maxKeys returns about how many keys the largest page of p's type holds:
-// for an S page, whose capacity depends on its keys, as many as its own
-// capacity scaled to the largest class.
+// maxKeys returns how many keys the largest page of p's type holds.
 func (p *pageHead) maxKeys() int {
-	switch p.kind {
-	case kPage:
+	if p.kind == kPage {
 		return pageCaps[len(pageCaps)-1]
-	case kPageK:
-		return kCaps[len(kCaps)-1]
-	case kPageN:
-		return nLayouts[len(nLayouts)-1].keys()
 	}
-	return int(p.kcap) * sSizes[len(sSizes)-1] / sSizes[p.class]
-}
-
-// largest reports whether p is of the largest class of its type.
-func (p *pageHead) largest() bool {
-	if p.kind == kPageN {
-		return int(p.class) == len(nLayouts)-1
-	}
-	return p.class == 3
+	return kCaps[len(kCaps)-1]
 }
 
 // ranges appends to out the ranges that hold items, which are sorted,
 // distinct, share their first d bytes and are all longer than that, and
-// returns out. Items that fit a page become one; otherwise they split in two
+// returns out. Items that fit a page become one. Otherwise the byte group of
+// the first key with a leaf gets a range of its own, so that the keys around
+// it fill pages as large as they can; without leaves, the items split in two
 // at the byte boundary nearest their middle, and each half is split the same
 // way. Items that all share byte d and do not fit a page become a subtree of
 // their own. The first range starts at the byte of the first item.
 func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 	n := len(items)
 	first, last := items[0].key[d], items[n-1].key[d]
-	if first == last || n == 1 {
+	if first == last {
 		return append(out, rng{first, t.build(items, d)})
 	}
-	if p := t.pageFor(items); p != nil {
+	if p := pageFor(items); p != nil {
 		return append(out, rng{first, pageHdr(p)})
 	}
-	m := n / 2
-	b := items[m].key[d]
-	lo, hi := m, m
+	k := slices.IndexFunc(items, func(it item) bool { return it.leaf != nil })
+	lo := n / 2
+	if k >= 0 {
+		lo = k
+	}
+	b, hi := items[lo].key[d], lo
 	for lo > 0 && items[lo-1].key[d] == b {
 		lo--
 	}
 	for hi < n && items[hi].key[d] == b {
 		hi++
 	}
-	s := lo
+	if k >= 0 {
+		// the leaf's group, between the keys before and after it
+		if lo > 0 {
+			out = t.ranges(items[:lo], d, out)
+		}
+		out = append(out, rng{b, t.build(items[lo:hi], d)})
+		if hi < n {
+			out = t.ranges(items[hi:], d, out)
+		}
+		return out
+	}
+	m, s := n/2, lo
 	if lo == 0 || (hi < n && hi-m < m-lo) {
 		s = hi
 	}

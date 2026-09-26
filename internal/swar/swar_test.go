@@ -29,18 +29,13 @@ func TestIndex8(t *testing.T) {
 	}
 }
 
-// TestRankAndHas checks the bitmap operations of the 57-way node and the
-// range node: a child's index is the number of present bytes below it, and
-// the range holding a byte is the last range start at or below it.
+// TestRankAndHas checks the bitmap operations of the 57-way node: a child's
+// index is the number of present bytes below it.
 func TestRankAndHas(t *testing.T) {
 	r := rand.New(rand.NewPCG(3, 4))
 	for range 2000 {
 		var bm [4]uint64
 		present := map[byte]bool{}
-		if r.IntN(2) == 0 {
-			Set(&bm, 0)
-			present[0] = true
-		}
 		for range r.IntN(100) {
 			b := byte(r.IntN(256))
 			Set(&bm, b)
@@ -55,11 +50,6 @@ func TestRankAndHas(t *testing.T) {
 			}
 			if got := Rank(&bm, byte(b)); got != want {
 				t.Fatalf("Rank(%d) = %d, want %d", b, got, want)
-			}
-			if present[0] {
-				if got := Floor(&bm, byte(b)); got != want+b2i(present[byte(b)])-1 {
-					t.Fatalf("Floor(%d) = %d, want %d", b, got, want+b2i(present[byte(b)])-1)
-				}
 			}
 			if Has(&bm, byte(b)) != present[byte(b)] {
 				t.Fatalf("Has(%d) wrong", b)
@@ -129,11 +119,4 @@ func TestLcp(t *testing.T) {
 			t.Fatalf("Lcp(%v, %v) = %d, want %d", a, b, got, want)
 		}
 	}
-}
-
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
