@@ -11,7 +11,7 @@ import (
 	"github.com/TomTonic/multimap/bench/stats"
 )
 
-var opOrder = []string{"valuesFor", "valuesBetween", "churn", "build"}
+var opOrder = []string{"valuesFor", "valuesBetween", "prefix", "churn", "build"}
 
 // writeSpeed writes speed-summary.md: one row per comparison with the median
 // time per operation of both candidates, the median difference, its 95%
@@ -73,8 +73,8 @@ func writeMem(c config, rows []memResult) error {
 		groups[k] = append(groups[k], r)
 	}
 	var b strings.Builder
-	b.WriteString("| values | keys | candidate | rounds | heap B/key | scannable B/key | GC CPU per cycle | heap B/key after removing half the keys |\n")
-	b.WriteString("|---|---|---|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| values | keys | n | candidate | rounds | heap B/key | scannable B/key | GC CPU per cycle | heap B/key after removing half the keys |\n")
+	b.WriteString("|---|---|---:|---|---:|---:|---:|---:|---:|\n")
 	for _, profile := range c.profiles {
 		for _, kind := range c.kinds {
 			base := median(field(groups[key{profile, kind, "none"}], func(r memResult) float64 { return r.GCCPUMs }))
@@ -84,7 +84,7 @@ func writeMem(c config, rows []memResult) error {
 					continue
 				}
 				f := func(get func(memResult) float64) float64 { return median(field(g, get)) }
-				fmt.Fprintf(&b, "| %s | %s | %s | %d | %.0f | %.0f | %+.0f ms | %.0f |\n", profile, kind, impl, len(g),
+				fmt.Fprintf(&b, "| %s | %s | %d | %s | %d | %.0f | %.0f | %+.0f ms | %.0f |\n", profile, kind, g[0].N, impl, len(g),
 					f(func(r memResult) float64 { return r.HeapPerKey }),
 					f(func(r memResult) float64 { return r.ScanPerKey }),
 					f(func(r memResult) float64 { return r.GCCPUMs })-base,
@@ -92,7 +92,7 @@ func writeMem(c config, rows []memResult) error {
 			}
 		}
 	}
-	fmt.Fprintf(&b, "\n%d keys. Heap figures exclude the key corpus. GC CPU is per full cycle minus a process that holds only the corpus. After removing every second key, bytes are still per key of the full corpus.\n", c.memN)
+	b.WriteString("\nn: keys per candidate. Heap figures exclude the key corpus. GC CPU is per full cycle minus a process that holds only the corpus. After removing every second key, bytes are still per key of the full corpus.\n")
 	return os.WriteFile(filepath.Join(c.out, "mem-summary.md"), []byte(b.String()), 0o644)
 }
 
