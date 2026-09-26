@@ -17,6 +17,8 @@ type Tree struct {
 	// rebuild needs it as a term.
 	small bool
 	mk    func(it item) *leafHead
+	// Prototype: keys with one value go into K pages instead of S pages.
+	kpages bool
 }
 
 // Len returns the number of keys.
@@ -37,15 +39,19 @@ func (t *Tree) find(key []byte) (*header, int) {
 	depth := 0
 	skipped := false // whether path bytes beyond the eighth went unchecked
 	for n != nil {
-		if n.kind <= kPageS {
+		if n.kind <= kLastPage {
 			if n.kind != kLeaf { // pages hold full keys
 				p := asPage(n)
-				if n.kind == kPageS {
+				if n.kind >= kPageS {
 					from := depth
 					if skipped {
 						from = 0
 					}
-					if i, ok, _ := p.sFind(key, from); ok {
+					if n.kind == kPageK {
+						if i, ok, _ := p.kFind(key, from); ok {
+							return n, i
+						}
+					} else if i, ok, _ := p.sFind(key, from); ok {
 						return n, i
 					}
 				} else if len(key) == int(p.klen) {
@@ -158,7 +164,7 @@ func minKey(n *header, buf *keyBuf) []byte {
 		switch {
 		case n.kind == kLeaf:
 			return asLeaf(n).key()
-		case n.kind <= kPageS:
+		case n.kind <= kLastPage:
 			return asPage(n).key(0, buf)
 		case n.term != nil:
 			return n.term.key() // a prefix of every other key below n

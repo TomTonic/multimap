@@ -212,12 +212,16 @@ type item struct {
 	vals []uint64
 	set  unsafe.Pointer
 	leaf *leafHead
+	full []byte // an immutable copy of key a K page may keep, or nil
 }
 
 // key returns key i of a page of any type, rebuilt in buf.
 func (p *pageHead) key(i int, buf *keyBuf) []byte {
-	if p.kind == kPageS {
+	switch p.kind {
+	case kPageS:
 		return p.sKey(i, buf)
+	case kPageK:
+		return p.kKey(i, buf)
 	}
 	return wordKey(p.keys()[i], int(p.klen), (*[8]byte)(buf[:8]))
 }
@@ -245,6 +249,16 @@ func pageItems(p *pageHead) []item {
 		}
 		return out
 	}
+	if p.kind == kPageK {
+		vs, ts, ls := p.kVals(), p.kTails(), p.kLens()
+		for i := range out {
+			out[i].vals = vs[i : i+1 : i+1]
+			if ls[i] > 16 {
+				out[i].full = unsafe.Slice((*byte)(ts[i]), len(out[i].key))
+			}
+		}
+		return out
+	}
 	vs, ex := slices.Clone(p.nvals()[:p.nv]), p.exts()
 	for i := range out {
 		off, cnt, e := p.run(i)
@@ -261,10 +275,13 @@ func pageItems(p *pageHead) []item {
 // Keys of one length of at most 8 bytes go into a U8 page, all others into an
 // S page (see sPack). Only trees with pages rebuild subtrees, so the values
 // may go into pages.
-func pageFor(items []item) *pageHead {
+func (t *Tree) pageFor(items []item) *pageHead {
 	l := len(items[0].key)
 	for _, it := range items {
 		if len(it.key) != l || l > 8 {
+			if t.kpages && kSingle(items) {
+				return kPack(items)
+			}
 			return sPack(&sSource{items: items})
 		}
 	}
@@ -321,7 +338,7 @@ func (t *Tree) build(items []item, depth int) *header {
 	if len(items) == 1 && items[0].leaf != nil {
 		return leafHdr(items[0].leaf)
 	}
-	if p := pageFor(items); p != nil {
+	if p := t.pageFor(items); p != nil {
 		return pageHdr(p)
 	}
 	first, last := items[0].key, items[len(items)-1].key

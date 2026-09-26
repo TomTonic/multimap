@@ -33,7 +33,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			*loc = t.newChild(key, v, nl)
 			return t.created(*loc)
 		}
-		if n.kind != kLeaf && n.kind <= kPageS {
+		if n.kind != kLeaf && n.kind <= kLastPage {
 			return t.upsertPage(loc, key, depth, v, nl)
 		}
 		if n.kind == kLeaf {
@@ -84,6 +84,8 @@ func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc) *header {
 		p.count, p.klen = 1, uint8(len(key))
 		p.heads()[0], p.vals()[0] = keyWord(key), v
 		return pageHdr(p)
+	case t.kpages:
+		return pageHdr(kPack([]item{{key: key, vals: []uint64{v}}}))
 	}
 	return pageHdr(sPack(newKeySource(nil, 0, key, v)))
 }
@@ -102,7 +104,21 @@ func (t *Tree) created(c *header) spot {
 // the page is full or the key does not fit it.
 func (t *Tree) upsertPage(loc **header, key []byte, depth int, v uint64, nl newLeafFunc) spot {
 	p := asPage(*loc)
-	if p.kind == kPageS {
+	if p.kind == kPageK {
+		i, found, match := p.kFind(key, depth)
+		switch {
+		case found:
+			return spot{at: loc, i: i, depth: depth}
+		case match && t.pageable(key) && (p.count < p.kcap || int(p.class) < len(kCaps)-1):
+			if p.count == p.kcap {
+				p = p.kResize(int(p.class) + 1)
+				*loc = pageHdr(p)
+			}
+			p.kInsertAt(i, key, v)
+			t.size++
+			return spot{created: true}
+		}
+	} else if p.kind == kPageS {
 		i, found, match := p.sFind(key, depth) // the descent checked every path
 		switch {
 		case found:

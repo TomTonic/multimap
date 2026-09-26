@@ -38,7 +38,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 	if n.kind == kLeaf {
 		return scanLeaf(asLeaf(n), b, lo, hi, fn)
 	}
-	if n.kind <= kPageS {
+	if n.kind <= kLastPage {
 		return scanPage(asPage(n), b, lo, hi, fn)
 	}
 	if (lo || hi) && n.plen > 0 {

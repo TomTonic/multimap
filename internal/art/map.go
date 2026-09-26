@@ -85,6 +85,8 @@ func view[T comparable](n *header, i int) View[T] {
 		return View[T]{set: vals[T](asLeaf(n))}
 	case kPage:
 		return View[T]{raw: asPage(n).vals()[i : i+1]}
+	case kPageK:
+		return View[T]{raw: asPage(n).kVals()[i : i+1]}
 	}
 	p := asPage(n)
 	l := p.layout()
@@ -162,6 +164,10 @@ func (m *Map[T]) Add(key []byte, v T) {
 		if *pageVal[T](asPage(*sp.at), sp.i) != v {
 			m.t.addToSingle(sp, raw)
 		}
+	case (*sp.at).kind == kPageK:
+		if *(*T)(unsafe.Pointer(&asPage(*sp.at).kVals()[sp.i])) != v {
+			m.t.rebuild(sp, func(it *item) { it.vals = append(it.vals, raw) })
+		}
 	default:
 		m.addToPageN(sp, v, raw)
 	}
@@ -204,6 +210,11 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		s = vals[T](asLeaf(n))
 	case kPage:
 		if *pageVal[T](asPage(n), i) == v {
+			m.t.remove(key)
+		}
+		return
+	case kPageK:
+		if *(*T)(unsafe.Pointer(&asPage(n).kVals()[i])) == v {
 			m.t.remove(key)
 		}
 		return
@@ -277,6 +288,8 @@ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 			return vals[T](asLeaf(n)).Each(yield)
 		case kPage:
 			return eachRaw(asPage(n).vals()[i:j], yield)
+		case kPageK:
+			return eachRaw(asPage(n).kVals()[i:j], yield)
 		}
 		p := asPage(n)
 		off, _, _ := p.run(i)

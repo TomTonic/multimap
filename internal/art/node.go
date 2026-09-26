@@ -40,18 +40,22 @@ import (
 type kind uint8
 
 // The kinds that end a descent come first, so that one comparison
-// (kind <= kPageS) detects them.
+// (kind <= kLastPage) detects them.
 const (
 	kLeaf  kind = iota + 1
 	kPage       // U8-1 page, see page.go
 	kPageN      // U8-n page, see pagen.go
 	kPageS      // S page, see pages.go
+	kPageK      // K page, see pagek.go (prototype)
 	kN4
 	kN11
 	kN25
 	kN57
 	kN256
 )
+
+// kLastPage is the last kind that ends a descent.
+const kLastPage = kPageK
 
 // Shrink thresholds: a node turns into the next smaller kind once it holds
 // this many children or fewer. They lie below the next smaller capacity, so a

@@ -40,6 +40,13 @@ func del(loc **header, key []byte, depth int) bool {
 			*loc = pageHdr(p.nRemoveKey(i))
 		}
 		return ok
+	case kPageK:
+		p := asPage(n)
+		i, ok, _ := p.kFind(key, 0) // paths above were checked only up to 8 bytes each
+		if ok {
+			*loc = pageHdr(p.kRemoveAt(i))
+		}
+		return ok
 	case kPageS:
 		p := asPage(n)
 		i, ok, _ := p.sFind(key, 0) // paths above were checked only up to 8 bytes each
@@ -92,7 +99,7 @@ func collapse(n *header) *header {
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.kind <= kPageS { // leaves and pages hold full keys: they just move up
+	if c.kind <= kLastPage { // leaves and pages hold full keys: they just move up
 		return c
 	}
 	var buf [8]byte

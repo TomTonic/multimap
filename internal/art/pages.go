@@ -75,7 +75,7 @@ const sKeyBytes = 8 + 2 + 1 + 1
 
 // keyBuf backs a key rebuilt from a page; the extra 8 bytes let a head word
 // be stored whole at any position.
-type keyBuf [maxPageKey + 8]byte
+type keyBuf [maxPageKey + 16]byte
 
 func newPageS(class int) *pageHead {
 	var p *pageHead
