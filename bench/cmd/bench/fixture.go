@@ -32,12 +32,28 @@ const (
 	unique = "unique"
 )
 
-// implsFor returns the candidates compared under a value profile.
+// vsOnly, if not empty, limits the candidates ordered is compared with to
+// these (-vs).
+var vsOnly []string
+
+// implsFor returns the candidates compared under a value profile: ordered
+// first, then those it is compared with, including the baseline in a bench
+// built with it (see kit.go), all of them limited by vsOnly.
 func implsFor(profile string) []string {
+	others := []string{hashed, btreeSets, mapSets}
 	if profile == unique {
-		return []string{ordered, btreeMapC}
+		others = []string{btreeMapC}
 	}
-	return []string{ordered, hashed, btreeSets, mapSets}
+	if baseKit != nil {
+		others = append(others, baseline)
+	}
+	out := []string{ordered}
+	for _, b := range others {
+		if len(vsOnly) == 0 || slices.Contains(vsOnly, b) {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 type (
@@ -57,6 +73,8 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
+	base    any // the baseline, see kit.go
+	others  []string // the candidates built besides ordered
 	// ranges of rangeKeys consecutive keys, as []byte and string views, and
 	// the ranges of the keys that start with the prefix of a random key (see
 	// keys.Prefix; text keys only)
@@ -86,7 +104,9 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture 
 		btreeSets: func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
 		mapSets:   func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
 		btreeMapC: func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
+		baseline:  func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
 	}
+	f.others = slices.DeleteFunc(slices.Clone(impls), func(s string) bool { return s == ordered })
 	order := append([]string(nil), impls...)
 	layout.Shuffle(order)
 	for _, name := range order {
@@ -172,6 +192,8 @@ func (f *fixture) settle() {
 			applyMap(f.gm, f.ck.S, rest)
 		case btreeMapC:
 			applyBtreeMap(f.bm, f.ck.S, rest)
+		case baseline:
+			baseKit.apply(f.base)(f.ck.B, rest)
 		}
 		*j = 0
 	}

@@ -19,6 +19,7 @@
 //	go run ./cmd/bench -suite release           # everything; takes a day
 //	go run ./cmd/bench -sizes 4096 -skipmem     # a quicker subset
 //	go run ./cmd/bench -continue -skipmem -maxprocs 40  # more processes where 20 were not enough
+//	go run -tags baseline ./cmd/bench -vs baseline      # head to head with an earlier Ordered (see cmd/mkbaseline)
 //
 // The driver re-executes its own binary for every process (-child, -memchild).
 package main
@@ -59,6 +60,7 @@ func main() {
 	sizesF := flag.String("sizes", "4096,1048576", "numbers of keys for the speed comparisons")
 	n := flag.Int("n", 4096, "internal: number of keys of a -child or -memchild process")
 	opsF := flag.String("ops", "valuesFor,valuesBetween,prefix,churn,build", "operations to compare")
+	vsF := flag.String("vs", "", "compare ordered only with these candidates (default: all of each value profile; baseline needs -tags baseline, see cmd/mkbaseline)")
 	var c config
 	flag.IntVar(&c.minProcs, "minprocs", 5, "processes per scenario before the stop rule applies")
 	flag.IntVar(&c.maxProcs, "maxprocs", 20, "processes per scenario at most")
@@ -81,6 +83,7 @@ func main() {
 	}
 
 	c.kinds, c.ops, c.profiles = split(*kindsF), split(*opsF), split(*profilesF)
+	vsOnly = split(*vsF)
 	err := c.validate()
 	switch {
 	case err != nil:
@@ -143,6 +146,14 @@ func kindNames() []string {
 const maxUniqueRatio = 5
 
 func (c *config) validate() error {
+	for _, v := range vsOnly {
+		switch {
+		case !slices.Contains([]string{hashed, btreeSets, mapSets, btreeMapC, baseline}, v):
+			return fmt.Errorf("-vs: unknown candidate %q", v)
+		case v == baseline && baseKit == nil:
+			return fmt.Errorf("-vs baseline: build the bench with -tags baseline after go run ./cmd/mkbaseline")
+		}
+	}
 	for _, p := range c.profiles {
 		if p != multi && p != unique {
 			return fmt.Errorf("-values: unknown profile %q", p)

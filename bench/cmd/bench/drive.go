@@ -105,7 +105,7 @@ func driveScenario(c config, self, kind, profile string, n int, prior []result) 
 		args := []string{"-child", "-keys", kind, "-values", profile, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
 			"-scanmax", strconv.Itoa(c.scanMax), "-buildmax", strconv.Itoa(c.buildMax),
 			"-ratio", strconv.FormatFloat(c.ratio, 'g', -1, 64),
-			"-layoutseed", strconv.Itoa(i)}
+			"-layoutseed", strconv.Itoa(i), "-vs", strings.Join(vsOnly, ",")}
 		out, err := runChild(self, append(args, rtopt.Forward()...), filepath.Join(c.out, "logs", fmt.Sprintf("speed-%s-%s-%d-p%02d.log", kind, profile, n, i)))
 		if err != nil {
 			return err
@@ -310,7 +310,10 @@ func writeRunInfo(c config, start time.Time) error {
 		"cpu": cpuName(), "args": os.Args[1:],
 		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
 		"values": c.profiles, "keys": c.kinds, "sizes": c.sizes, "ops": c.ops, "memn": c.memN,
-		"suite": flag.Lookup("suite").Value.String(),
+		"suite": flag.Lookup("suite").Value.String(), "vs": vsOnly,
+	}
+	if baseKit != nil {
+		info["baseline"] = baseKit.ref
 	}
 	if c.cont {
 		info = continued(path, info)

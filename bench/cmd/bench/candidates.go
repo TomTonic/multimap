@@ -51,6 +51,8 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			}
 			sink += acc
 		}
+	case baseline:
+		return baseKit.valuesFor(f.base, p)
 	case hashed:
 		m := f.hsh
 		return func(n uint64) {
@@ -133,6 +135,8 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 			}
 			sink += acc
 		}
+	case baseline:
+		return baseKit.between(f.base, from, to)
 	case hashed:
 		m := f.hsh
 		return func(n uint64) {
@@ -212,6 +216,9 @@ func (f *fixture) churn(impl string) func(uint64) {
 	case ordered:
 		m := f.ord
 		return func(n uint64) { step(n, func(s []mutation) { applyOrdered(m, kb, s) }) }
+	case baseline:
+		apply := baseKit.apply(f.base)
+		return func(n uint64) { step(n, func(s []mutation) { apply(kb, s) }) }
 	case hashed:
 		m := f.hsh
 		return func(n uint64) { step(n, func(s []mutation) { applyHashed(m, kb, s) }) }
@@ -239,6 +246,14 @@ func (f *fixture) build(impl string) func(uint64) {
 				m := multimap.NewOrdered[uint64]()
 				applyOrdered(m, kb, ms)
 				sink += m.NumberOfKeys()
+			}
+		}
+	case baseline:
+		return func(n uint64) {
+			for range n {
+				m := baseKit.empty()
+				baseKit.apply(m)(kb, ms)
+				sink += uint64(baseKit.keys(m))
 			}
 		}
 	case hashed:

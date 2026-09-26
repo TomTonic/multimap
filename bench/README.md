@@ -202,6 +202,18 @@ only the Linux VM awake, not Windows: switch off sleep in the Windows power
 plan for the run. The run of 2026-09-25 took 3 h 38 min on the Ryzen above,
 plus 49 min to continue it, and did not sleep.
 
+To measure a change against an earlier commit, copy that commit's library
+into the bench as the candidate `baseline` and compare Ordered with it alone,
+in the same process and interleaved like every other pair:
+
+```sh
+go run ./cmd/mkbaseline -ref main                   # writes ./baseline (ignored by git)
+go run -tags baseline ./cmd/bench -vs baseline      # Ordered against main's Ordered
+```
+
+`-vs` limits the candidates Ordered is compared with; `run.json` records the
+commit of the baseline.
+
 `-repeats`, `-loopscale` and `-validation` pass through to rtcompare. The
 defaults are rtcompare's. Lower values are for smoke tests only.
 

@@ -58,6 +58,10 @@ func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, out 
 	case btreeMapC:
 		m := buildBtreeMap(c.Keys.S, vals, offs)
 		keep, remove = m, func(i int) { m.Delete(c.Keys.S[i]) }
+	case baseline:
+		m := baseKit.build(c.Keys.B, vals, offs)
+		rm := baseKit.removeKey(m)
+		keep, remove = m, func(i int) { rm(c.Keys.B[i]) }
 	default:
 		return fmt.Errorf("unknown candidate %q", impl)
 	}

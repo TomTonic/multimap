@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 
 	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
@@ -114,38 +113,28 @@ func (f *fixture) verify() error {
 			return err
 		}
 	}
-	if f.profile == unique {
-		return f.verifyUnique()
-	}
-	n := len(f.c.Hits.B)
-	for i := range min(n, 20000) {
+	for i := range min(len(f.c.Hits.B), 20000) {
 		want := sum(f.ord.ValuesForSeq(f.c.Hits.B[i]))
-		got := []uint64{sum(f.hsh.ValuesForSeq(f.c.Hits.B[i])), btreeSum(f.bt, f.c.Hits.S[i]), mapSum(f.gm, f.c.Hits.S[i])}
-		if slices.ContainsFunc(got, func(g uint64) bool { return g != want }) || want == 0 {
-			return fmt.Errorf("candidates disagree on the values of %q", f.c.Hits.S[i])
+		for _, impl := range f.others {
+			if got := f.pointSum(impl, i); got != want || want == 0 {
+				return fmt.Errorf("%s disagrees on the values of %q", impl, f.c.Hits.S[i])
+			}
 		}
 	}
 	return nil
 }
 
-// verifyRanges makes sure all candidates of the profile return the same
-// values for the ranges [from[i], to[i]]; the scanning candidates are checked
-// on a few ranges only, as each check scans every key.
+// verifyRanges makes sure all candidates return the same values for the
+// ranges [from[i], to[i]]; the scanning candidates are checked on a few
+// ranges only, as each check scans every key.
 func (f *fixture) verifyRanges(from, to keys.Set) error {
 	for i := range min(len(from.B), 2000) {
 		want := sum(f.ord.ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
-		var got map[string]uint64
-		if f.profile == unique {
-			got = map[string]uint64{btreeMapC: btreeMapRangeSum(f.bm, from.S[i], to.S[i])}
-		} else {
-			got = map[string]uint64{btreeSets: btreeRangeSum(f.bt, from.S[i], to.S[i])}
-			if i < 20 {
-				got[hashed] = sum(f.hsh.ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
-				got[mapSets] = mapRangeSum(f.gm, from.S[i], to.S[i])
+		for _, impl := range f.others {
+			if (impl == hashed || impl == mapSets) && i >= 20 {
+				continue
 			}
-		}
-		for impl, g := range got {
-			if g != want {
+			if f.rangeSum(impl, from, to, i) != want {
 				return fmt.Errorf("%s disagrees on range %q..%q", impl, from.S[i], to.S[i])
 			}
 		}
@@ -153,15 +142,38 @@ func (f *fixture) verifyRanges(from, to keys.Set) error {
 	return nil
 }
 
-// verifyUnique is verify for the unique profile: ordered and btree-map.
-func (f *fixture) verifyUnique() error {
-	for i := range min(len(f.c.Hits.B), 20000) {
-		want := sum(f.ord.ValuesForSeq(f.c.Hits.B[i]))
-		if got, ok := f.bm.Get(f.c.Hits.S[i]); !ok || got != want {
-			return fmt.Errorf("btree-map disagrees on the value of %q", f.c.Hits.S[i])
-		}
+// pointSum returns the sum of the values of hit i in candidate impl, which
+// is not ordered.
+func (f *fixture) pointSum(impl string, i int) uint64 {
+	k, s := f.c.Hits.B[i], f.c.Hits.S[i]
+	switch impl {
+	case hashed:
+		return sum(f.hsh.ValuesForSeq(k))
+	case btreeSets:
+		return btreeSum(f.bt, s)
+	case mapSets:
+		return mapSum(f.gm, s)
+	case btreeMapC:
+		v, _ := f.bm.Get(s)
+		return v
 	}
-	return nil
+	return baseKit.sum(f.base, k)
+}
+
+// rangeSum returns the sum of the values of the keys in [from[i], to[i]] in
+// candidate impl, which is not ordered.
+func (f *fixture) rangeSum(impl string, from, to keys.Set, i int) uint64 {
+	switch impl {
+	case hashed:
+		return sum(f.hsh.ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
+	case btreeSets:
+		return btreeRangeSum(f.bt, from.S[i], to.S[i])
+	case mapSets:
+		return mapRangeSum(f.gm, from.S[i], to.S[i])
+	case btreeMapC:
+		return btreeMapRangeSum(f.bm, from.S[i], to.S[i])
+	}
+	return baseKit.rangeSum(f.base, from.B[i], to.B[i])
 }
 
 // verifyBuild makes sure the build workload leaves both candidates with
@@ -192,6 +204,10 @@ func (f *fixture) verifyBuild(impls ...string) error {
 			m := &btreeMap{}
 			applyBtreeMap(m, f.ck.S, ms)
 			keys, got = m.Len(), func(i int) uint64 { v, _ := m.Get(f.c.Keys.S[i]); return v }
+		case baseline:
+			m := baseKit.empty()
+			baseKit.apply(m)(f.ck.B, ms)
+			keys, got = baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, f.c.Keys.B[i]) }
 		}
 		if keys != n {
 			return fmt.Errorf("build workload leaves %s with %d keys, want %d", impl, keys, n)

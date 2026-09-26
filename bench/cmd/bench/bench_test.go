@@ -20,6 +20,7 @@ import (
 // other candidate of the value profile in every operation, range queries on
 // the scanning candidates and builds only up to their size limits.
 func TestPairsFor(t *testing.T) {
+	withoutBaseline(t)
 	ops := []string{"valuesFor", "valuesBetween", "churn", "build"}
 	tests := []struct {
 		name    string
@@ -295,12 +296,23 @@ func TestCPUInfoModel(t *testing.T) {
 	}
 }
 
+// withoutBaseline removes the baseline candidate for the rest of the test,
+// so that a test of the scenario plan counts the same pairs in a bench built
+// with the baseline tag.
+func withoutBaseline(t *testing.T) {
+	t.Helper()
+	kit := baseKit
+	baseKit = nil
+	t.Cleanup(func() { baseKit = kit })
+}
+
 // TestPairsForPrefix makes sure prefix searches are compared only where they
 // mean something: on text keys, where a user types the first characters, and
 // on the scanning candidates only while a scan of all keys stays affordable.
 // It covers the scenario plan of the benchmark driver for the prefix
 // operation.
 func TestPairsForPrefix(t *testing.T) {
+	withoutBaseline(t)
 	ops := []string{"prefix"}
 	for _, tt := range []struct {
 		name  string

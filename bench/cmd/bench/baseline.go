@@ -1,0 +1,73 @@
+//go:build baseline
+
+package main
+
+import (
+	multimap "github.com/TomTonic/multimap/bench/baseline"
+	"github.com/TomTonic/multimap/bench/keys"
+)
+
+// The kit of the baseline candidate: the same code as the ordered candidate's,
+// on the copy of Ordered in package baseline.
+func init() {
+	type om = multimap.Ordered[uint64]
+	baseKit = &kit{
+		ref: multimap.BaselineRef,
+		build: func(k [][]byte, vals []uint64, offs []int) any {
+			m := multimap.NewOrdered[uint64]()
+			for i, key := range k {
+				for _, v := range vals[offs[i]:offs[i+1]] {
+					m.AddValue(key, v)
+				}
+			}
+			return m
+		},
+		empty: func() any { return multimap.NewOrdered[uint64]() },
+		apply: func(a any) func(k [][]byte, ms []mutation) {
+			m := a.(*om)
+			return func(k [][]byte, ms []mutation) {
+				for _, x := range ms {
+					if x.del {
+						m.RemoveValue(k[x.key], x.val)
+					} else {
+						m.AddValue(k[x.key], x.val)
+					}
+				}
+			}
+		},
+		valuesFor: func(a any, p keys.Set) func(uint64) {
+			m, j := a.(*om), 0
+			return func(n uint64) {
+				var acc uint64
+				for range n {
+					for v := range m.ValuesForSeq(p.B[j]) {
+						acc += v
+					}
+					if j++; j == len(p.B) {
+						j = 0
+					}
+				}
+				sink += acc
+			}
+		},
+		between: func(a any, from, to keys.Set) func(uint64) {
+			m, j := a.(*om), 0
+			return func(n uint64) {
+				var acc uint64
+				for range n {
+					for v := range m.ValuesBetweenInclusiveSeq(from.B[j], to.B[j]) {
+						acc += v
+					}
+					if j++; j == len(from.B) {
+						j = 0
+					}
+				}
+				sink += acc
+			}
+		},
+		sum:       func(a any, key []byte) uint64 { return sum(a.(*om).ValuesForSeq(key)) },
+		rangeSum:  func(a any, from, to []byte) uint64 { return sum(a.(*om).ValuesBetweenInclusiveSeq(from, to)) },
+		keys:      func(a any) int { return int(a.(*om).NumberOfKeys()) },
+		removeKey: func(a any) func(key []byte) { m := a.(*om); return func(key []byte) { m.RemoveKey(key) } },
+	}
+}
