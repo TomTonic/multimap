@@ -122,7 +122,7 @@ type Corpus struct {
 	Hits   Set // all keys again, in an independent random order
 	Misses Set // same distribution, none of them present
 	// Natural holds the values each key of Keys has in the real world, for
-	// kinds that have them (Street: its localities), else nil.
+	// kinds that have them (Street: its localities, numbered from 1), else nil.
 	Natural [][]uint64
 }
 
