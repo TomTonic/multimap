@@ -616,6 +616,9 @@ func checkNode(t *testing.T, n *header, depth int) int {
 		}
 		bytesOf = int(b)
 		children++
+		if c.kind == kR || (c.kind != kLeaf && c.kind <= kLastPage) {
+			t.Fatalf("inner node child of kind %d: below inner nodes, only inner nodes and leaves", c.kind)
+		}
 		walkKeys(c, func(k []byte) {
 			checkKey(k)
 			if len(k) <= end || k[end] != b {
@@ -710,8 +713,8 @@ func checkR(t *testing.T, n *header, depth int) int {
 		if i+1 < len(rs) {
 			hi = int(rs[i+1].b) - 1
 		}
-		if x.c.kind > kLastPage && (x.c.kind != kR || x.c.plen == 0) {
-			t.Fatalf("range node child of kind %d with path length %d", x.c.kind, x.c.plen)
+		if x.c.kind > kLastPage && x.c.plen == 0 {
+			t.Fatalf("range node child of kind %d without a path", x.c.kind)
 		}
 		walkKeys(x.c, func(k []byte) {
 			checkKey(k)

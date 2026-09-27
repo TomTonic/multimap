@@ -42,8 +42,8 @@ type keyBuf [maxPageKey + 16]byte
 // pageHead is the start of every page (8 B).
 type pageHead struct {
 	kind  kind
-	class uint8  // index into pageCaps (U8-1) or kCaps (K)
-	count uint8  // keys
+	class uint8 // index into pageCaps (U8-1) or kCaps (K)
+	count uint8 // keys
 	klen  uint8 // U8-1: length of every key in the page, 0..8; K: see pageKHead
 	_     uint16
 	kcap  uint8 // K: key slots

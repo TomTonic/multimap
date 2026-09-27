@@ -32,8 +32,10 @@ import (
 // range belongs to that range's child, and a lookup that finds nothing there
 // is a miss.
 //
-// Only trees with pages have range nodes, and they have no other inner
-// nodes: every node such a tree creates is a range node.
+// Only trees with pages have range nodes. Such a tree creates range nodes
+// wherever keys hold one value, and inner nodes below where keys with
+// several values crowd it (see settle.go); an inner node below a range node
+// starts its path with its byte, like every child of a range node.
 //
 // Layout: the header, a 256-bit bitmap of the range starts (bit 0 is always
 // set), the number of starts in the words before each word, and the

@@ -73,7 +73,7 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
-	base    any // the baseline, see kit.go
+	base    any      // the baseline, see kit.go
 	others  []string // the candidates built besides ordered
 	// ranges of rangeKeys consecutive keys, as []byte and string views, and
 	// the ranges of the keys that start with the prefix of a random key (see

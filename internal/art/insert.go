@@ -21,8 +21,9 @@ type spot struct {
 }
 
 // upsert returns where key is, creating it when it is missing: in a page with
-// the raw value v when the key fits one (see pageable), else as a leaf made
-// by nl, which the caller fills.
+// the raw value v when the key fits one (see pageable) and does not go below
+// an inner node (see settle.go), else as a leaf made by nl, which the caller
+// fills.
 //
 // It descends like find, checking compressed paths and searching nodes the
 // same fast way, and keeps the slot it came through. A missing key is then
@@ -31,6 +32,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 	loc, depth := &t.root, 0
 	var par **header // the range node *loc is a child of, or nil
 	pi := 0
+	inner := false // *loc is below an inner node, where no pages go
 	for {
 		n := *loc
 		if n == nil {
@@ -41,7 +43,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			return t.upsertPage(loc, par, pi, key, depth, v, nl)
 		}
 		if n.kind == kLeaf {
-			return t.splitLeaf(loc, asLeaf(n), key, depth, v, nl)
+			return t.splitLeaf(loc, asLeaf(n), key, depth, v, nl, inner)
 		}
 		if n.plen > 0 {
 			// MatchPrefix settles paths of up to 8 bytes; a longer path, or
@@ -82,10 +84,10 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 			par, pi, loc = loc, i, c
 			continue
 		}
-		par = nil
+		par, inner = nil, true
 		c := findLoc(n, b)
 		if c == nil {
-			nc := t.newChild(key, v, nl)
+			nc := leafHdr(nl(key))
 			*loc = addChild(n, b, nc)
 			return t.created(nc)
 		}
@@ -253,12 +255,19 @@ func (t *Tree) replace(at, par **header, pi int, items []item, depth int) {
 }
 
 // promote gives the key at sp, which has one value in its page, the leaf
-// l, which holds its key and its values. A page cannot hold the leaf, so it
-// gets a range of its own: the page is cut around the key when the key is
-// alone with its byte below a range node, else the page's keys are rebuilt
-// with the leaf in the key's place (see ranges), which gives it a range or
-// a subtree of its own.
+// l, which holds its key and its values, and lets the subtree around it fall
+// back to inner nodes if keys with several values crowd it (see settle).
 func (t *Tree) promote(sp spot, l *leafHead) {
+	t.place(sp, l)
+	t.settle(l.key())
+}
+
+// place puts the leaf l of the key at sp in the key's place. A page cannot
+// hold the leaf, so it gets a range of its own: the page is cut around the
+// key when the key is alone with its byte below a range node, else the
+// page's keys are rebuilt with the leaf in the key's place (see ranges),
+// which gives it a range or a subtree of its own.
+func (t *Tree) place(sp spot, l *leafHead) {
 	p, i, n := asPage(*sp.at), sp.i, int(asPage(*sp.at).count)
 	if n == 1 {
 		*sp.at = leafHdr(l) // the page held only this key
@@ -293,14 +302,15 @@ func (t *Tree) promote(sp spot, l *leafHead) {
 }
 
 // splitLeaf handles an insert that reaches leaf l: either it is the key's
-// leaf, or both keys go below a new node holding their common path.
-func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uint64, nl newLeafFunc) spot {
+// leaf, or both keys go below a new node holding their common path, a range
+// node in a tree with pages unless l is below an inner node.
+func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uint64, nl newLeafFunc, inner bool) spot {
 	lk := l.key()
 	if bytes.Equal(lk, key) {
 		return spot{leaf: l}
 	}
 	p := swar.Lcp(lk[depth:], key[depth:])
-	if t.small {
+	if t.small && !inner {
 		d := depth + p
 		return t.fork(loc, leafHdr(l), d == len(lk), key, depth, d, v, nl)
 	}
@@ -308,13 +318,14 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uin
 	nn.kind = kN4
 	nn.setPrefix(key[depth:depth+p], p)
 	h := attach(&nn.header, lk, depth+p, l)
-	return t.attachNew(loc, h, key, depth+p, v, nl)
+	return t.attachNew(loc, h, key, depth+p, nl)
 }
 
 // splitPrefix handles an insert whose key leaves n's compressed path pk after
-// mis bytes: a new node takes the common part, with n and the new key below.
+// mis bytes: a new node takes the common part, with n and the new key below,
+// a range node if n is one, else an inner node.
 func (t *Tree) splitPrefix(loc **header, n *header, pk []byte, mis int, key []byte, depth int, v uint64, nl newLeafFunc) spot {
-	if t.small {
+	if n.kind == kR {
 		// Below a range node, n keeps the byte it branches on in its path.
 		n.setPrefix(pk[mis:], len(pk)-mis)
 		return t.fork(loc, n, false, key, depth, depth+mis, v, nl)
@@ -325,7 +336,7 @@ func (t *Tree) splitPrefix(loc **header, n *header, pk []byte, mis int, key []by
 	old := pk[mis]
 	n.setPrefix(pk[mis+1:], len(pk)-mis-1) // pk is a copy or a leaf key: safe to read while n changes
 	h := addChild(&nn.header, old, n)
-	return t.attachNew(loc, h, key, depth+mis, v, nl)
+	return t.attachNew(loc, h, key, depth+mis, nl)
 }
 
 // fork puts a range node with the path key[depth:d] at *loc, in a tree with
@@ -354,17 +365,17 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d i
 	return t.created(nc)
 }
 
-// attachNew adds the new key below node h at key depth d, as h's term leaf if
-// it ends there, else as a new child, and stores h or its grown replacement
-// in *loc.
-func (t *Tree) attachNew(loc **header, h *header, key []byte, d int, v uint64, nl newLeafFunc) spot {
+// attachNew adds the new key below the inner node h at key depth d, as h's
+// term leaf if it ends there, else as a new leaf, and stores h or its grown
+// replacement in *loc.
+func (t *Tree) attachNew(loc **header, h *header, key []byte, d int, nl newLeafFunc) spot {
 	if d == len(key) {
 		h.term = nl(key)
 		*loc = h
 		t.size++
 		return spot{leaf: h.term, created: true}
 	}
-	c := t.newChild(key, v, nl)
+	c := leafHdr(nl(key))
 	*loc = addChild(h, key[d], c)
 	return t.created(c)
 }
