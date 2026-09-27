@@ -14,12 +14,18 @@
 //     paths are skipped optimistically and verified against the full key,
 //     which every leaf holds (lazy expansion: a subtree with one key is just
 //     its leaf).
-//   - Every object is 64, 128, 256 or 512 bytes, Go size classes aligned to
-//     their size, except the rare 256-way node. Keys end either in a generic
-//     leaf (64 B for uint64 values: the key inline up to 16 bytes or as a
-//     separate string, and the key's value set) or in a page that holds all
-//     keys of a subtree (see page.go). Which one a key gets depends on its
-//     length and on its values, never on anything the caller declares.
+//   - Nodes and pages are 64, 128, 256 or 512 bytes, Go size classes aligned
+//     to their size, except the rare 256-way node. Keys end either in a
+//     generic leaf or in a page that holds all keys of a subtree (see
+//     page.go). Which one a key gets depends on its length and on its values,
+//     never on anything the caller declares.
+//   - A leaf holds its key inline, in the smallest of four size classes (16,
+//     32, 48 or 64 bytes) that fits, and its values right after it; only a
+//     longer key is a separate string. Comparing a key at the leaf therefore
+//     costs no second pointer chase, and a leaf with uint64 values fills a Go
+//     size class (64 B for integer keys, one cache line). Leaves of 64 and
+//     128 bytes, with keys of up to 80 bytes inline, were measured against
+//     this: no faster, and 18 to 27% more memory for text keys.
 //   - A key that ends at an inner node (a prefix of other keys) is stored as
 //     that node's term leaf.
 //
@@ -66,10 +72,11 @@ const (
 	shrink256 = 48
 )
 
-// maxInline is the longest key a generic leaf holds inline; a longer key is
-// held as a string, which costs a separate allocation and a pointer chase on
-// every comparison.
-const maxInline = 16
+// maxInline is the longest key a leaf holds inline, in an array of 16, 32, 48
+// or 64 bytes, whichever is the smallest that fits. A longer key is held as a
+// string, which costs a separate allocation and a pointer chase on every
+// comparison.
+const maxInline = 64
 
 // header is the common start of all inner nodes (24 B).
 type header struct {
@@ -97,7 +104,7 @@ const keyOff = unsafe.Sizeof(leafHead{})
 // keyArea is the storage of a leaf's key: inline, or a string for keys longer
 // than maxInline.
 type keyArea interface {
-	[16]byte | string
+	[16]byte | [32]byte | [48]byte | [64]byte | string
 }
 
 // leaf is a leafHead followed by its key and the values of its key. For

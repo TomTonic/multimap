@@ -54,16 +54,29 @@ func eachRaw[T comparable](raw []uint64, yield func(T) bool) bool {
 	return true
 }
 
-// newLeaf allocates a leaf holding a copy of key, inline or as a string. It
-// captures nothing, so passing it as a newLeafFunc allocates no closure.
+// newLeaf allocates a leaf holding a copy of key, in the smallest size class
+// that fits it. It captures nothing, so passing it as a newLeafFunc allocates
+// no closure.
 func newLeaf[T comparable](key []byte) *leafHead {
-	if len(key) <= maxInline {
-		l := &leaf[T, [16]byte]{}
-		copy(l.k[:], key)
-		l.init(len(key), unsafe.Offsetof(l.vals))
-		return &l.leafHead
+	switch n := len(key); {
+	case n <= 16:
+		return newInline[T, [16]byte](key)
+	case n <= 32:
+		return newInline[T, [32]byte](key)
+	case n <= 48:
+		return newInline[T, [48]byte](key)
+	case n <= maxInline:
+		return newInline[T, [64]byte](key)
 	}
 	l := &leaf[T, string]{k: string(key)}
+	l.init(len(key), unsafe.Offsetof(l.vals))
+	return &l.leafHead
+}
+
+// newInline allocates a leaf that holds key inline in an array of type K.
+func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte](key []byte) *leafHead {
+	l := &leaf[T, K]{}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), key)
 	l.init(len(key), unsafe.Offsetof(l.vals))
 	return &l.leafHead
 }

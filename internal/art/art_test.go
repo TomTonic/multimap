@@ -401,17 +401,23 @@ func leafLayout[T comparable, K keyArea]() (size, kOff, vOff uintptr) {
 // the leaf, and that leaves with uint64 values fill one 64-byte cache line.
 func TestLeafLayout(t *testing.T) {
 	type class struct{ size, kOff, vOff uintptr }
-	u64 := [2]class{}
-	u64[0].size, u64[0].kOff, u64[0].vOff = leafLayout[uint64, [16]byte]()
-	u64[1].size, u64[1].kOff, u64[1].vOff = leafLayout[uint64, string]()
-	str := [2]class{}
-	str[0].size, str[0].kOff, str[0].vOff = leafLayout[string, [16]byte]()
-	str[1].size, str[1].kOff, str[1].vOff = leafLayout[string, string]()
-
-	if u64[0].size != 64 || u64[1].size != 64 {
-		t.Errorf("leaf sizes for uint64 values = %d and %d, want 64 and 64", u64[0].size, u64[1].size)
+	classes := func(get [5]func() (uintptr, uintptr, uintptr)) (out [5]class) {
+		for i, f := range get {
+			out[i].size, out[i].kOff, out[i].vOff = f()
+		}
+		return out
 	}
-	for _, cs := range [][2]class{u64, str} {
+	u64 := classes([5]func() (uintptr, uintptr, uintptr){
+		leafLayout[uint64, [16]byte], leafLayout[uint64, [32]byte], leafLayout[uint64, [48]byte],
+		leafLayout[uint64, [64]byte], leafLayout[uint64, string]})
+	str := classes([5]func() (uintptr, uintptr, uintptr){
+		leafLayout[string, [16]byte], leafLayout[string, [32]byte], leafLayout[string, [48]byte],
+		leafLayout[string, [64]byte], leafLayout[string, string]})
+
+	if got := [5]uintptr{u64[0].size, u64[1].size, u64[2].size, u64[3].size, u64[4].size}; got != [5]uintptr{64, 80, 96, 112, 64} {
+		t.Errorf("leaf sizes for uint64 values = %v, want Go size classes [64 80 96 112 64]", got)
+	}
+	for _, cs := range [][5]class{u64, str} {
 		for i, c := range cs {
 			if c.kOff != keyOff {
 				t.Errorf("class %d: key at offset %d, want keyOff = %d", i, c.kOff, keyOff)
@@ -419,10 +425,10 @@ func TestLeafLayout(t *testing.T) {
 		}
 	}
 	if tail := leafTail[uint64](); tail >= u64[0].size {
-		t.Errorf("leafTail[uint64] = %d lies outside the leaf (%d B)", tail, u64[0].size)
+		t.Errorf("leafTail[uint64] = %d lies outside the smallest leaf (%d B)", tail, u64[0].size)
 	}
 	if tail := leafTail[string](); tail >= str[0].size {
-		t.Errorf("leafTail[string] = %d lies outside the leaf (%d B)", tail, str[0].size)
+		t.Errorf("leafTail[string] = %d lies outside the smallest leaf (%d B)", tail, str[0].size)
 	}
 
 	for _, tc := range []struct {
@@ -431,10 +437,16 @@ func TestLeafLayout(t *testing.T) {
 		class int
 	}{
 		{"empty key is inline", 0, 0},
-		{"1 byte is inline", 1, 0},
-		{"16 bytes are inline", 16, 0},
-		{"17 bytes are a string", 17, 1},
-		{"300 bytes are a string", 300, 1},
+		{"1 byte is inline in 16", 1, 0},
+		{"16 bytes are inline in 16", 16, 0},
+		{"17 bytes are inline in 32", 17, 1},
+		{"32 bytes are inline in 32", 32, 1},
+		{"33 bytes are inline in 48", 33, 2},
+		{"48 bytes are inline in 48", 48, 2},
+		{"49 bytes are inline in 64", 49, 3},
+		{"64 bytes are inline in 64", 64, 3},
+		{"65 bytes are a string", 65, 4},
+		{"300 bytes are a string", 300, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			key := make([]byte, tc.n)
@@ -452,7 +464,7 @@ func TestLeafLayout(t *testing.T) {
 				}
 			}
 			if uintptr(l.valsOff) != u64[tc.class].vOff || uintptr(ls.valsOff) != str[tc.class].vOff {
-				t.Fatalf("values at offsets %d and %d, want %d and %d (class %d)",
+				t.Fatalf("values at offsets %d and %d, want %d and %d (size class %d)",
 					l.valsOff, ls.valsOff, u64[tc.class].vOff, str[tc.class].vOff, tc.class)
 			}
 			vals[uint64](l).Add(42)

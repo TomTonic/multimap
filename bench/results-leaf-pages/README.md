@@ -87,8 +87,55 @@ values and use pages only where keys hold one value, switching automatically:
 optimistic pages, and a subtree falls back to main's structure once keys with
 several values show up in it.
 
+## After the fallback (`0b7e400`, same day)
+
+Measured again with the fallback to inner nodes (see `internal/art/settle.go`),
+with the same settings but build only up to 64K and 5 to 6 processes
+throughout; files in `fallback/`. Unique values are unchanged (same code).
+Multi values, median of the kinds, before → after:
+
+| n | point | churn | build | range | prefix |
+|---|---|---|---|---|---|
+| 4K | 0.82 → 0.97 | 0.72 → 0.91 | 0.60 → 0.87 | 0.97 → 1.00 | 0.90 → 0.98 |
+| 16K | 0.82 → 0.95 | 0.66 → 0.87 | 0.57 → 0.88 | 0.90 → 0.99 | 0.86 → 0.99 |
+| 64K | 0.66 → 0.68 | 0.59 → 0.74 | 0.60 → 0.91 | 0.72 → 0.84 | 0.78 → 0.89 |
+| 256K | 0.68 → 0.78 | 0.58 → 0.82 | – | 0.85 → 1.00 | 0.84 → 1.00 |
+| 1M | 0.71 → 0.82 | 0.57 → 0.81 | – | 0.87 → 1.02 | 0.90 → 1.06 |
+| 4M | 0.63 → 0.78 | 0.60 → 0.80 | – | 0.81 → 0.88 | 0.80 → 1.01 |
+
+The trees of multi maps end up exactly like main's (no pages, no range
+nodes left), and memory for u64 keys is identical to main's. What remains
+from 64K up comes from the leaves: main holds keys of up to 64 bytes inline
+in leaves of 64 to 112 bytes, this branch only up to 16 bytes in leaves of
+64 bytes, and nearly all text keys of the bench are longer (str 17-32, uuid
+36, email 15-34, url 51-82, path 10-300 bytes; street 25%). Each such key
+costs a separate string and a cache miss per comparison at its leaf, and
+2 to 8% more memory. K pages hold key tails beyond 16 bytes out of line in
+the same way, which fits the slower point lookups of uuid, email and str with
+unique values.
+
+## Leaf size classes, and a bias of the bench
+
+Which leaves should the multi-value keys get? Two gradings were compared on
+top of `0b7e400`, multi values only (files in `leaves/`): main's leaves of
+64, 80, 96 and 112 bytes with keys of up to 64 bytes inline (M, baseline)
+against leaves of 64 and 128 bytes with keys of up to 80 bytes inline (P).
+P needs 18 to 27% more memory for text keys (str 225 instead of 177 bytes
+per key) and is no faster: median 0.94-0.98 up to 16K, and from 256K no
+lower than the A/A test below. M was taken.
+
+The A/A test (files in `aa/`) compared P with an exact copy of itself,
+multi values, 6 processes. Point lookups measured 0.88 (u64 256K), 0.92 (u64
+1M), 0.85 (str 256K) and 0.91 (str 1M) instead of 1.0; up to 16K, identical
+code measured 1.00-1.04. The build order does not explain it (with the
+baseline built first, still 0.87-0.96). **Every head-to-head ratio from 64K up
+in this directory is biased against Ordered by roughly 5 to 15%** until the
+cause is found.
+
 ## Files
 
 - `speed-summary.md`, `mem-summary.md`: pooled tables; `speed.jsonl`,
   `mem.jsonl`: one line per comparison and process; `run.json`: settings.
 - `4m/`: the same for 4M keys.
+- `fallback/`: the run after the fallback, laid out the same way.
+- `leaves/`: P against M; `aa/`: the A/A test.
