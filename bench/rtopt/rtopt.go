@@ -19,6 +19,8 @@ var (
 	loopScale = flag.Float64("loopscale", 1, "multiply the calibrated operations per batch by this factor")
 	repeats   = flag.Int("repeats", 0, "timing samples per candidate (0: rtcompare's default)")
 	aaRuns    = flag.Int("validation", 0, "A/A validation runs per candidate (0: rtcompare's default); lower only for smoke tests")
+	bRepeats  = flag.Int("buildrepeats", 0, "timing samples per candidate of a build comparison, each a whole build (0: workload.BuildRepeats)")
+	bAARuns   = flag.Int("buildvalidation", 0, "A/A validation runs of a build comparison (0: workload.BuildValidationRuns)")
 )
 
 // Forward returns the flags of this package as command-line arguments, so a
@@ -28,7 +30,26 @@ func Forward() []string {
 		"-loopscale=" + flag.Lookup("loopscale").Value.String(),
 		"-repeats=" + flag.Lookup("repeats").Value.String(),
 		"-validation=" + flag.Lookup("validation").Value.String(),
+		"-buildrepeats=" + flag.Lookup("buildrepeats").Value.String(),
+		"-buildvalidation=" + flag.Lookup("buildvalidation").Value.String(),
 	}
+}
+
+// Plain returns the CompareOptions of -repeats and -validation for a
+// comparison whose candidates rtopt does not see, such as the steady-state
+// comparison of workload.Compare. -loopscale does not apply to it.
+func Plain() rtcompare.CompareOptions {
+	return rtcompare.CompareOptions{
+		Collect:        rtcompare.CollectOptions{MaxQuantizationError: maxQuantizationError, Repeats: *repeats},
+		ValidationRuns: *aaRuns,
+	}
+}
+
+// Build returns the CompareOptions of -buildrepeats and -buildvalidation for
+// the build comparison of workload.Compare, where every sample is a whole
+// build; zero leaves workload's defaults.
+func Build() rtcompare.CompareOptions {
+	return rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{Repeats: *bRepeats}, ValidationRuns: *bAARuns}
 }
 
 // Options returns the CompareOptions for comparing a with b under the

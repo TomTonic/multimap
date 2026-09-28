@@ -8,7 +8,7 @@ import (
 	"runtime/metrics"
 
 	"github.com/TomTonic/multimap/bench/keys"
-	"github.com/TomTonic/multimap/bench/layout"
+	"github.com/TomTonic/rtcompare"
 )
 
 // memResult is what one candidate costs the rest of the program, measured in
@@ -20,7 +20,7 @@ type memResult struct {
 	Keys           string  `json:"keys"`
 	Values         string  `json:"values"`
 	N              int     `json:"n"`
-	LayoutSeed     uint64  `json:"layout_seed"`
+	Seed           uint64  `json:"seed"`
 	HeapPerKey     float64 `json:"heap_bytes_per_key"`
 	ScanPerKey     float64 `json:"scannable_bytes_per_key"`
 	GCCPUMs        float64 `json:"gc_cpu_ms_per_cycle"`
@@ -32,10 +32,12 @@ type memResult struct {
 // removes every second key and measures the heap again. Memory is not an
 // rtcompare comparison: GC cost depends on the whole live heap, so two
 // candidates in one process would each pay for the other.
-func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, out io.Writer) error {
+func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, seed uint64, out io.Writer) error {
 	c := keys.Generate(kind, n, 0x5EED)
 	vals, offs := profileValues(c, profile, n)
-	layout.Spacer()
+	if seed != 0 {
+		defer rtcompare.PerturbHeap(seed).KeepAlive()
+	}
 	runtime.GC()
 	before := heapStats()
 	var keep any
@@ -58,6 +60,10 @@ func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, out 
 	case btreeMapC:
 		m := buildBtreeMap(c.Keys.S, vals, offs)
 		keep, remove = m, func(i int) { m.Delete(c.Keys.S[i]) }
+	case baseline:
+		m := baseKit.build(c.Keys.B, vals, offs)
+		rm := baseKit.removeKey(m)
+		keep, remove = m, func(i int) { rm(c.Keys.B[i]) }
 	default:
 		return fmt.Errorf("unknown candidate %q", impl)
 	}
@@ -74,7 +80,7 @@ func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, out 
 	runtime.KeepAlive(vals)
 	perKey := func(after, before uint64) float64 { return float64(int64(after-before)) / float64(n) }
 	return json.NewEncoder(out).Encode(memResult{
-		Impl: impl, Keys: string(kind), Values: profile, N: n, LayoutSeed: layout.Seed(),
+		Impl: impl, Keys: string(kind), Values: profile, N: n, Seed: seed,
 		HeapPerKey: perKey(full.heap, before.heap), ScanPerKey: perKey(full.scan, before.scan),
 		GCCPUMs: cpu, HalfHeapPerKey: perKey(half.heap, before.heap),
 	})

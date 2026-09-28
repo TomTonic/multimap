@@ -1,16 +1,16 @@
 // Command summarize pools the results of comparisons that ran in several
-// processes (see cmd/bench and -layoutseed) and prints one row
-// per comparison: the median difference, the 95% interval across processes,
-// the spread between processes, and how that spread compares with the
-// interval a single rtcompare run reports.
+// processes (see cmd/bench) with rtcompare.Combine and prints one row per
+// comparison: the mean difference, its 95% interval across processes, the
+// spread between processes, and how far that spread exceeds the interval a
+// single process reports.
 //
 // Usage:
 //
-//	go run ./cmd/summarize results/mm.jsonl results/hot.jsonl
+//	go run ./cmd/summarize results/speed.jsonl
 //	go run ./cmd/summarize -json results/*.jsonl
 //
-// Rows without a delta (memgc output) are skipped. Differences are relative:
-// positive means candidate A is faster.
+// Rows without a delta (memory results) are skipped. Differences are
+// relative: positive means candidate A is faster.
 package main
 
 import (
@@ -18,61 +18,67 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
-	"github.com/TomTonic/multimap/bench/stats"
+	"github.com/TomTonic/rtcompare"
 )
 
-type group struct {
-	key      string
-	deltas   []float64
-	halves   []float64
-	resolved []bool
+// measured are the fields of a result row that vary between the processes of
+// one comparison; all others name the comparison.
+var measured = map[string]bool{
+	"ns_a": true, "ns_b": true, "delta": true, "low": true, "high": true, "level": true,
+	"resolved": true, "validated": true, "noise_floor": true, "autocorr": true, "inner_loops": true,
+	"layout_seed": true, "seed": true, "process": true, "suspended_s": true, "live_heap": true, "warnings": true,
 }
 
 func main() {
 	asJSON := flag.Bool("json", false, "print JSON lines instead of a table")
 	flag.Parse()
 	var order []string
-	groups := map[string]*group{}
+	groups := map[string][]rtcompare.Report{}
 	for _, path := range flag.Args() {
 		if err := read(path, groups, &order); err != nil {
-			fmt.Fprintln(os.Stderr, "summarize:", err)
-			os.Exit(1)
+			fail(err)
 		}
 	}
 	slices.Sort(order)
 	enc := json.NewEncoder(os.Stdout)
 	if !*asJSON {
-		fmt.Println("| comparison | procs | median | 95% across procs | sd between | in-run ± | ratio | resolved |")
-		fmt.Println("|---|---:|---:|---|---:|---:|---:|---:|")
+		fmt.Println("| comparison | procs | delta | 95% across procs | sd between | inflation | I² | resolved |")
+		fmt.Println("|---|---:|---:|---|---:|---:|---:|---|")
 	}
 	for _, k := range order {
-		g := groups[k]
-		s := stats.Summarize(g.deltas, g.halves, g.resolved)
+		p, err := rtcompare.Combine(groups[k], 0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "summarize: %s: %v\n", k, err)
+			continue
+		}
 		if *asJSON {
 			if err := enc.Encode(struct {
 				Comparison string `json:"comparison"`
-				stats.Summary
-			}{k, s}); err != nil {
-				fmt.Fprintln(os.Stderr, "summarize:", err)
-				os.Exit(1)
+				rtcompare.Pooled
+			}{k, p}); err != nil {
+				fail(err)
 			}
 			continue
 		}
-		interval := "—"
-		if !math.IsNaN(s.Low) {
-			interval = fmt.Sprintf("[%+.1f, %+.1f]%%", s.Low*100, s.High*100)
-		}
-		fmt.Printf("| %s | %d | %+.1f%% | %s | %.1f pts | %.1f pts | %.1f | %d/%d |\n",
-			k, s.Procs, s.Median*100, interval, s.SD*100, s.InRun*100, s.Ratio, s.Resolved, s.Procs)
+		fmt.Printf("| %s | %d | %+.1f%% | [%+.1f, %+.1f]%% | %.1f pts | %.1f | %.2f | %v |\n",
+			k, p.Processes, p.Delta*100, p.Low*100, p.High*100, p.SpreadBetween*100, p.Inflation, p.I2, p.Resolved)
 	}
 }
 
-// read adds every result row of one JSON lines file to its comparison's group.
-func read(path string, groups map[string]*group, order *[]string) error {
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "summarize:", err)
+	os.Exit(1)
+}
+
+// read adds every result row of one JSON lines file to its comparison's
+// reports, rebuilt from the fields that rtcompare.Combine pools.
+func read(path string, groups map[string][]rtcompare.Report, order *[]string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -89,19 +95,42 @@ func read(path string, groups map[string]*group, order *[]string) error {
 		if !ok {
 			continue
 		}
-		lo, _ := row["low"].(float64)
-		hi, _ := row["high"].(float64)
+		num := func(k string) float64 { v, _ := row[k].(float64); return v }
 		res, _ := row["resolved"].(bool)
-		k := stats.GroupKey(row)
-		g := groups[k]
-		if g == nil {
-			g = &group{key: k}
-			groups[k] = g
+		val, _ := row["validated"].(bool)
+		level := num("level")
+		if level == 0 {
+			level = 0.95 // rows from before the level was recorded
+		}
+		r := rtcompare.Report{
+			NsPerOpA: num("ns_a"), NsPerOpB: num("ns_b"), Resolved: res, NoiseFloor: num("noise_floor"),
+			Validated: val || num("noise_floor") > 0,
+			Estimate:  rtcompare.Estimate{Delta: d, Low: num("low"), High: num("high"), Level: level},
+			Suspended: time.Duration(num("suspended_s") * float64(time.Second)),
+		}
+		k := groupKey(row)
+		if _, ok := groups[k]; !ok {
 			*order = append(*order, k)
 		}
-		g.deltas = append(g.deltas, d)
-		g.halves = append(g.halves, (hi-lo)/2)
-		g.resolved = append(g.resolved, res)
+		groups[k] = append(groups[k], r)
 	}
 	return sc.Err()
+}
+
+// groupKey names the comparison a decoded result row belongs to, so that the
+// rows of all its processes can be pooled. Fields are sorted, so the key does
+// not depend on field order.
+func groupKey(row map[string]any) string {
+	var parts []string
+	for k, v := range row {
+		if measured[k] || v == nil {
+			continue
+		}
+		if f, ok := v.(float64); ok { // JSON numbers: print 1048576, not 1.048576e+06
+			v = strconv.FormatFloat(f, 'f', -1, 64)
+		}
+		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+	}
+	slices.Sort(parts)
+	return strings.Join(parts, " ")
 }

@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/TomTonic/multimap/bench/keys"
+	"github.com/TomTonic/rtcompare"
+	"github.com/TomTonic/rtcompare/workload"
 )
 
 // TestPairsFor makes sure the benchmark compares exactly what a user choosing
@@ -20,6 +22,7 @@ import (
 // other candidate of the value profile in every operation, range queries on
 // the scanning candidates and builds only up to their size limits.
 func TestPairsFor(t *testing.T) {
+	withoutBaseline(t)
 	ops := []string{"valuesFor", "valuesBetween", "churn", "build"}
 	tests := []struct {
 		name    string
@@ -60,15 +63,18 @@ func TestPairsFor(t *testing.T) {
 }
 
 // TestWorkloads makes sure the index workloads behave like a database index
-// and never ask a multimap for something impossible. It covers the build and
-// churn workloads of the benchmark driver for both value profiles: every
-// insertion adds a value the key does not hold, every deletion removes a
-// value inserted earlier, insertions and deletions interleave, the ratio of
-// insertions to final values is as requested, and the multimap ends up
-// holding exactly the corpus. With unique values, no key ever holds two
-// values, up to the largest ratio the driver accepts.
+// and never ask a multimap for something impossible. It covers how the
+// benchmark driver turns rtcompare's workload streams into insertions and
+// deletions of values (see newPairs), for both value profiles: every
+// insertion adds a value the key does not hold, every deletion removes one
+// it holds, the multimap ends up holding exactly the corpus, and with unique
+// values no key ever holds two, up to the largest ratio the driver accepts.
 func TestWorkloads(t *testing.T) {
 	const n = 3000
+	type kv struct {
+		key uint32
+		val uint64
+	}
 	for _, profile := range []string{multi, unique} {
 		vals, offs := profileValues(keys.Corpus{}, profile, n)
 		corpus := map[kv]bool{}
@@ -77,55 +83,77 @@ func TestWorkloads(t *testing.T) {
 				corpus[kv{uint32(i), v}] = true
 			}
 		}
-		u := profile == unique
-		for _, r := range []float64{1, 1.5, 2, 3, maxUniqueRatio} {
-			t.Run(fmt.Sprintf("%s build with ratio %v", profile, r), func(t *testing.T) {
-				checkWorkload(t, buildWorkload(n, vals, offs, r, 1, u), map[kv]bool{}, corpus, r*float64(len(vals)), u)
-			})
-			t.Run(fmt.Sprintf("%s churn with ratio %v", profile, r), func(t *testing.T) {
-				checkWorkload(t, churnWorkload(n, vals, r, 1, u), maps.Clone(corpus), corpus, (r-1)*float64(len(vals)), u)
-			})
+		for _, r := range []float64{1.5, maxUniqueRatio, 3} {
+			if profile == unique && r > maxUniqueRatio {
+				continue
+			}
+			p := newPairs(n, vals, offs, r, profile == unique)
+			build, err := workload.Build(len(vals), workloadConfig(r))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cycle, err := workload.Cycle(len(vals), workloadConfig(r))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tt := range []struct {
+				name  string
+				ops   []workload.Op
+				start map[kv]bool
+			}{{"build", build, map[kv]bool{}}, {"churn", cycle, maps.Clone(corpus)}} {
+				t.Run(fmt.Sprintf("%s %s with ratio %v", profile, tt.name, r), func(t *testing.T) {
+					state, perKey := tt.start, map[uint32]int{}
+					for x := range state {
+						perKey[x.key]++
+					}
+					for i, op := range tt.ops {
+						x := kv{p.key[op.ID], p.val[op.ID]}
+						if del := op.Kind == workload.Delete; del != state[x] {
+							t.Fatalf("operation %d (%v): value %d of key %d present=%v", i, op.Kind, x.val, x.key, state[x])
+						}
+						if op.Kind == workload.Insert {
+							state[x] = true
+							if perKey[x.key]++; profile == unique && perKey[x.key] > 1 {
+								t.Fatalf("operation %d: key %d holds %d values", i, x.key, perKey[x.key])
+							}
+						} else {
+							delete(state, x)
+							perKey[x.key]--
+						}
+					}
+					if !maps.Equal(state, corpus) {
+						t.Errorf("ends with %d pairs, want the corpus of %d", len(state), len(corpus))
+					}
+				})
+			}
 		}
 	}
 }
 
-// checkWorkload replays ms on start and checks it against the expectations
-// of TestWorkloads; with unique, also that no key ever holds two values.
-func checkWorkload(t *testing.T, ms []mutation, start, end map[kv]bool, inserts float64, unique bool) {
-	t.Helper()
-	state, adds, switches := start, 0, 0
-	perKey := map[uint32]int{}
-	for p := range start {
-		perKey[p.key]++
+// TestResultRows makes sure speed.jsonl keeps what a later summary needs to
+// pool the processes again. It covers how the benchmark driver writes a
+// process's report as a row and rebuilds it for rtcompare.Combine: the
+// comparison's name survives, and the pooled result of the rebuilt reports is
+// the one of the originals.
+func TestResultRows(t *testing.T) {
+	p := pair{"valuesBetween", ordered, btreeMapC}
+	if got := pairOf(p.name()); got != p {
+		t.Fatalf("pairOf(%q) = %v", p.name(), got)
 	}
-	for i, m := range ms {
-		p := kv{m.key, m.val}
-		if m.del != state[p] {
-			t.Fatalf("mutation %d: del=%v but present=%v", i, m.del, state[p])
-		}
-		if m.del {
-			delete(state, p)
-			perKey[m.key]--
-		} else {
-			state[p] = true
-			perKey[m.key]++
-			adds++
-			if unique && perKey[m.key] > 1 {
-				t.Fatalf("mutation %d: key %d holds %d values", i, m.key, perKey[m.key])
-			}
-		}
-		if i > 0 && m.del != ms[i-1].del {
-			switches++
-		}
+	var orig, back []rtcompare.Report
+	for i, d := range []float64{0.10, 0.12, 0.08, 0.11} {
+		r := rtcompare.Report{NsPerOpA: 90, NsPerOpB: 100, Resolved: true, Validated: true, NoiseFloor: 0.01,
+			Estimate: rtcompare.Estimate{Delta: d, Low: d - 0.01, High: d + 0.01, Level: 0.95}}
+		orig = append(orig, r)
+		back = append(back, reportOf(rowOf("u64", multi, 4096, p, i+1, uint64(i), r)))
 	}
-	if !maps.Equal(state, end) {
-		t.Errorf("ends with %d pairs, want the corpus of %d", len(state), len(end))
+	want, err := rtcompare.Combine(orig, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if math.Abs(float64(adds)-inserts) > 1 {
-		t.Errorf("%d insertions, want %.0f", adds, inserts)
-	}
-	if inserts > float64(len(end)) && switches < adds/100 {
-		t.Errorf("only %d switches between inserting and deleting in %d mutations", switches, len(ms))
+	got, err := rtcompare.Combine(back, 0)
+	if err != nil || got.Delta != want.Delta || got.Low != want.Low || got.High != want.High || got.Resolved != want.Resolved {
+		t.Errorf("rebuilt reports pool to %+v, %v; want %+v", got, err, want)
 	}
 }
 
@@ -154,12 +182,14 @@ func TestValidate(t *testing.T) {
 		c       config
 		wantErr bool
 	}{
-		{"accepts the defaults", config{profiles: []string{multi, unique}, ops: []string{"churn"}, ratio: 2}, false},
-		{"rejects an unknown profile", config{profiles: []string{"few"}, ratio: 2}, true},
-		{"rejects a ratio below 1", config{profiles: []string{multi}, ratio: 0.5}, true},
-		{"rejects churn with ratio 1", config{profiles: []string{multi}, ops: []string{"churn"}, ratio: 1}, true},
-		{"accepts a large ratio for multi", config{profiles: []string{multi}, ratio: 10}, false},
-		{"rejects a ratio beyond the key pool for unique", config{profiles: []string{unique}, ratio: maxUniqueRatio + 1}, true},
+		{"accepts the defaults", config{profiles: []string{multi, unique}, ops: []string{"churn"}, ratio: 2, minProcs: 5, maxProcs: 5}, false},
+		{"rejects fewer than three processes", config{profiles: []string{multi}, ratio: 2, minProcs: 2, maxProcs: 5}, true},
+		{"rejects fewer processes at most than at least", config{profiles: []string{multi}, ratio: 2, minProcs: 6, maxProcs: 5}, true},
+		{"rejects an unknown profile", config{profiles: []string{"few"}, ratio: 2, minProcs: 5, maxProcs: 5}, true},
+		{"rejects a ratio below 1", config{profiles: []string{multi}, ratio: 0.5, minProcs: 5, maxProcs: 5}, true},
+		{"rejects churn with ratio 1", config{profiles: []string{multi}, ops: []string{"churn"}, ratio: 1, minProcs: 5, maxProcs: 5}, true},
+		{"accepts a large ratio for multi", config{profiles: []string{multi}, ratio: 10, minProcs: 5, maxProcs: 5}, false},
+		{"rejects a ratio beyond the extra keys for unique", config{profiles: []string{unique}, ratio: maxUniqueRatio + 1, minProcs: 5, maxProcs: 5}, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := tt.c.validate(); (err != nil) != tt.wantErr {
@@ -196,83 +226,24 @@ func TestMedian(t *testing.T) {
 	}
 }
 
-// TestScenarioRows makes sure a run continued with -continue picks up
-// exactly where the earlier run of a scenario stopped. It covers how the
-// benchmark driver finds a scenario's earlier processes in speed.jsonl: only
-// rows of the same key kind, value profile, size and planned comparisons
-// count, and the number of processes run is the highest layout seed.
-func TestScenarioRows(t *testing.T) {
-	ps := pairsFor(keys.U64, 1<<20, multi, []string{"valuesFor"}, 1<<16, 1<<16)
-	row := func(keys, values string, n int, op, b string, seed uint64) result {
-		return result{Keys: keys, Values: values, N: n, Op: op, A: ordered, B: b, LayoutSeed: seed}
-	}
-	prior := []result{
-		row("u64", multi, 1<<20, "valuesFor", hashed, 1),
-		row("u64", multi, 1<<20, "valuesFor", mapSets, 20),
-		row("u64", multi, 1<<20, "churn", hashed, 25),     // not planned
-		row("str", multi, 1<<20, "valuesFor", hashed, 30), // other key kind
-		row("u64", unique, 1<<20, "valuesFor", btreeMapC, 30),
-		row("u64", multi, 4096, "valuesFor", hashed, 30),
-	}
-	for _, tt := range []struct {
-		name     string
-		kind     string
-		wantRows int
-		wantDone int
-	}{
-		{"counts only the scenario's planned comparisons", "u64", 2, 20},
-		{"starts from scratch when the scenario never ran", "none", 0, 0},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			rows, done := scenarioRows(prior, tt.kind, multi, 1<<20, ps)
-			if len(rows) != tt.wantRows || done != tt.wantDone {
-				t.Errorf("%d rows, %d processes; want %d and %d", len(rows), done, tt.wantRows, tt.wantDone)
-			}
-		})
-	}
-}
-
-// TestReadLines makes sure a continued run finds the results of the run it
-// continues, and that a fresh run starts from nothing. It covers how the
-// benchmark driver reads speed.jsonl: every line is one result, and a
-// missing file holds none.
+// TestReadLines makes sure the summary finds every result of a run, and that
+// a run without results reads as none. It covers how the benchmark driver
+// reads speed.jsonl: every line is one result, and a missing file holds none.
 func TestReadLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "speed.jsonl")
 	if rows, err := readLines[result](path); err != nil || rows != nil {
 		t.Fatalf("missing file: %v, %v; want no rows and no error", rows, err)
 	}
-	if err := os.WriteFile(path, []byte(`{"keys":"u64","layout_seed":3}`+"\n"+`{"keys":"str","layout_seed":4}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"keys":"u64","seed":3}`+"\n"+`{"keys":"str","seed":4}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := readLines[result](path)
-	if err != nil || len(rows) != 2 || rows[1].Keys != "str" || rows[1].LayoutSeed != 4 {
+	if err != nil || len(rows) != 2 || rows[1].Keys != "str" || rows[1].Seed != 4 {
 		t.Fatalf("got %+v, %v; want the two rows", rows, err)
 	}
 	if _, err := readLines[result](dir); err == nil {
 		t.Error("a directory must not read as results")
-	}
-}
-
-// TestContinued makes sure run.json still tells when and on what the first
-// run happened after a run continued it, and when the continuation ran. It
-// covers the run record of the benchmark driver: the continuation is
-// appended under "continued", a missing CPU name is filled in, and without
-// an earlier record the continuation's own record is written.
-func TestContinued(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "run.json")
-	info := map[string]any{"start": "later", "cpu": "Some CPU"}
-	if got := continued(path, info); got["start"] != "later" {
-		t.Errorf("without an earlier record: %v", got)
-	}
-	if err := os.WriteFile(path, []byte(`{"start":"first","cpu":"","continued":[{"start":"second"}]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got := continued(path, info)
-	list, _ := got["continued"].([]any)
-	if got["start"] != "first" || got["cpu"] != "Some CPU" || len(list) != 2 {
-		t.Errorf("got %v; want the first run with the CPU filled in and two continuations", got)
 	}
 }
 
@@ -295,12 +266,23 @@ func TestCPUInfoModel(t *testing.T) {
 	}
 }
 
+// withoutBaseline removes the baseline candidate for the rest of the test,
+// so that a test of the scenario plan counts the same pairs in a bench built
+// with the baseline tag.
+func withoutBaseline(t *testing.T) {
+	t.Helper()
+	kit := baseKit
+	baseKit = nil
+	t.Cleanup(func() { baseKit = kit })
+}
+
 // TestPairsForPrefix makes sure prefix searches are compared only where they
 // mean something: on text keys, where a user types the first characters, and
 // on the scanning candidates only while a scan of all keys stays affordable.
 // It covers the scenario plan of the benchmark driver for the prefix
 // operation.
 func TestPairsForPrefix(t *testing.T) {
+	withoutBaseline(t)
 	ops := []string{"prefix"}
 	for _, tt := range []struct {
 		name  string

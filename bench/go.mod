@@ -6,7 +6,7 @@ replace github.com/TomTonic/multimap => ../
 
 require (
 	github.com/TomTonic/multimap v0.0.0-00010101000000-000000000000
-	github.com/TomTonic/rtcompare v0.6.0
+	github.com/TomTonic/rtcompare v0.7.0
 	github.com/tidwall/btree v1.8.1
 )
 
