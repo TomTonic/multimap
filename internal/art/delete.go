@@ -33,16 +33,17 @@ func del(loc **header, key []byte, depth int) *leafHead {
 		*loc = nil
 		return l
 	}
-	if n.plen != 0 && !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
+	pl := n.pathLen(depth)
+	if pl != 0 && !swar.Match8(&n.prefix, pl, key, depth) && !swar.MatchPrefix(&n.prefix, pl, key, depth) {
 		return nil
 	}
-	d := depth + int(n.plen)
+	d := depth + pl
 	var l *leafHead
 	if d == len(key) {
-		if n.term == nil || !bytes.Equal(n.term.key(), key) {
+		if l = termOf(n); l == nil || !bytes.Equal(l.key(), key) {
 			return nil
 		}
-		l, n.term = n.term, nil
+		setTermSlot(n, nil)
 	} else {
 		b := key[d]
 		c := findLoc(n, b)
@@ -56,44 +57,46 @@ func del(loc **header, key []byte, depth int) *leafHead {
 			n = removeChild(n, b)
 		}
 	}
-	*loc = collapse(n)
+	*loc = collapse(n, pl, d+1)
 	return l
 }
 
 // collapse replaces an inner node that no longer branches: without children
-// it becomes its term leaf, and with a single child and no
-// term it merges into that child, whose compressed path grows by n's path
-// plus the child's byte. It returns what should stand in n's place.
-func collapse(n *header) *header {
+// it becomes its term leaf, and with a single child and no term it merges
+// into that child, whose compressed path grows by n's path of pl bytes plus
+// the child's byte. The child's path starts at key depth cd. It returns what
+// should stand in n's place.
+func collapse(n *header, pl, cd int) *header {
 	switch {
 	case n.count == 0:
 		// The node held only its term leaf, which holds its full key (lazy
 		// expansion). A node without a term never gets here: it collapsed
 		// when it fell to one child.
-		return leafHdr(n.term)
-	case n.count > 1 || n.term != nil:
+		return leafHdr(termOf(n))
+	case n.count > 1 || termOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
 	if c.kind == kLeaf {
 		return c
 	}
-	var buf [8]byte
-	m := copy(buf[:], n.prefix[:min(n.plen, 8)])
-	if m < 8 {
+	cl := c.pathLen(cd)
+	var buf [swar.PrefixLen]byte
+	m := copy(buf[:], n.prefix[:min(pl, swar.PrefixLen)])
+	if m < swar.PrefixLen {
 		buf[m] = b
 		m++
-		copy(buf[m:], c.prefix[:min(c.plen, 8)])
+		copy(buf[m:], c.prefix[:min(cl, swar.PrefixLen)])
 	}
 	c.prefix = buf
-	c.plen += n.plen + 1
+	c.plen = uint16(min(pl+1+cl, longPath))
 	return c
 }
 
-// onlyChild returns the single child of n. Only a 4-way node can fall to one
+// onlyChild returns the single child of n. Only a 5-way node can fall to one
 // child: every larger kind shrinks into the next smaller one well before.
 func onlyChild(n *header) (byte, *header) {
-	x := asN4(n)
+	x := asN5(n)
 	return x.keys[0], x.child[0]
 }
 
@@ -102,7 +105,7 @@ func onlyChild(n *header) (byte, *header) {
 // threshold. It returns n or its replacement.
 func removeChild(n *header, b byte) *header {
 	switch n.kind {
-	case kN25, kN57:
+	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		r := swar.Rank(bm, b)
 		copy(child[r:n.count-1], child[r+1:n.count])
@@ -110,16 +113,17 @@ func removeChild(n *header, b byte) *header {
 		child[n.count] = nil
 		bm[b>>6] &^= uint64(1) << (b & 63)
 		switch {
-		case n.kind == kN57 && n.count <= shrink57:
-			x := asN57(n)
-			y := &node25{header: x.header, bitmap: x.bitmap}
-			y.kind = kN25
+		case n.kind == kN58 && n.count <= shrink58:
+			x := asN58(n)
+			y := &node26{header: x.header, bitmap: x.bitmap}
+			y.kind = kN26
 			copy(y.child[:], x.child[:x.count])
+			setTermSlot(&y.header, termOf(n))
 			return &y.header
-		case n.kind == kN25 && n.count <= shrink25:
-			x := asN25(n)
-			y := &node11{header: x.header}
-			y.kind = kN11
+		case n.kind == kN26 && n.count <= shrink26:
+			x := asN26(n)
+			y := &node12{header: x.header}
+			y.kind = kN12
 			copy(y.child[:], x.child[:x.count])
 			i := 0
 			for k := range 256 {
@@ -128,15 +132,16 @@ func removeChild(n *header, b byte) *header {
 					i++
 				}
 			}
+			setTermSlot(&y.header, termOf(n))
 			return &y.header
 		}
 		return n
 	case kN256:
 		x := asN256(n)
 		x.child[b] = nil
-		x.count--
-		if x.count <= shrink256 {
-			return n256To57(x)
+		x.total--
+		if x.total <= shrink256 {
+			return n256To58(x)
 		}
 		return n
 	}
@@ -150,26 +155,30 @@ func removeChild(n *header, b byte) *header {
 	copy(child[i:last], child[i+1:])
 	child[last] = nil
 	n.count--
-	if n.kind == kN11 && n.count <= shrink11 {
-		y := &node4{header: *n}
-		y.kind = kN4
+	if n.kind == kN12 && n.count <= shrink12 {
+		y := &node5{header: *n}
+		y.kind = kN5
 		copy(y.keys[:], keys[:last])
 		copy(y.child[:], child[:last])
+		setTermSlot(&y.header, termOf(n))
 		return &y.header
 	}
 	return n
 }
 
-func n256To57(x *node256) *header {
-	y := &node57{header: x.header}
-	y.kind = kN57
+// n256To58 copies a 256-way node that has fallen to shrink256 byte children
+// into a 58-way node.
+func n256To58(x *node256) *header {
+	y := &node58{header: x.header}
+	y.kind, y.count = kN58, uint8(x.total)
 	i := 0
-	for k, c := range x.child {
+	for k, c := range x.child[:256] {
 		if c != nil {
 			swar.Set(&y.bitmap, byte(k))
 			y.child[i] = c
 			i++
 		}
 	}
+	setTermSlot(&y.header, termOf(&x.header))
 	return &y.header
 }

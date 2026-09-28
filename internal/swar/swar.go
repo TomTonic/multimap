@@ -48,19 +48,46 @@ func Has(bm *[4]uint64, b byte) bool {
 // Set sets bit b.
 func Set(bm *[4]uint64, b byte) { bm[(b>>6)&3] |= uint64(1) << (b & 63) }
 
+// PrefixLen is the number of path bytes an inner node stores.
+const PrefixLen = 12
+
 // MatchPrefix reports whether key[depth:] can pass a node whose compressed path
-// has length plen and whose first min(plen, 8) bytes are stored in prefix. Bytes
-// beyond the eighth are not checked here (optimistic path compression); the
-// full-key comparison at the leaf catches a mismatch there. plen must be > 0.
-func MatchPrefix(prefix *[8]byte, plen int, key []byte, depth int) bool {
+// has length plen and whose first min(plen, PrefixLen) bytes are stored in
+// prefix. Bytes beyond those are not checked here (optimistic path
+// compression); the full-key comparison at the leaf catches a mismatch there.
+// plen must be > 0.
+func MatchPrefix(prefix *[PrefixLen]byte, plen int, key []byte, depth int) bool {
 	rest := len(key) - depth
 	if rest < plen {
 		return false
 	}
-	m := min(plen, 8)
-	if rest >= 8 {
-		x := binary.LittleEndian.Uint64(key[depth:]) ^ binary.LittleEndian.Uint64(prefix[:])
-		return x&(^uint64(0)>>(64-8*m)) == 0
+	m := min(plen, PrefixLen)
+	if m <= 8 && rest >= 8 {
+		return Match8(prefix, m, key, depth)
+	}
+	return matchLong(prefix, m, key, depth)
+}
+
+// Match8 is the common case of MatchPrefix, small enough to inline into the
+// descent: it reports whether a path of plen <= 8 bytes matches a key that has
+// at least 8 bytes from depth on. It returns false whenever either condition
+// does not hold, so a caller falls back to MatchPrefix then.
+func Match8(prefix *[PrefixLen]byte, plen int, key []byte, depth int) bool {
+	if plen > 8 || len(key)-depth < 8 {
+		return false
+	}
+	x := binary.LittleEndian.Uint64(key[depth:]) ^ binary.LittleEndian.Uint64(prefix[:8])
+	return x&(^uint64(0)>>(64-8*plen)) == 0
+}
+
+// matchLong compares the first m bytes of prefix with key[depth:], which has
+// at least m bytes, where Match8 does not apply.
+func matchLong(prefix *[PrefixLen]byte, m int, key []byte, depth int) bool {
+	if len(key)-depth >= PrefixLen {
+		k := key[depth:]
+		x := binary.LittleEndian.Uint64(k) ^ binary.LittleEndian.Uint64(prefix[:8])
+		y := binary.LittleEndian.Uint32(k[8:]) ^ binary.LittleEndian.Uint32(prefix[8:])
+		return x == 0 && y&(^uint32(0)>>(32-8*(m-8))) == 0
 	}
 	for i := range m {
 		if key[depth+i] != prefix[i] {

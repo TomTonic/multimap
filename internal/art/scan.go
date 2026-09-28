@@ -37,8 +37,9 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 	if n.kind == kLeaf {
 		return scanLeaf(asLeaf(n), b, lo, hi, fn)
 	}
-	if (lo || hi) && n.plen > 0 {
-		var buf [8]byte
+	pl := n.pathLen(depth)
+	if (lo || hi) && pl > 0 {
+		var buf [swar.PrefixLen]byte
 		pk := fullPrefix(n, depth, &buf)
 		if lo {
 			rest := b.From[depth:]
@@ -59,7 +60,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 			}
 		}
 	}
-	depth += int(n.plen)
+	depth += pl
 	// The term leaf's key is the path to n. On From's path it is below From
 	// unless the path is From itself; on To's path it is below To unless the
 	// path is To itself, in which case it is the last key in range.
@@ -68,8 +69,8 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 	if termIsFrom {
 		lo = false
 	}
-	if n.term != nil && !lo && (!termIsFrom || b.FromIncl) && (!termIsTo || b.ToIncl) {
-		if !fn(n.term) {
+	if t := termOf(n); t != nil && !lo && (!termIsFrom || b.FromIncl) && (!termIsTo || b.ToIncl) {
+		if !fn(t) {
 			return false
 		}
 	}
@@ -111,7 +112,7 @@ func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, l
 		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, fn)
 	}
 	switch n.kind {
-	case kN25, kN57:
+	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		i := swar.Rank(bm, loB)
 		for w := int(loB >> 6); w < 4; w++ {
@@ -180,7 +181,7 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 		}
 	}
 	switch n.kind {
-	case kN25, kN57:
+	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		end := swar.Rank(bm, hiB)
 		if swar.Has(bm, hiB) {

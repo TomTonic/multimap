@@ -2,6 +2,7 @@ package art
 
 import (
 	"bytes"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
 )
@@ -28,7 +29,7 @@ func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 func (t *Tree) find(key []byte) *leafHead {
 	n := t.root
 	depth := 0
-	skipped := false // whether path bytes beyond the eighth went unchecked
+	skipped := false // whether path bytes beyond the twelfth went unchecked
 	for n != nil {
 		if n.kind == kLeaf {
 			// Every key below a path starts with it, so once the whole path
@@ -43,49 +44,54 @@ func (t *Tree) find(key []byte) *leafHead {
 			return nil
 		}
 		if n.plen != 0 {
-			if !swar.MatchPrefix(&n.prefix, int(n.plen), key, depth) {
-				return nil
+			pl := int(n.plen)
+			if !swar.Match8(&n.prefix, pl, key, depth) {
+				pl = n.pathLen(depth)
+				if !swar.MatchPrefix(&n.prefix, pl, key, depth) {
+					return nil
+				}
+				if pl > swar.PrefixLen {
+					skipped = true
+				}
 			}
-			if n.plen > 8 {
-				skipped = true
-			}
-			depth += int(n.plen)
+			depth += pl
 		}
 		if depth == len(key) {
-			if n.term == nil {
+			t := termOf(n)
+			if t == nil {
 				return nil
 			}
-			n = leafHdr(n.term)
+			n = leafHdr(t)
 			continue
 		}
 		b := key[depth]
 		depth++
 		switch n.kind {
-		case kN4:
-			x := asN4(n)
+		case kN5:
+			x := asN5(n)
 			i := swar.Index8(swar.Word(x.keys[:]), b)
 			if i >= int(x.count) {
 				return nil
 			}
-			n = x.child[i&3]
-		case kN11:
-			x := asN11(n)
+			n = childAt(&x.child[0], i) // i < count <= 5
+		case kN12:
+			x := asN12(n)
 			i := swar.Index8(swar.Word(x.keys[0:8]), b)
 			if i == 8 {
 				i = 8 + swar.Index8(swar.Word(x.keys[8:16]), b)
 			}
-			if i >= int(x.count) || i >= 11 {
+			if i >= int(x.count) {
 				return nil
 			}
-			n = x.child[i]
-		case kN25:
-			x := asN25(n)
+			n = childAt(&x.child[0], i) // i < count <= 12
+		case kN26:
+			x := asN26(n)
 			if !swar.Has(&x.bitmap, b) {
 				return nil
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
-		case kN57:
-			x := asN57(n)
+		case kN58:
+			x := asN58(n)
 			if !swar.Has(&x.bitmap, b) {
 				return nil
 			}
@@ -97,10 +103,17 @@ func (t *Tree) find(key []byte) *leafHead {
 	return nil
 }
 
+// childAt returns the i-th child from the first child slot c on, without the
+// bounds check the compiler cannot prove away: the callers have checked i
+// against the node's count, which never exceeds its slots.
+func childAt(c **header, i int) *header {
+	return *(**header)(unsafe.Add(unsafe.Pointer(c), uintptr(i)*ptrSize))
+}
+
 // findLoc returns the slot holding the child for byte b, or nil.
 func findLoc(n *header, b byte) **header {
 	switch n.kind {
-	case kN25, kN57:
+	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		if swar.Has(bm, b) {
 			return &child[swar.Rank(bm, b)]
@@ -113,52 +126,68 @@ func findLoc(n *header, b byte) **header {
 		}
 		return nil
 	}
-	x := asN4(n) // a 4- and an 11-way node start alike
+	x := asN5(n) // a 5- and a 12-way node start alike
 	i := swar.Index8(swar.Word(x.keys[:]), b)
-	if i == 8 && n.kind == kN11 {
-		i = 8 + swar.Index8(swar.Word(asN11(n).keys[8:16]), b)
+	if i == 8 && n.kind == kN12 {
+		i = 8 + swar.Index8(swar.Word(asN12(n).keys[8:16]), b)
 	}
 	if i >= int(n.count) {
 		return nil
 	}
-	if n.kind == kN4 {
-		return &x.child[i&3]
+	if n.kind == kN5 {
+		return &x.child[i]
 	}
-	return &asN11(n).child[i]
+	return &asN12(n).child[i]
 }
 
 // minLeaf returns the leaf with the smallest key below n.
 func minLeaf(n *header) *leafHead {
 	for n.kind != kLeaf {
-		if n.term != nil {
-			return n.term // a prefix of every other key below n
+		if t := termOf(n); t != nil {
+			return t // a prefix of every other key below n
 		}
-		switch n.kind {
-		case kN25, kN57:
-			_, child := bitmapOf(n)
-			n = child[0]
-		case kN256:
-			for _, c := range asN256(n).child {
-				if c != nil {
-					n = c
-					break
-				}
-			}
-		default:
-			_, child := sorted(n)
-			n = child[0]
+		if n.kind == kN256 {
+			n = asN256(n).child[firstChild(asN256(n), 0)]
+			continue
 		}
+		n = slots(n)[0]
 	}
 	return asLeaf(n)
 }
 
+// maxLeaf returns the leaf with the largest key below n.
+func maxLeaf(n *header) *leafHead {
+	for n.kind != kLeaf {
+		if n.kind == kN256 {
+			x := asN256(n)
+			k := 255
+			for x.child[k] == nil {
+				k--
+			}
+			n = x.child[k]
+			continue
+		}
+		n = slots(n)[n.count-1]
+	}
+	return asLeaf(n)
+}
+
+// firstChild returns the smallest byte from b on that has a child in x; x
+// must have one.
+func firstChild(x *node256, b int) int {
+	for x.child[b] == nil {
+		b++
+	}
+	return b
+}
+
 // fullPrefix returns the complete compressed path of n, whose first byte is
-// at key depth depth. Paths longer than the 8 bytes stored inline are read
+// at key depth depth. Paths longer than the 12 bytes stored inline are read
 // from a leaf below n; buf backs the result otherwise.
-func fullPrefix(n *header, depth int, buf *[8]byte) []byte {
-	if n.plen <= 8 {
+func fullPrefix(n *header, depth int, buf *[swar.PrefixLen]byte) []byte {
+	if n.plen <= swar.PrefixLen {
 		*buf = n.prefix
 		return buf[:n.plen]
 	}
-	return minLeaf(n).key()[depth : depth+int(n.plen)]
+	return minLeaf(n).key()[depth : depth+n.pathLen(depth)]
 }

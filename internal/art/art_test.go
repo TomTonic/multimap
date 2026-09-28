@@ -16,10 +16,11 @@ import (
 type valset = vset.Set[uint64]
 
 // keySets returns key corpora that exercise every structural case: keys that
-// are prefixes of other keys, the empty key, keys longer than the 8 inline
-// path bytes, keys of every length from 0 to 99 (every size class of the
-// leaves and beyond), zero bytes, dense and sparse integers (which drive nodes
-// through every kind), and shared string prefixes.
+// are prefixes of other keys, the empty key, paths longer than the 12 inline
+// bytes and longer than the 64K a header can count, keys of every length from
+// 0 to 99 (every size class of the leaves and beyond), zero bytes, dense and
+// sparse integers (which drive nodes through every kind), nodes whose slots a
+// term fills up, and shared string prefixes.
 func keySets() map[string][][]byte {
 	r := rand.New(rand.NewPCG(1, 2))
 	sets := map[string][][]byte{}
@@ -50,13 +51,30 @@ func keySets() map[string][][]byte {
 
 	var wide [][]byte
 	long := []byte("a-compressed-path-longer-than-sixteen-bytes/")
-	for _, fan := range []int{3, 10, 24, 56, 256} {
+	for _, fan := range []int{3, 4, 5, 10, 11, 12, 24, 25, 26, 56, 57, 58, 256} {
 		p := append(append([]byte(nil), long...), byte(fan))
+		wide = append(wide, p) // a term next to fan children: fills the node's last slot
 		for b := range fan {
 			wide = append(wide, append(append(p[:len(p):len(p)], byte(b)), "tail"...))
 		}
 	}
 	sets["long-prefix-wide"] = append(wide, long[:20], append(long[:30:30], 'Z'))
+
+	// Paths of 64K bytes and more, which the header marks as longPath: a
+	// long path with a term, a split inside it, a 256-way node below it, and
+	// two paths of 40,000 bytes that merge into one of 80,001 once the key
+	// between them goes.
+	x, y := bytes.Repeat([]byte("x"), 70000), bytes.Repeat([]byte("y"), 40000)
+	long64k := [][]byte{
+		x, append(x[:len(x):len(x)], 'a'), append(x[:len(x):len(x)], 'b'), append(x[:len(x):len(x)], "bc"...),
+		append(x[:69000:69000], 'z'),
+		slices.Concat(y, []byte("a"), y, []byte("1")), slices.Concat(y, []byte("a"), y, []byte("2")),
+		slices.Concat(y, []byte("b")),
+	}
+	for b := range 64 {
+		long64k = append(long64k, slices.Concat(x, []byte{'c', byte(b)}))
+	}
+	sets["paths-over-64k"] = long64k
 
 	var small [][]byte
 	for range 6000 {
@@ -434,6 +452,32 @@ func TestLeafLayout(t *testing.T) {
 	}
 }
 
+// TestNodeLayout makes sure that the inner nodes of multimap.Ordered stay the
+// cache-line sized objects the tree is designed around: every node kind of
+// the adaptive radix tree fills a Go size class of 64, 128, 256 or 512 bytes
+// (the 256-way node excepted), behind a 16-byte header shared by all kinds,
+// and the kind byte sits where leaves keep theirs.
+func TestNodeLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  uintptr
+		want uintptr
+	}{
+		{"header", unsafe.Sizeof(header{}), 16},
+		{"5-way node", unsafe.Sizeof(node5{}), 64},
+		{"12-way node", unsafe.Sizeof(node12{}), 128},
+		{"26-way node", unsafe.Sizeof(node26{}), 256},
+		{"58-way node", unsafe.Sizeof(node58{}), 512},
+		{"256-way node", unsafe.Sizeof(node256{}), 2080},
+		{"kind at the start of a node", unsafe.Offsetof(header{}.kind), 0},
+		{"kind at the start of a leaf", unsafe.Offsetof(leafHead{}.kind), 0},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s: %d bytes, want %d", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
 // checkInvariants walks the whole tree and fails on any node that violates
 // the structure insert and delete must maintain.
 func checkInvariants(t *testing.T, tr *Tree) {
@@ -459,25 +503,47 @@ func checkNode(t *testing.T, n *header, depth int) int {
 		}
 		return 1
 	}
-	limits := map[kind][2]int{kN4: {1, 4}, kN11: {shrink11 + 1, 11}, kN25: {shrink25 + 1, 25},
-		kN57: {shrink57 + 1, 57}, kN256: {shrink256 + 1, 256}}[n.kind]
-	if lo, hi := limits[0], limits[1]; int(n.count) < lo || int(n.count) > hi {
-		t.Fatalf("kind %d holds %d children, allowed %d..%d", n.kind, n.count, lo, hi)
+	limits := map[kind][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
+		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256}}[n.kind]
+	count, term := int(n.count), termOf(n)
+	if n.kind == kN256 {
+		if n.count != 255 {
+			t.Fatalf("256-way node with header count %d, want 255", n.count)
+		}
+		count = int(asN256(n).total)
 	}
-	if int(n.count)+b2i(n.term != nil) < 2 {
-		t.Fatalf("node does not branch (count %d, term %v): it should have collapsed", n.count, n.term != nil)
+	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
+		t.Fatalf("kind %d holds %d children, allowed %d..%d", n.kind, count, lo, hi)
 	}
-	end := depth + int(n.plen)
+	if count+b2i(term != nil) < 2 {
+		t.Fatalf("node does not branch (count %d, term %v): it should have collapsed", count, term != nil)
+	}
+	if s := slots(n); n.kind != kN256 {
+		if count+b2i(term != nil) > len(s) {
+			t.Fatalf("kind %d holds %d children and a term in %d slots", n.kind, count, len(s))
+		}
+		for i := count; i < len(s)-1; i++ {
+			if s[i] != nil {
+				t.Fatalf("kind %d: unused slot %d is not empty", n.kind, i)
+			}
+		}
+	}
+	pl := n.pathLen(depth)
+	if want := uint16(min(pl, longPath)); n.plen != want {
+		t.Fatalf("plen %d for a path of %d bytes, want %d", n.plen, pl, want)
+	}
+	end := depth + pl
+	m := min(pl, len(n.prefix))
 	checkKey := func(k []byte) {
-		if len(k) < end || !bytes.Equal(k[depth:depth+min(int(n.plen), 8)], n.prefix[:min(n.plen, 8)]) {
-			t.Fatalf("key %q does not match the node path at depth %d (plen %d)", k, depth, n.plen)
+		if len(k) < end || !bytes.Equal(k[depth:depth+m], n.prefix[:m]) {
+			t.Fatalf("key %q does not match the node path at depth %d (plen %d)", k, depth, pl)
 		}
 	}
 	leaves := 0
-	if n.term != nil {
-		checkKey(n.term.key())
-		if len(n.term.key()) != end {
-			t.Fatalf("term key %q does not end at depth %d", n.term.key(), end)
+	if term != nil {
+		checkKey(term.key())
+		if len(term.key()) != end {
+			t.Fatalf("term key %q does not end at depth %d", term.key(), end)
 		}
 		leaves++
 	}
@@ -497,15 +563,15 @@ func checkNode(t *testing.T, n *header, depth int) int {
 		})
 		leaves += checkNode(t, c, end+1)
 	})
-	if children != int(n.count) {
-		t.Fatalf("count %d but %d children", n.count, children)
+	if children != count {
+		t.Fatalf("count %d but %d children", count, children)
 	}
 	return leaves
 }
 
 func eachChild(n *header, fn func(byte, *header)) {
 	switch n.kind {
-	case kN25, kN57:
+	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		i := 0
 		for k := range 256 {
@@ -515,7 +581,7 @@ func eachChild(n *header, fn func(byte, *header)) {
 			}
 		}
 	case kN256:
-		for k, c := range asN256(n).child {
+		for k, c := range asN256(n).child[:256] {
 			if c != nil {
 				fn(byte(k), c)
 			}
@@ -533,8 +599,8 @@ func walkLeaves(n *header, fn func(*leafHead)) {
 		fn(asLeaf(n))
 		return
 	}
-	if n.term != nil {
-		fn(n.term)
+	if t := termOf(n); t != nil {
+		fn(t)
 	}
 	eachChild(n, func(_ byte, c *header) { walkLeaves(c, fn) })
 }
@@ -548,15 +614,16 @@ func b2i(b bool) int {
 
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
 // kind back down through each smaller kind to nothing, collapsing and
-// re-merging compressed paths (short and longer than 8 bytes) on the way, and
-// that the tree satisfies its invariants after every single delete.
+// re-merging compressed paths (short and longer than 12 bytes) on the way,
+// moving the term of the widest node along, and that the tree satisfies its
+// invariants after every single delete.
 func TestShrinkAndCollapse(t *testing.T) {
-	for _, prefix := range []string{"", "p", "a-path-longer-than-eight-bytes"} {
-		for _, fan := range []int{2, 4, 11, 25, 57, 256} {
+	for _, prefix := range []string{"", "p", "a-path-longer-than-twelve-bytes"} {
+		for _, fan := range []int{2, 4, 5, 11, 12, 25, 26, 57, 58, 256} {
 			t.Run(fmt.Sprintf("%q/%d", prefix, fan), func(t *testing.T) {
 				r := rand.New(rand.NewPCG(uint64(fan), 9))
 				var m Map[uint64]
-				var keys [][]byte
+				keys := [][]byte{[]byte(prefix)} // the term of the widest node
 				for b := range fan {
 					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
 						k := append([]byte(prefix), byte(b))

@@ -67,7 +67,7 @@ func TestRankAndHas(t *testing.T) {
 
 // TestMatchPrefix checks the compressed-path test of an inner node: a key can
 // pass the node only if it is long enough and its next bytes equal the stored
-// prefix, of which at most 8 bytes are compared.
+// prefix, of which at most PrefixLen bytes are compared.
 func TestMatchPrefix(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -83,17 +83,52 @@ func TestMatchPrefix(t *testing.T) {
 		{"exactly consumed", "ab", 2, "xab", 1, true},
 		{"8 byte prefix via word compare", "abcdefgh", 8, "abcdefghij", 0, true},
 		{"8 byte prefix differs in last byte", "abcdefgh", 8, "abcdefgXij", 0, false},
-		{"long prefix checks only first 8", "abcdefgh", 12, "abcdefghXXXX", 0, true},
-		{"long prefix needs full length", "abcdefgh", 12, "abcdefghXXX", 0, false},
+		{"9 byte prefix via two words", "abcdefghi", 9, "abcdefghiXYZ", 0, true},
+		{"9 byte prefix differs in ninth byte", "abcdefghi", 9, "abcdefghXXYZ", 0, false},
+		{"12 byte prefix differs in last byte", "abcdefghijkl", 12, "abcdefghijkXmn", 0, false},
+		{"12 byte prefix differs in first word", "abcdefghijkl", 12, "abcXefghijklmn", 0, false},
+		{"12 byte prefix matches at depth", "abcdefghijkl", 12, "xyabcdefghijklmn", 2, true},
+		{"long prefix checks only first 12", "abcdefghijkl", 16, "abcdefghijklXXXX", 0, true},
+		{"long prefix needs full length", "abcdefghijkl", 16, "abcdefghijklXXX", 0, false},
+		{"10 byte prefix on a short rest", "abcdefghij", 10, "xabcdefghij", 1, true},
+		{"10 byte prefix on a short rest differs", "abcdefghij", 10, "xabcdefghiX", 1, false},
 		{"word path with short prefix", "ab", 2, "abXXXXXXXX", 0, true},
 		{"word path with short prefix differing", "ab", 2, "aXXXXXXXXX", 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var p [8]byte
+			var p [PrefixLen]byte
 			copy(p[:], c.prefix)
 			if got := MatchPrefix(&p, c.plen, []byte(c.key), c.depth); got != c.want {
 				t.Fatalf("MatchPrefix = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestMatch8 checks the inlined fast path of the compressed-path test: it
+// confirms only paths of at most 8 bytes against keys with 8 bytes to spare,
+// and answers false for everything else, which the descent then hands to
+// MatchPrefix.
+func TestMatch8(t *testing.T) {
+	var p [PrefixLen]byte
+	copy(p[:], "abcdefghijkl")
+	for _, c := range []struct {
+		name  string
+		plen  int
+		key   string
+		depth int
+		want  bool
+	}{
+		{"short path matches", 3, "xabcXXXXXX", 1, true},
+		{"8 byte path matches", 8, "abcdefghZ", 0, true},
+		{"short path differs", 3, "abXXXXXXXX", 0, false},
+		{"path over 8 bytes is left to MatchPrefix", 9, "abcdefghijkl", 0, false},
+		{"key under 8 bytes is left to MatchPrefix", 3, "abc", 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Match8(&p, c.plen, []byte(c.key), c.depth); got != c.want {
+				t.Fatalf("Match8 = %v, want %v", got, c.want)
 			}
 		})
 	}
