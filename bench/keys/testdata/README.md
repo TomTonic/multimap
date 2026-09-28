@@ -1,6 +1,7 @@
 # Real-world key corpora
 
-Package `keys` embeds these files for the key kinds `street` and `path`.
+Package `keys` embeds these files for the key kinds `street`, `path` and
+`url`.
 [`cmd/mkcorpora`](../../cmd/mkcorpora/main.go) downloads their sources from
 fixed addresses and rebuilds them byte for byte; the benchmark itself never
 touches the network.
@@ -34,3 +35,27 @@ archive's `Contents` files on
 The `Contents` files are part of the freely redistributable Debian archive.
 They carry no license of their own and hold only the names of files; this
 sample keeps nothing but those names.
+
+## hosts.txt.gz
+
+The 200,000 most popular host names of
+[Tranco list 8P48V](https://tranco-list.eu/list/8P48V/1000000), with
+subdomains, one per line in rank order. The list was generated on
+2026-09-27 from the rankings of Chrome UX Report, Cloudflare Radar,
+Farsight, Majestic and Cisco Umbrella of 2026-08-29 to 2026-09-27.
+`cmd/mkcorpora` drops the few names with characters other than lowercase
+letters, digits, dashes and dots, and names over 64 bytes. The `url` kind
+combines these hosts with synthetic paths (see `../url.go`).
+
+Tranco: Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej
+Korczyński and Wouter Joosen, "Tranco: A Research-Oriented Top Sites Ranking
+Hardened Against Manipulation", *Proceedings of the 26th Network and
+Distributed System Security Symposium (NDSS 2019)*.
+
+**License:** the list combines its sources' data under their terms: Cisco
+Umbrella free of charge, Majestic under CC BY 3.0, the Chrome UX Report
+under CC BY-SA 4.0 and Cloudflare Radar under
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). This file is
+therefore made available under CC BY-NC 4.0, for non-commercial use such as
+this benchmark. The license applies to this file only, not to the code of
+this repository.

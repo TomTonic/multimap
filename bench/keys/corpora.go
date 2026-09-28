@@ -15,7 +15,7 @@ import (
 // The real-world corpora, made by cmd/mkcorpora. See testdata/README.md for
 // their sources and licenses.
 //
-//go:embed testdata/paths.txt.gz testdata/streets.tsv.gz
+//go:embed testdata/paths.txt.gz testdata/streets.tsv.gz testdata/hosts.txt.gz
 var corpora embed.FS
 
 // streets is the street corpus: names in ascending order and, for each, the
@@ -29,6 +29,7 @@ type streets struct {
 var (
 	pathCorpus   = sync.OnceValue(func() []string { return readLines("testdata/paths.txt.gz") })
 	streetCorpus = sync.OnceValue(loadStreets)
+	hostCorpus   = sync.OnceValue(func() []string { return readLines("testdata/hosts.txt.gz") })
 )
 
 // readLines returns the lines of a gzipped corpus file. The corpora are part

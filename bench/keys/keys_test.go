@@ -126,3 +126,37 @@ func TestStreetValues(t *testing.T) {
 		}
 	}
 }
+
+// TestURL makes sure the url kind looks like the web to the multimap: real
+// host names, many of them, none dominating, and a directory to search by
+// that never reaches into the query. It covers the url model of package keys
+// (url.go) over the Tranco host corpus: every key is an http or https
+// address of a host from the corpus, served with or without "www.", the most
+// frequent host holds under 2% of the keys, and Prefix ends at a slash
+// before any query.
+func TestURL(t *testing.T) {
+	known := map[string]bool{}
+	for _, h := range hostCorpus() {
+		known[h] = true
+	}
+	c := Generate(URL, 50_000, 5)
+	perHost := map[string]int{}
+	for _, k := range c.Keys.S {
+		rest, ok := strings.CutPrefix(k, "https://")
+		if !ok {
+			rest, ok = strings.CutPrefix(k, "http://")
+		}
+		host, _, slash := strings.Cut(rest, "/")
+		if !ok || !slash || !known[host] && !known[strings.TrimPrefix(host, "www.")] {
+			t.Fatalf("key %q is no address of a known host", k)
+		}
+		perHost[host]++
+		if p := string(Prefix(URL, []byte(k))); !strings.HasSuffix(p, "/") || strings.Contains(p, "?") {
+			t.Fatalf("key %q: directory %q", k, p)
+		}
+	}
+	top := slices.Max(slices.Collect(maps.Values(perHost)))
+	if len(perHost) < 10_000 || top > len(c.Keys.S)/50 {
+		t.Fatalf("%d hosts, the top one holds %d of %d keys", len(perHost), top, len(c.Keys.S))
+	}
+}
