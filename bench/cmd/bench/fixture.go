@@ -8,8 +8,8 @@ import (
 
 	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
-	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/rtcompare"
+	"github.com/TomTonic/rtcompare/multiproc"
 )
 
 // The candidates a user chooses between. "btree-sets" and "map-sets" are what
@@ -80,22 +80,21 @@ type fixture struct {
 	// keys.Prefix; text keys only)
 	from, to   keys.Set
 	pfrom, pto keys.Set
-	// index workloads: churn keys (corpus keys, then extra keys), the ratio of
-	// insertions to final values, the workloads (made on first use) and each
-	// candidate's position in the churn cycle
-	ck             keys.Set
-	ratio          float64
-	buildW, churnW []mutation
-	cur            map[string]*int
+	// index workloads (see workload.go): churn keys (corpus keys, then extra
+	// keys that only the workloads use), the ratio of insertions to final
+	// values, and the key-value pair of every workload element
+	ck    keys.Set
+	ratio float64
+	pairs pairs
 }
 
 const rangeKeys = 100
 
 // newFixture generates the corpus and its values under the value profile and
-// builds the candidates named in impls, one after another. With -layoutseed
-// the build order is shuffled and a random spacer precedes each build, so
-// that each process samples its own layout.
-func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture {
+// builds the candidates named in impls, one after another, in the order
+// arrange leaves them in. Whichever is built last can be consistently a few
+// percent faster, so the speed processes vary the order (see buildOrder).
+func newFixture(kind keys.Kind, n int, profile string, impls []string, ratio float64, arrange func([]string)) *fixture {
 	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
 	f.vals, f.offs = profileValues(f.c, profile, n)
 	builds := map[string]func(){
@@ -108,9 +107,8 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture 
 	}
 	f.others = slices.DeleteFunc(slices.Clone(impls), func(s string) bool { return s == ordered })
 	order := append([]string(nil), impls...)
-	layout.Shuffle(order)
+	arrange(order)
 	for _, name := range order {
-		layout.Spacer()
 		builds[name]()
 	}
 	f.from, f.to = ranges(f.c.Keys, n)
@@ -118,11 +116,23 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string) *fixture 
 		f.pfrom, f.pto = prefixes(kind, f.c.Keys, n)
 	}
 	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:extraKeys(profile, n)]...))
-	f.ratio, f.cur = 2, map[string]*int{}
-	for _, name := range impls {
-		f.cur[name] = new(int)
-	}
+	f.ratio = ratio
+	f.pairs = newPairs(n, f.vals, f.offs, ratio, profile == unique)
 	return f
+}
+
+// buildOrder returns how process p of a speed scenario orders the builds: two
+// candidates alternate by process, which balances exactly over a pair of
+// processes, and more are shuffled from the process's seed.
+func buildOrder(p *multiproc.Process) func([]string) {
+	return func(order []string) {
+		switch {
+		case len(order) == 2 && p.Index%2 == 1:
+			order[0], order[1] = order[1], order[0]
+		case len(order) > 2:
+			p.Rand().Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
+		}
+	}
 }
 
 // profileValues returns the values of the n keys of c under a value profile:
@@ -151,52 +161,12 @@ func profileValues(c keys.Corpus, profile string, n int) (vals []uint64, offs []
 
 // extraKeys is the number of keys that only the index workloads use: n/2 for
 // multi, where transient values also go to corpus keys; n for unique, where
-// each transient value needs a key of its own (see keyPool).
+// each transient value needs a key of its own (see newPairs).
 func extraKeys(profile string, n int) int {
 	if profile == unique {
 		return n
 	}
 	return max(1, n/2)
-}
-
-// buildWorkload returns the build workload, computing it on first use.
-func (f *fixture) buildWorkload() []mutation {
-	if f.buildW == nil {
-		f.buildW = buildWorkload(len(f.c.Keys.B), f.vals, f.offs, f.ratio, 0xB11D, f.profile == unique)
-	}
-	return f.buildW
-}
-
-// churnWorkload returns the churn cycle, computing it on first use.
-func (f *fixture) churnWorkload() []mutation {
-	if f.churnW == nil {
-		f.churnW = churnWorkload(len(f.c.Keys.B), f.vals, f.ratio, 0xC4A2, f.profile == unique)
-	}
-	return f.churnW
-}
-
-// settle plays every candidate's churn cycle to its end, untimed, so that
-// each holds exactly the corpus again before other operations are timed.
-func (f *fixture) settle() {
-	ms := f.churnWorkload()
-	for name, j := range f.cur {
-		rest := ms[*j:]
-		switch name {
-		case ordered:
-			applyOrdered(f.ord, f.ck.B, rest)
-		case hashed:
-			applyHashed(f.hsh, f.ck.B, rest)
-		case btreeSets:
-			applyBtree(f.bt, f.ck.S, rest)
-		case mapSets:
-			applyMap(f.gm, f.ck.S, rest)
-		case btreeMapC:
-			applyBtreeMap(f.bm, f.ck.S, rest)
-		case baseline:
-			baseKit.apply(f.base)(f.ck.B, rest)
-		}
-		*j = 0
-	}
 }
 
 // ranges picks the probe ranges: rangeKeys consecutive keys in key order,

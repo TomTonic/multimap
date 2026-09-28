@@ -5,6 +5,7 @@ package main
 import (
 	multimap "github.com/TomTonic/multimap/bench/baseline"
 	"github.com/TomTonic/multimap/bench/keys"
+	"github.com/TomTonic/rtcompare/workload"
 )
 
 // The kit of the baseline candidate: the same code as the ordered candidate's,
@@ -23,15 +24,13 @@ func init() {
 			return m
 		},
 		empty: func() any { return multimap.NewOrdered[uint64]() },
-		apply: func(a any) func(k [][]byte, ms []mutation) {
+		apply: func(a any, k [][]byte, key []uint32, val []uint64, run []workload.Op) {
 			m := a.(*om)
-			return func(k [][]byte, ms []mutation) {
-				for _, x := range ms {
-					if x.del {
-						m.RemoveValue(k[x.key], x.val)
-					} else {
-						m.AddValue(k[x.key], x.val)
-					}
+			for _, op := range run {
+				if op.Kind == workload.Insert {
+					m.AddValue(k[key[op.ID]], val[op.ID])
+				} else {
+					m.RemoveValue(k[key[op.ID]], val[op.ID])
 				}
 			}
 		},

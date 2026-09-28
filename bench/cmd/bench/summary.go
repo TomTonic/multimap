@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/TomTonic/multimap/bench/stats"
+	"github.com/TomTonic/rtcompare"
 )
 
 var opOrder = []string{"valuesFor", "valuesBetween", "prefix", "churn", "build"}
@@ -39,27 +39,37 @@ func writeSpeed(c config, rows []result) error {
 			strings.Compare(x.a, y.a), strings.Compare(x.b, y.b))
 	})
 	var b strings.Builder
-	b.WriteString("| values | keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | ratio | precise |\n")
+	b.WriteString("| values | keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | inflation | precise |\n")
 	b.WriteString("|---|---|---:|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---|\n")
+	var notes []string
 	for _, k := range ks {
 		g := groups[k]
-		var d, h, na, nb []float64
-		var res []bool
-		for _, r := range g {
-			d, h, res = append(d, r.Delta), append(h, (r.High-r.Low)/2), append(res, r.Resolved)
+		reps := make([]rtcompare.Report, len(g))
+		var na, nb []float64
+		for i, r := range g {
+			reps[i] = reportOf(r)
 			na, nb = append(na, r.NsA), append(nb, r.NsB)
 		}
-		s := stats.Summarize(d, h, res)
-		iv, fiv := "—", ""
-		if !math.IsNaN(s.Low) {
-			iv = fmt.Sprintf("[%+.1f%%, %+.1f%%]", s.Low*100, s.High*100)
-			fiv = fmt.Sprintf(" [%.2f, %.2f]", speedup(s.Low), speedup(s.High))
+		name := fmt.Sprintf("%s %s n=%d %s: %s vs %s", k.values, k.keys, k.n, k.op, k.a, k.b)
+		p, err := rtcompare.Combine(reps, 0)
+		if err != nil {
+			fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | — | — | — | — | — | no |\n",
+				k.values, k.keys, k.n, k.op, k.a, k.b, len(g), fmtNs(median(na)), fmtNs(median(nb)))
+			notes = append(notes, fmt.Sprintf("- %s: %v", name, err))
+			continue
 		}
-		fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | %.2f×%s | %+.1f%% | %s | %.1f pts | %.1f | %s |\n",
-			k.values, k.keys, k.n, k.op, k.a, k.b, s.Procs, fmtNs(median(na)), fmtNs(median(nb)), speedup(s.Median), fiv,
-			s.Median*100, iv, s.SD*100, s.Ratio, yesNo(s.Precise(c.abs, c.rel)))
+		fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | %.2f× [%.2f, %.2f] | %+.1f%% | [%+.1f%%, %+.1f%%] | %.1f pts | %.1f | %s |\n",
+			k.values, k.keys, k.n, k.op, k.a, k.b, p.Processes, fmtNs(median(na)), fmtNs(median(nb)),
+			speedup(p.Delta), speedup(p.Low), speedup(p.High), p.Delta*100, p.Low*100, p.High*100,
+			p.SpreadBetween*100, p.Inflation, yesNo(p.Precise(c.abs, c.rel)))
+		for _, w := range p.Warnings {
+			notes = append(notes, fmt.Sprintf("- %s: %s", name, w))
+		}
 	}
-	b.WriteString("\nA speed vs B: how many operations A completes in the time B needs for one (2.00× = twice as fast, 0.50× = half as fast), from the median difference; the bracket is its 95% interval across processes. Difference: rtcompare's relative difference, positive when A is faster. Ratio: spread between processes over the standard error one process reports.\n")
+	b.WriteString("\nA speed vs B: how many operations A completes in the time B needs for one (2.00× = twice as fast, 0.50× = half as fast), from the pooled difference; the bracket is its 95% interval across processes (rtcompare.Combine: a t interval over the per-process differences). Difference: rtcompare's relative difference, positive when A is faster. Inflation: spread between processes over the spread one process's interval implies. Churn and build come from rtcompare's workload package: churn is ns per insertion or deletion in a multimap in use, build ns per whole build.\n")
+	if len(notes) > 0 {
+		b.WriteString("\nWarnings from pooling:\n\n" + strings.Join(notes, "\n") + "\n")
+	}
 	return os.WriteFile(filepath.Join(c.out, "speed-summary.md"), []byte(b.String()), 0o644)
 }
 

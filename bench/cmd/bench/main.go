@@ -6,19 +6,20 @@
 // keys that hold exactly one value, it also compares multimap.Ordered with a
 // plain tidwall/btree.Map (-values unique).
 //
-// Every speed comparison runs in separate processes, each with its own heap
-// layout (-layoutseed), because rtcompare's interval covers only the noise
-// within one process. The driver starts at least -minprocs processes per
-// scenario and adds more until every comparison's 95% interval across
-// processes is within -abs percentage points or -rel of the difference, or
-// -maxprocs is reached. See README.md.
+// Every speed comparison runs in separate processes, through rtcompare's
+// multiproc package, because rtcompare's interval covers only the noise
+// within one process: each process perturbs its heap from its own seed and
+// builds the candidates in its own order, and the driver pools the processes
+// with rtcompare.Combine. It starts at least -minprocs processes per scenario
+// and adds more until every comparison's pooled 95% interval is within -abs
+// percentage points or -rel of the difference, or -maxprocs is reached. See
+// README.md.
 //
 // Usage:
 //
 //	go run ./cmd/bench                          # the dev suite (-suite dev)
 //	go run ./cmd/bench -suite release           # everything; takes a day
 //	go run ./cmd/bench -sizes 4096 -skipmem     # a quicker subset
-//	go run ./cmd/bench -continue -skipmem -maxprocs 40  # more processes where 20 were not enough
 //	go run -tags baseline ./cmd/bench -vs baseline      # head to head with an earlier Ordered (see cmd/mkbaseline)
 //
 // The driver re-executes its own binary for every process (-child, -memchild).
@@ -33,6 +34,7 @@ import (
 	"strings"
 
 	"github.com/TomTonic/multimap/bench/keys"
+	"github.com/TomTonic/rtcompare/multiproc"
 )
 
 type config struct {
@@ -46,9 +48,9 @@ type config struct {
 	buildMax           int
 	memN, memRounds    int
 	cycles             int
+	seed               uint64
 	out                string
 	skipSpeed, skipMem bool
-	cont               bool
 }
 
 func main() {
@@ -72,10 +74,10 @@ func main() {
 	flag.IntVar(&c.memN, "memn", 1<<20, "number of keys for the memory measurements")
 	flag.IntVar(&c.memRounds, "memrounds", 5, "processes per candidate and key kind for the memory measurements")
 	flag.IntVar(&c.cycles, "cycles", 50, "forced GC cycles to time per memory process")
+	flag.Uint64Var(&c.seed, "seed", 0, "internal: heap perturbation seed of a -memchild process (0: none)")
 	flag.StringVar(&c.out, "out", "results", "directory for results and logs")
 	flag.BoolVar(&c.skipSpeed, "skipspeed", false, "skip the speed comparisons")
 	flag.BoolVar(&c.skipMem, "skipmem", false, "skip the memory measurements")
-	flag.BoolVar(&c.cont, "continue", false, "keep the speed results in -out and add processes to them: every scenario resumes after its last process, under the same stop rule (raise -maxprocs to go on where it stopped)")
 	flag.Parse()
 	if err := applySuite(flag.CommandLine, *suite); err != nil {
 		fmt.Fprintln(os.Stderr, "bench:", err)
@@ -88,9 +90,10 @@ func main() {
 	switch {
 	case err != nil:
 	case *child:
-		err = runSpeed(keys.Kind(*kindsF), *profilesF, *n, c.ratio, pairsFor(keys.Kind(*kindsF), *n, *profilesF, c.ops, c.scanMax, c.buildMax), os.Stdout)
+		ps := pairsFor(keys.Kind(*kindsF), *n, *profilesF, c.ops, c.scanMax, c.buildMax)
+		_, err = multiproc.Run(c.procOptions(nil, nil, nil), speedSuite(keys.Kind(*kindsF), *profilesF, *n, c.ratio, ps))
 	case *memChild != "":
-		err = runMem(keys.Kind(*kindsF), *profilesF, *n, *memChild, c.cycles, os.Stdout)
+		err = runMem(keys.Kind(*kindsF), *profilesF, *n, *memChild, c.cycles, c.seed, os.Stdout)
 	default:
 		if c.sizes, err = atoiAll(split(*sizesF)); err == nil {
 			err = drive(c)
@@ -108,7 +111,7 @@ func main() {
 // A/A runs. release is the complete suite at full precision.
 var suites = map[string]map[string]string{
 	"dev": {"sizes": "4096,16384,262144", "minprocs": "3", "maxprocs": "5",
-		"validation": "2", "repeats": "41", "memn": "131072", "memrounds": "3"},
+		"validation": "2", "repeats": "41", "buildrepeats": "21", "buildvalidation": "2", "memn": "131072", "memrounds": "3"},
 	"release": {"sizes": "4096,16384,262144,1048576", "minprocs": "5", "maxprocs": "20",
 		"validation": "0", "repeats": "0", "memn": "1048576", "memrounds": "5"},
 }
@@ -140,10 +143,10 @@ func kindNames() []string {
 	return out
 }
 
-// maxUniqueRatio bounds -ratio for the unique profile: the build then keeps
-// up to about (ratio-1)/8 of the corpus's size in transient keys alive, and
-// each needs a free extra key (see keyPool).
-const maxUniqueRatio = 5
+// maxUniqueRatio bounds -ratio for the unique profile: every transient value
+// takes an extra key of its own, and there are as many extra keys as corpus
+// keys (see newPairs and extraKeys).
+const maxUniqueRatio = 2
 
 func (c *config) validate() error {
 	for _, v := range vsOnly {
@@ -162,6 +165,8 @@ func (c *config) validate() error {
 	switch {
 	case c.ratio < 1 || c.ratio == 1 && slices.Contains(c.ops, "churn"):
 		return fmt.Errorf("-ratio %v: must be at least 1, and more than 1 for churn", c.ratio)
+	case c.minProcs < 3 || c.maxProcs < c.minProcs:
+		return fmt.Errorf("-minprocs %d, -maxprocs %d: need 3 <= minprocs <= maxprocs", c.minProcs, c.maxProcs)
 	case c.ratio > maxUniqueRatio && slices.Contains(c.profiles, unique):
 		return fmt.Errorf("-ratio %v: at most %d with -values unique", c.ratio, maxUniqueRatio)
 	}

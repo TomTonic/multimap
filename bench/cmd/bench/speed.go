@@ -1,16 +1,18 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
-	"github.com/TomTonic/multimap/bench/layout"
 	"github.com/TomTonic/multimap/bench/rtopt"
 	"github.com/TomTonic/rtcompare"
+	"github.com/TomTonic/rtcompare/multiproc"
+	"github.com/TomTonic/rtcompare/workload"
 )
 
 // sink receives every batch's result, so the compiler cannot drop the work.
@@ -50,58 +52,107 @@ type result struct {
 	Op         string   `json:"op"`
 	A          string   `json:"a"`
 	B          string   `json:"b"`
+	Process    int      `json:"process"`
+	Seed       uint64   `json:"seed"`
 	NsA        float64  `json:"ns_a"`
 	NsB        float64  `json:"ns_b"`
 	Delta      float64  `json:"delta"`
 	Low        float64  `json:"low"`
 	High       float64  `json:"high"`
+	Level      float64  `json:"level"`
 	Resolved   bool     `json:"resolved"`
+	Validated  bool     `json:"validated"`
 	NoiseFloor float64  `json:"noise_floor"`
-	InnerLoops uint64   `json:"inner_loops"`
-	LayoutSeed uint64   `json:"layout_seed"`
+	SuspendedS float64  `json:"suspended_s,omitempty"`
+	LiveHeap   uint64   `json:"live_heap"`
 	Warnings   []string `json:"warnings"`
 }
 
-// runSpeed is one child process: it builds every candidate, checks that they
-// agree, runs the comparisons of the scenario and writes one JSON line per
-// comparison to out. Reports go to stderr.
-func runSpeed(kind keys.Kind, profile string, n int, ratio float64, ps []pair, out io.Writer) error {
-	f := newFixture(kind, n, profile, implsFor(profile))
-	f.ratio = ratio
-	if err := f.verify(); err != nil {
-		return err
+// name is how a speed process records the comparison of p; the scenario is
+// implied, since every multiproc run covers one scenario.
+func (p pair) name() string { return p.op + " " + p.a + " " + p.b }
+
+// pairOf parses a name made by pair.name.
+func pairOf(name string) pair {
+	f := strings.Fields(name)
+	return pair{f[0], f[1], f[2]}
+}
+
+// rowOf turns the report of one process into a row of speed.jsonl.
+func rowOf(kind, profile string, n int, p pair, process int, seed uint64, r rtcompare.Report) result {
+	return result{
+		Keys: kind, Values: profile, N: n, Op: p.op, A: p.a, B: p.b, Process: process, Seed: seed,
+		NsA: r.NsPerOpA, NsB: r.NsPerOpB, Delta: r.Estimate.Delta, Low: r.Estimate.Low, High: r.Estimate.High,
+		Level: r.Estimate.Level, Resolved: r.Resolved, Validated: r.Validated, NoiseFloor: r.NoiseFloor,
+		SuspendedS: r.Suspended.Seconds(), LiveHeap: r.LiveHeap, Warnings: slices.DeleteFunc(slices.Clone(r.Warnings), multiprocAdvice),
 	}
-	enc := json.NewEncoder(out)
-	for i, p := range ps {
-		if p.op == "build" {
-			if err := f.verifyBuild(p.a, p.b); err != nil {
+}
+
+// multiprocAdvice reports whether w is rtcompare's advice to run a large
+// comparison in several processes, which every speed process already follows.
+func multiprocAdvice(w string) bool { return strings.Contains(w, "with the multiproc package") }
+
+// reportOf turns a row back into the parts of a report that rtcompare.Combine
+// pools, so that summaries can be pooled again from speed.jsonl.
+func reportOf(r result) rtcompare.Report {
+	return rtcompare.Report{
+		NsPerOpA: r.NsA, NsPerOpB: r.NsB, Resolved: r.Resolved, Validated: r.Validated, NoiseFloor: r.NoiseFloor,
+		Estimate:  rtcompare.Estimate{Delta: r.Delta, Low: r.Low, High: r.High, Level: r.Level},
+		Suspended: time.Duration(r.SuspendedS * float64(time.Second)), LiveHeap: r.LiveHeap,
+	}
+}
+
+// speedSuite is what one speed process of a scenario measures: it builds
+// every candidate of the value profile, in the order process p calls for,
+// checks that they agree, and compares the pairs ps, recording each report
+// under the pair's name. Churn and build come from one workload.Compare per
+// pair of candidates (see workload.go). Reports go to stderr.
+func speedSuite(kind keys.Kind, profile string, n int, ratio float64, ps []pair) func(*multiproc.Process) error {
+	return func(p *multiproc.Process) error {
+		f := newFixture(kind, n, profile, implsFor(profile), ratio, buildOrder(p))
+		if err := f.verify(); err != nil {
+			return err
+		}
+		mutated := map[string]bool{}
+		for _, pr := range ps {
+			if pr.op != "churn" && pr.op != "build" {
+				a, b := f.candidate(pr.op, pr.a), f.candidate(pr.op, pr.b)
+				rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, false))
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "== %s %s n=%d %s: %s vs %s\n%s\n\n", kind, profile, n, pr.op, pr.a, pr.b, rep)
+				p.Record(pr.name(), rep)
+				continue
+			}
+			if mutated[pr.b] {
+				continue
+			}
+			mutated[pr.b] = true
+			churn, build := pair{"churn", pr.a, pr.b}, pair{"build", pr.a, pr.b}
+			wantChurn, wantBuild := slices.Contains(ps, churn), slices.Contains(ps, build)
+			if wantBuild {
+				if err := f.verifyBuild(pr.a, pr.b); err != nil {
+					return err
+				}
+			}
+			res, err := workload.Compare(len(f.vals), f.structure(pr.a), f.structure(pr.b), workload.Options{
+				Config: workloadConfig(ratio), SteadyState: rtopt.Plain(), Build: rtopt.Build(), SkipBuild: !wantBuild,
+			})
+			if err != nil {
 				return err
 			}
-		}
-		a, b := f.candidate(p.op, p.a), f.candidate(p.op, p.b)
-		fmt.Fprintf(os.Stderr, "== %s %s n=%d %s: %s vs %s\n", kind, profile, n, p.op, p.a, p.b)
-		rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, p.op == "build"))
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "%s\n\n", rep)
-		if err := enc.Encode(result{
-			Keys: string(kind), Values: profile, N: n, Op: p.op, A: p.a, B: p.b, NsA: rep.NsPerOpA, NsB: rep.NsPerOpB,
-			Delta: rep.Estimate.Delta, Low: rep.Estimate.Low, High: rep.Estimate.High,
-			Resolved: rep.Resolved, NoiseFloor: rep.NoiseFloor, InnerLoops: rep.ValidationA.InnerLoops,
-			LayoutSeed: layout.Seed(), Warnings: rep.Warnings,
-		}); err != nil {
-			return err
-		}
-		if p.op == "churn" && (i+1 == len(ps) || ps[i+1].op != "churn") {
-			f.settle()
-			if err := f.verify(); err != nil {
-				return fmt.Errorf("after churn: %w", err)
+			fmt.Fprintf(os.Stderr, "== %s %s n=%d churn and build: %s vs %s\n%s\n\n", kind, profile, n, pr.a, pr.b, res)
+			if wantChurn {
+				p.Record(churn.name(), res.SteadyState)
+			}
+			if wantBuild {
+				p.Record(build.name(), res.Build)
 			}
 		}
+		fmt.Fprintf(os.Stderr, "checksum %d\n", sink) // the batches' results stay observable
+		return nil
 	}
-	fmt.Fprintf(os.Stderr, "checksum %d\n", sink) // the batches' results stay observable
-	return nil
 }
 
 // verify makes sure all candidates answer identically before anything is
@@ -176,41 +227,21 @@ func (f *fixture) rangeSum(impl string, from, to keys.Set, i int) uint64 {
 	return baseKit.rangeSum(f.base, from.B[i], to.B[i])
 }
 
-// verifyBuild makes sure the build workload leaves both candidates with
+// verifyBuild makes sure the build stream leaves both candidates with
 // exactly the corpus: as many keys, and the same values for every key.
 func (f *fixture) verifyBuild(impls ...string) error {
-	ms, n := f.buildWorkload(), len(f.c.Keys.B)
+	ops, err := workload.Build(len(f.vals), workloadConfig(f.ratio))
+	if err != nil {
+		return err
+	}
+	n := len(f.c.Keys.B)
 	for _, impl := range impls {
-		var keys int
-		var got func(i int) uint64
-		switch impl {
-		case ordered:
-			m := multimap.NewOrdered[uint64]()
-			applyOrdered(m, f.ck.B, ms)
-			keys, got = int(m.NumberOfKeys()), func(i int) uint64 { return sum(m.ValuesForSeq(f.c.Keys.B[i])) }
-		case hashed:
-			m := multimap.NewHashed[uint64]()
-			applyHashed(m, f.ck.B, ms)
-			keys, got = int(m.NumberOfKeys()), func(i int) uint64 { return sum(m.ValuesForSeq(f.c.Keys.B[i])) }
-		case btreeSets:
-			m := &btreeMM{}
-			applyBtree(m, f.ck.S, ms)
-			keys, got = m.Len(), func(i int) uint64 { return btreeSum(m, f.c.Keys.S[i]) }
-		case mapSets:
-			m := mapMM{}
-			applyMap(m, f.ck.S, ms)
-			keys, got = len(m), func(i int) uint64 { return mapSum(m, f.c.Keys.S[i]) }
-		case btreeMapC:
-			m := &btreeMap{}
-			applyBtreeMap(m, f.ck.S, ms)
-			keys, got = m.Len(), func(i int) uint64 { v, _ := m.Get(f.c.Keys.S[i]); return v }
-		case baseline:
-			m := baseKit.empty()
-			baseKit.apply(m)(f.ck.B, ms)
-			keys, got = baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, f.c.Keys.B[i]) }
-		}
+		s := f.structure(impl)
+		m := s.New()
+		s.Apply(m, ops)
+		keys, got := f.inspect(impl, m)
 		if keys != n {
-			return fmt.Errorf("build workload leaves %s with %d keys, want %d", impl, keys, n)
+			return fmt.Errorf("build stream leaves %s with %d keys, want %d", impl, keys, n)
 		}
 		for i := range n {
 			var want uint64
@@ -218,11 +249,35 @@ func (f *fixture) verifyBuild(impls ...string) error {
 				want += v
 			}
 			if got(i) != want {
-				return fmt.Errorf("build workload leaves %s with wrong values for %q", impl, f.c.Keys.S[i])
+				return fmt.Errorf("build stream leaves %s with wrong values for %q", impl, f.c.Keys.S[i])
 			}
 		}
 	}
 	return nil
+}
+
+// inspect returns the number of keys of m, a multimap of candidate impl, and
+// a function that sums the values of corpus key i in it.
+func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
+	kb, ks := f.c.Keys.B, f.c.Keys.S
+	switch impl {
+	case ordered:
+		o := m.(*multimap.Ordered[uint64])
+		return int(o.NumberOfKeys()), func(i int) uint64 { return sum(o.ValuesForSeq(kb[i])) }
+	case hashed:
+		h := m.(*multimap.Hashed[uint64])
+		return int(h.NumberOfKeys()), func(i int) uint64 { return sum(h.ValuesForSeq(kb[i])) }
+	case btreeSets:
+		b := m.(*btreeMM)
+		return b.Len(), func(i int) uint64 { return btreeSum(b, ks[i]) }
+	case mapSets:
+		g := m.(mapMM)
+		return len(g), func(i int) uint64 { return mapSum(g, ks[i]) }
+	case btreeMapC:
+		b := m.(*btreeMap)
+		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return v }
+	}
+	return baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, kb[i]) }
 }
 
 func sum(s func(func(uint64) bool)) uint64 {

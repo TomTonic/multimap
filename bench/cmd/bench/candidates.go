@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/TomTonic/multimap"
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/rtcompare"
 )
@@ -22,10 +21,6 @@ func (f *fixture) candidate(op, impl string) rtcompare.Candidate {
 		b = f.valuesBetween(impl, f.from, f.to)
 	case "prefix":
 		b = f.valuesBetween(impl, f.pfrom, f.pto)
-	case "churn":
-		b = f.churn(impl)
-	case "build":
-		b = f.build(impl)
 	}
 	if b == nil {
 		panic(fmt.Sprintf("no %s batch for %s", op, impl))
@@ -186,107 +181,6 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 				}
 			}
 			sink += acc
-		}
-	}
-	return nil
-}
-
-// churn applies the next mutations of the churn cycle, wrapping around at
-// its end. The candidate's position persists across comparisons, because the
-// multimap is only in the matching state there.
-func (f *fixture) churn(impl string) func(uint64) {
-	ms, j := f.churnWorkload(), f.cur[impl]
-	if j == nil {
-		return nil
-	}
-	// step replays n mutations from *j on, in slices that end at the cycle's end.
-	step := func(n uint64, apply func([]mutation)) {
-		for n > 0 {
-			c := min(n, uint64(len(ms)-*j))
-			apply(ms[*j : *j+int(c)])
-			if *j += int(c); *j == len(ms) {
-				*j = 0
-			}
-			n -= c
-		}
-		sink++
-	}
-	kb, ks := f.ck.B, f.ck.S
-	switch impl {
-	case ordered:
-		m := f.ord
-		return func(n uint64) { step(n, func(s []mutation) { applyOrdered(m, kb, s) }) }
-	case baseline:
-		apply := baseKit.apply(f.base)
-		return func(n uint64) { step(n, func(s []mutation) { apply(kb, s) }) }
-	case hashed:
-		m := f.hsh
-		return func(n uint64) { step(n, func(s []mutation) { applyHashed(m, kb, s) }) }
-	case btreeSets:
-		m := f.bt
-		return func(n uint64) { step(n, func(s []mutation) { applyBtree(m, ks, s) }) }
-	case mapSets:
-		m := f.gm
-		return func(n uint64) { step(n, func(s []mutation) { applyMap(m, ks, s) }) }
-	case btreeMapC:
-		m := f.bm
-		return func(n uint64) { step(n, func(s []mutation) { applyBtreeMap(m, ks, s) }) }
-	}
-	return nil
-}
-
-// build replays the build workload on an empty multimap as one operation:
-// the corpus with as many transient values inserted and deleted in between.
-func (f *fixture) build(impl string) func(uint64) {
-	ms, kb, ks := f.buildWorkload(), f.ck.B, f.ck.S
-	switch impl {
-	case ordered:
-		return func(n uint64) {
-			for range n {
-				m := multimap.NewOrdered[uint64]()
-				applyOrdered(m, kb, ms)
-				sink += m.NumberOfKeys()
-			}
-		}
-	case baseline:
-		return func(n uint64) {
-			for range n {
-				m := baseKit.empty()
-				baseKit.apply(m)(kb, ms)
-				sink += uint64(baseKit.keys(m))
-			}
-		}
-	case hashed:
-		return func(n uint64) {
-			for range n {
-				m := multimap.NewHashed[uint64]()
-				applyHashed(m, kb, ms)
-				sink += m.NumberOfKeys()
-			}
-		}
-	case btreeSets:
-		return func(n uint64) {
-			for range n {
-				m := &btreeMM{}
-				applyBtree(m, ks, ms)
-				sink += uint64(m.Len())
-			}
-		}
-	case mapSets:
-		return func(n uint64) {
-			for range n {
-				m := mapMM{}
-				applyMap(m, ks, ms)
-				sink += uint64(len(m))
-			}
-		}
-	case btreeMapC:
-		return func(n uint64) {
-			for range n {
-				m := &btreeMap{}
-				applyBtreeMap(m, ks, ms)
-				sink += uint64(m.Len())
-			}
 		}
 	}
 	return nil

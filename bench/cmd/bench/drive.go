@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
+	"io"
 	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,12 +21,12 @@ import (
 	"github.com/TomTonic/multimap/bench/awake"
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/bench/rtopt"
-	"github.com/TomTonic/multimap/bench/stats"
+	"github.com/TomTonic/rtcompare/multiproc"
 )
 
 // drive runs the whole suite: every speed scenario with as many processes as
-// its comparisons need, then the memory measurements, and writes the raw
-// results and two summary tables to c.out.
+// its comparisons need (see driveScenario), then the memory measurements, and
+// writes the raw results and two summary tables to c.out.
 func drive(c config) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -43,26 +44,18 @@ func drive(c config) error {
 	}
 	if !c.skipSpeed {
 		path := filepath.Join(c.out, "speed.jsonl")
-		if !c.cont {
-			if err := removeIfExists(path); err != nil {
-				return err
-			}
-		}
-		prior, err := readLines[result](path)
-		if err != nil {
+		if err := removeIfExists(path); err != nil {
 			return err
 		}
 		for _, profile := range c.profiles {
 			for _, kind := range c.kinds {
 				for _, n := range c.sizes {
-					if err := driveScenario(c, self, kind, profile, n, prior); err != nil {
+					if err := driveScenario(c, kind, profile, n); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		// The summary pools the whole file: with -continue, it also holds
-		// the scenarios this run did not touch.
 		all, err := readLines[result](path)
 		if err != nil {
 			return err
@@ -83,11 +76,13 @@ func drive(c config) error {
 	return writeRunInfo(c, start)
 }
 
-// driveScenario runs speed processes for one key kind, value profile and size
-// until every comparison is precise (after at least c.minProcs) or c.maxProcs
-// is reached. The processes of prior that belong to the scenario count as
-// already run, so -continue resumes after the last of them.
-func driveScenario(c config, self, kind, profile string, n int, prior []result) error {
+// driveScenario runs the speed processes of one key kind, value profile and
+// size through multiproc: each child builds the scenario's fixture after its
+// own heap perturbation and in its own build order, and processes are added
+// until every comparison's pooled interval is precise (after at least
+// c.minProcs) or c.maxProcs have run. Every process's reports go to
+// speed.jsonl, the children's rtcompare reports to one log per scenario.
+func driveScenario(c config, kind, profile string, n int) error {
 	ps := pairsFor(keys.Kind(kind), n, profile, c.ops, c.scanMax, c.buildMax)
 	if len(ps) == 0 {
 		return nil
@@ -96,94 +91,71 @@ func driveScenario(c config, self, kind, profile string, n int, prior []result) 
 		logf("%s %s n=%d: skipped, the corpus holds keys for n <= %d", kind, profile, n, limit)
 		return nil
 	}
-	rows, done := scenarioRows(prior, kind, profile, n, ps)
-	if open, _ := imprecise(rows, c.abs, c.rel); done > 0 && (done >= c.maxProcs || done >= c.minProcs && open == 0) {
-		logf("%s %s n=%d: %d processes already run, %d of %d comparisons not yet precise", kind, profile, n, done, open, len(ps))
-		return nil
+	name := fmt.Sprintf("%s-%s-%d", kind, profile, n)
+	log, err := os.Create(filepath.Join(c.out, "logs", "speed-"+name+".log"))
+	if err != nil {
+		return err
 	}
-	for i := done + 1; i <= c.maxProcs; i++ {
-		args := []string{"-child", "-keys", kind, "-values", profile, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
-			"-scanmax", strconv.Itoa(c.scanMax), "-buildmax", strconv.Itoa(c.buildMax),
-			"-ratio", strconv.FormatFloat(c.ratio, 'g', -1, 64),
-			"-layoutseed", strconv.Itoa(i), "-vs", strings.Join(vsOnly, ",")}
-		out, err := runChild(self, append(args, rtopt.Forward()...), filepath.Join(c.out, "logs", fmt.Sprintf("speed-%s-%s-%d-p%02d.log", kind, profile, n, i)))
-		if err != nil {
-			return err
-		}
-		if err := appendFile(filepath.Join(c.out, "speed.jsonl"), out); err != nil {
-			return err
-		}
-		got, err := decodeLines[result](out)
-		if err != nil {
-			return err
-		}
-		rows = append(rows, got...)
-		open, widest := imprecise(rows, c.abs, c.rel)
-		logf("%s %s n=%d process %d: %d of %d comparisons not yet precise%s", kind, profile, n, i, open, len(ps), widest)
-		if i >= c.minProcs && open == 0 {
-			break
+	defer func() { _ = log.Close() }()
+	res, err := multiproc.Run(c.procOptions(childArgs(c, kind, profile, n), log, func(r multiproc.Results) {
+		open, widest := imprecise(r, c.abs, c.rel)
+		logf("%s %s n=%d process %d: %d of %d comparisons not yet precise%s", kind, profile, n, r.Processes, open, len(ps), widest)
+	}), speedSuite(keys.Kind(kind), profile, n, c.ratio, ps))
+	if err != nil {
+		return fmt.Errorf("%s: %w (see logs/speed-%s.log)", name, err, name)
+	}
+	var rows []result
+	for _, cmp := range res.Comparisons {
+		for i, r := range cmp.Reports {
+			rows = append(rows, rowOf(kind, profile, n, pairOf(cmp.Name), i+1, res.Seeds[i], r))
+			if r.Suspended > 0 {
+				logf("warning: the machine slept %s during process %d of %s", r.Suspended.Round(time.Second), i+1, name)
+			}
 		}
 	}
-	return nil
+	b, err := encodeLines(rows)
+	if err != nil {
+		return err
+	}
+	return appendFile(filepath.Join(c.out, "speed.jsonl"), b)
 }
 
-// scenarioRows picks the rows of prior that compare one of ps in the scenario
-// and returns them with the number of processes behind them, which is the
-// highest layout seed: the driver numbers a scenario's processes 1, 2, ...
-// and passes that number as the seed. -continue needs both to resume.
-func scenarioRows(prior []result, kind, profile string, n int, ps []pair) (rows []result, done int) {
-	for _, r := range prior {
-		if r.Keys == kind && r.Values == profile && r.N == n && slices.Contains(ps, pair{r.Op, r.A, r.B}) {
-			rows = append(rows, r)
-			done = max(done, int(r.LayoutSeed))
-		}
+// procOptions are the multiproc options of a speed scenario. The seed is
+// fixed per scenario, so that a run can be repeated process for process.
+func (c config) procOptions(args []string, log io.Writer, progress func(multiproc.Results)) multiproc.Options {
+	return multiproc.Options{
+		MinProcesses: c.minProcs, MaxProcesses: c.maxProcs, AbsPrecision: c.abs, RelPrecision: c.rel,
+		Seed: 0x5EED, Args: args, Stderr: log, Progress: progress,
 	}
-	return rows, done
 }
 
-// imprecise counts the comparisons whose interval across processes is not yet
-// tight enough and describes the widest one.
-func imprecise(rows []result, abs, rel float64) (int, string) {
+// childArgs is the command line of a scenario's speed processes.
+func childArgs(c config, kind, profile string, n int) []string {
+	args := []string{"-child", "-keys", kind, "-values", profile, "-n", strconv.Itoa(n), "-ops", strings.Join(c.ops, ","),
+		"-scanmax", strconv.Itoa(c.scanMax), "-buildmax", strconv.Itoa(c.buildMax),
+		"-ratio", strconv.FormatFloat(c.ratio, 'g', -1, 64),
+		"-minprocs", strconv.Itoa(c.minProcs), "-maxprocs", strconv.Itoa(c.maxProcs), "-vs", strings.Join(vsOnly, ",")}
+	return append(args, rtopt.Forward()...)
+}
+
+// imprecise counts the comparisons whose pooled interval is not yet tight
+// enough, or not yet pooled, and describes the widest one.
+func imprecise(r multiproc.Results, abs, rel float64) (int, string) {
 	open, worst, name := 0, 0.0, ""
-	for k, s := range summaries(rows) {
-		if s.Precise(abs, rel) {
+	for _, cmp := range r.Comparisons {
+		p := cmp.Pooled
+		if p.Processes >= 3 && p.Precise(abs, rel) {
 			continue
 		}
 		open++
-		if h := s.HalfWidth(); h > worst {
-			worst, name = h, k
+		if h := (p.High - p.Low) / 2; p.Processes >= 3 && h > worst {
+			worst, name = h, cmp.Name
 		}
 	}
-	if open == 0 {
-		return 0, ""
-	}
-	if math.IsInf(worst, 1) {
+	if name == "" {
 		return open, ""
 	}
 	return open, fmt.Sprintf("; widest ±%.1f pts: %s", worst*100, name)
-}
-
-// summaries pools the rows of each comparison across processes.
-func summaries(rows []result) map[string]stats.Summary {
-	type acc struct {
-		d, h []float64
-		r    []bool
-	}
-	g := map[string]*acc{}
-	for _, r := range rows {
-		k := fmt.Sprintf("%s %s n=%d %s %s vs %s", r.Keys, r.Values, r.N, r.Op, r.A, r.B)
-		if g[k] == nil {
-			g[k] = &acc{}
-		}
-		g[k].d = append(g[k].d, r.Delta)
-		g[k].h = append(g[k].h, (r.High-r.Low)/2)
-		g[k].r = append(g[k].r, r.Resolved)
-	}
-	out := map[string]stats.Summary{}
-	for k, a := range g {
-		out[k] = stats.Summarize(a.d, a.h, a.r)
-	}
-	return out
 }
 
 // driveMem measures every candidate of every value profile, and a baseline
@@ -205,7 +177,7 @@ func driveMem(c config, self string) error {
 		for _, kind := range c.kinds {
 			for _, jb := range order {
 				args := []string{"-memchild", jb.impl, "-keys", kind, "-values", jb.profile, "-n", strconv.Itoa(memN(c, kind)),
-					"-cycles", strconv.Itoa(c.cycles), "-layoutseed", strconv.Itoa(round)}
+					"-cycles", strconv.Itoa(c.cycles), "-seed", strconv.Itoa(round)}
 				out, err := runChild(self, args, filepath.Join(c.out, "logs", fmt.Sprintf("mem-%s-%s-%s-r%d.log", kind, jb.profile, jb.impl, round)))
 				if err != nil {
 					return err
@@ -275,6 +247,17 @@ func decodeLines[T any](b []byte) ([]T, error) {
 	return out, sc.Err()
 }
 
+func encodeLines[T any](rows []T) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	for _, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			return nil, err
+		}
+	}
+	return b.Bytes(), nil
+}
+
 // appendFile appends b to path; each process's lines are kept as they came.
 func appendFile(path string, b []byte) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -299,24 +282,19 @@ func logf(format string, args ...any) {
 	fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
-// writeRunInfo records when and on what the suite ran. With -continue, it
-// keeps the record of the run it continues and adds this one under
-// "continued".
+// writeRunInfo records when and on what the suite ran.
 func writeRunInfo(c config, start time.Time) error {
 	path := filepath.Join(c.out, "run.json")
 	info := map[string]any{
 		"start": start.Format(time.RFC3339), "end": time.Now().Format(time.RFC3339),
 		"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
-		"cpu": cpuName(), "args": os.Args[1:],
+		"cpu": cpuName(), "args": os.Args[1:], "rtcompare": rtcompareVersion(),
 		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
 		"values": c.profiles, "keys": c.kinds, "sizes": c.sizes, "ops": c.ops, "memn": c.memN,
 		"suite": flag.Lookup("suite").Value.String(), "vs": vsOnly,
 	}
 	if baseKit != nil {
 		info["baseline"] = baseKit.ref
-	}
-	if c.cont {
-		info = continued(path, info)
 	}
 	b, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
@@ -325,20 +303,16 @@ func writeRunInfo(c config, start time.Time) error {
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
-// continued returns the record in path with info appended to its
-// "continued" list, or info itself if path holds no record. A record from
-// before the CPU was known on Linux gets it now.
-func continued(path string, info map[string]any) map[string]any {
-	var old map[string]any
-	if b, err := os.ReadFile(path); err != nil || json.Unmarshal(b, &old) != nil || old == nil {
-		return info
+// rtcompareVersion is the version of rtcompare this binary was built with.
+func rtcompareVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, d := range bi.Deps {
+			if d.Path == "github.com/TomTonic/rtcompare" {
+				return d.Version
+			}
+		}
 	}
-	if cpu, _ := old["cpu"].(string); cpu == "" {
-		old["cpu"] = info["cpu"]
-	}
-	list, _ := old["continued"].([]any)
-	old["continued"] = append(list, info)
-	return old
+	return ""
 }
 
 // cpuName names the processor, so that results from different machines are
