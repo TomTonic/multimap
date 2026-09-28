@@ -34,8 +34,8 @@ stores them, so every insertion adds a value its key does not hold yet.
 - **`valuesFor`:** iterate over all values of a random existing key.
 - **`valuesBetween`:** iterate over all values of 100 consecutive keys. `hashed` and `map-sets` have no order and scan every key, so they are compared only up to 64K keys: their cost grows linearly with the number of keys.
 - **`prefix`:** iterate over all values of the keys that start with what a user searches by: the first four characters of a random key, as typed into a search field, or, for paths and URLs, the directory the key lies in. Frequent prefixes come up as often as users would search them. Text keys only; `hashed` and `map-sets` again only up to 64K keys.
-- **`churn`:** add and remove values like a database index in use. On the filled multimap, bursts of 1-16 insertions alternate with bursts of deletions of values inserted earlier. Half of the new values go to existing keys, whose value sets grow and shrink; half go to keys that appear and disappear. The cycle inserts as many values as the multimap holds (`-ratio 2`) and ends in its start state, so it repeats endlessly. Timed per insertion or deletion.
-- **`build`:** build the whole multimap from empty with the same bursts: twice as many insertions as values in the end, until exactly the corpus is left. Only up to 64K keys, because at 1M one build takes too long for a timing sample.
+- **`churn`:** add and remove values like a database index in use, as the steady-state comparison of rtcompare's [`workload`](https://pkg.go.dev/github.com/TomTonic/rtcompare/workload) package: on the filled multimap, bursts of 1-16 insertions alternate with bursts of deletions of values inserted earlier. Half of the new values go to existing keys, whose value sets grow and shrink; half go to keys that appear and disappear. The cycle inserts as many values as the multimap holds (`-ratio 2`) and ends in its start state, so it repeats endlessly; its first pass, where the multimap grows to its peak size, is played untimed. Timed per insertion or deletion.
+- **`build`:** build the whole multimap from empty with the same bursts, as the build comparison of the same `workload.Compare`: twice as many insertions as values in the end, until exactly the corpus is left. Every sample is a whole build, so it uses its own repeats (`-buildrepeats`, `-buildvalidation`). Only up to 64K keys, because at 1M one build takes too long for a timing sample.
 - **Memory**, at 1M keys (`-suite release`) or 128K keys (`-suite dev`), or fewer where a real-world corpus holds fewer keys: retained heap per key, including the keys' copies and values but excluding the input corpus. Also the CPU time of a full GC cycle while the multimap is alive, and the heap still retained after removing every second key. Go maps do not shrink.
 
 Each comparison runs with 4,096 and 16,384 keys, which fit in the CPU caches,
@@ -64,20 +64,24 @@ names have one, "Hauptstr." has 5,913.
 With `-values unique`, every key holds exactly one value, like an index on a
 unique column, and `ordered` is compared with `btree-map`. In `churn` and
 `build`, every new value then goes to a key of its own, which appears with
-the value and disappears with it: the simulation hands each new value a free
-key from a pool and takes the key back when the value is deleted.
+the value and disappears with it; there are as many such keys as corpus
+keys, so `-ratio` is at most 2 with unique values.
 
 ## Results
 
 AMD Ryzen 9 7900 (12 cores, 24 threads), Linux 6.18 under WSL2 on Windows,
-Go 1.27.1, 2026-09-25. Every factor is how many operations the first
-candidate completes in the time the second needs for one: above 1 it is
-faster. All intervals across processes are within ±2 percentage points or
-±10% of the difference, except for the two marked `*`: `u64` `churn` at 1M
-keys spreads 9-12 points between processes, so ±2 would take 70-130
-processes, and the driver stopped at 40 (`-continue`, see below). Their 95%
-intervals are given below the tables. The full tables
-are [`results/speed-summary.md`](results/speed-summary.md) and
+Go 1.27.1, rtcompare v0.7.0, 2026-09-28: the dev suite with 5-6 processes per
+scenario, all four sizes and memory at 1M keys (`-suite dev -sizes
+4096,16384,262144,1048576 -maxprocs 6 -memn 1048576 -memrounds 3`). Every
+factor is how many operations the first candidate completes in the time the
+second needs for one: above 1 it is faster. 356 of the 400 comparisons have
+an interval across processes within ±2 percentage points or ±10% of the
+difference. The other 44, mostly `churn` from 256K keys up, spread 2-9
+points between processes and would have needed more than 6 processes; none
+of them changes which candidate is faster, except where the interval
+includes 1. Those in the tables below are marked `*`, with their 95%
+intervals below the table. The full tables are
+[`results/speed-summary.md`](results/speed-summary.md) and
 [`results/mem-summary.md`](results/mem-summary.md).
 
 **`ordered` against `hashed`:** about equal for point operations with integer
@@ -85,58 +89,60 @@ keys, slower with string keys, far faster for range queries.
 
 | operation | u64 4K | u64 1M | str 4K | str 1M |
 |---|---:|---:|---:|---:|
-| `valuesFor` | 0.98× | 0.97× | 0.65× | 0.47× |
-| `churn` | 1.08× | 1.06×* | 0.67× | 0.64× |
-| `build` | 1.11× | | 0.72× | |
-| `valuesBetween` | 18.4× | | 15.0× | |
+| `valuesFor` | 1.04× | 1.03×* | 0.67× | 0.50× |
+| `churn` | 1.07× | 0.96×* | 0.69× | 0.73× |
+| `build` | 1.09× | | 0.72× | |
+| `valuesBetween` | 18.9× | | 15.3× | |
 
-\* `churn` u64 1M: [1.00×, 1.08×].
+\* u64 1M: `valuesFor` [0.99×, 1.07×], `churn` [0.92×, 0.99×].
 
 **`ordered` against the hand-written candidates:** always faster than
 `btree-sets`, faster than `map-sets` except for changes with string keys.
 
 | operation | vs | u64 4K | u64 1M | str 4K | str 1M |
 |---|---|---:|---:|---:|---:|
-| `valuesFor` | `btree-sets` | 4.41× | 4.26× | 2.85× | 2.25× |
-| `valuesBetween` | `btree-sets` | 2.61× | 3.40× | 2.13× | 2.52× |
-| `churn` | `btree-sets` | 3.73× | 2.86× | 2.32× | 1.98× |
-| `build` | `btree-sets` | 3.55× | | 2.40× | |
-| `valuesFor` | `map-sets` | 2.50× | 2.15× | 1.54× | 0.97× |
-| `valuesBetween` | `map-sets` | 19.7× | | 15.6× | |
-| `churn` | `map-sets` | 1.20× | 1.12×* | 0.75× | 0.73× |
-| `build` | `map-sets` | 1.28× | | 0.83× | |
+| `valuesFor` | `btree-sets` | 4.48× | 4.59× | 2.87× | 2.39× |
+| `valuesBetween` | `btree-sets` | 2.76× | 3.55× | 2.21× | 2.62× |
+| `churn` | `btree-sets` | 3.63× | 3.13× | 2.31× | 2.12× |
+| `build` | `btree-sets` | 3.10× | | 2.23× | |
+| `valuesFor` | `map-sets` | 2.54× | 2.29× | 1.53× | 1.09× |
+| `valuesBetween` | `map-sets` | 20.4× | | 16.0× | |
+| `churn` | `map-sets` | 1.24× | 1.08×* | 0.78×* | 0.76×* |
+| `build` | `map-sets` | 1.19× | | 0.81× | |
 
-\* `churn` u64 1M: [1.05×, 1.12×].
+\* `churn`: u64 1M [1.02×, 1.16×], str 4K [0.76×, 0.80×], str 1M [0.73×, 0.79×].
 
 **`ordered` against `btree-map`, one value per key:** faster for point
 operations and changes, slower for range queries.
 
 | operation | u64 4K | u64 1M | str 4K | str 1M |
 |---|---:|---:|---:|---:|
-| `valuesFor` | 5.63× | 2.94× | 2.65× | 1.71× |
-| `valuesBetween` | 0.42× | 0.64× | 0.28× | 0.52× |
-| `churn` | 2.82× | 1.76× | 1.55× | 1.43× |
-| `build` | 2.36× | | 1.54× | |
+| `valuesFor` | 5.76× | 2.99× | 2.67× | 1.80× |
+| `valuesBetween` | 0.47× | 0.69×* | 0.32× | 0.54× |
+| `churn` | 2.83× | 2.23× | 1.62× | 1.75× |
+| `build` | 2.29× | | 1.56× | |
+
+\* `valuesBetween` u64 1M: [0.62×, 0.79×]; its processes spread 16 points.
 
 **Memory at 1M keys** (bytes per key; scannable: the part of the heap the GC
 must scan for pointers, as `runtime/metrics` counts it, which can exceed the
 live heap; GC CPU time per full cycle, minus a process that holds only the
-input):
+input; medians of 3 rounds):
 
 | values | candidate | heap u64 | heap str | scannable u64 | scannable str | GC u64 | GC str | heap after removing half, u64 | str |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| multi | `ordered` | 149 | 177 | 83 | 111 | 238 ms | 336 ms | 72 | 86 |
-| multi | `hashed` | 177 | 196 | 101 | 101 | 235 ms | 255 ms | 115 | 121 |
-| multi | `btree-sets` | 343 | 363 | 73 | 73 | 384 ms | 400 ms | 172 | 178 |
-| multi | `map-sets` | 360 | 379 | 85 | 86 | 347 ms | 367 ms | 206 | 212 |
-| unique | `ordered` | 73 | 101 | 81 | 109 | 202 ms | 288 ms | 35 | 48 |
-| unique | `btree-map` | 37 | 56 | 37 | 37 | 64 ms | 84 ms | 19 | 25 |
+| multi | `ordered` | 149 | 177 | 83 | 111 | 215 ms | 305 ms | 72 | 86 |
+| multi | `hashed` | 177 | 196 | 101 | 101 | 218 ms | 236 ms | 115 | 121 |
+| multi | `btree-sets` | 343 | 363 | 74 | 72 | 351 ms | 364 ms | 172 | 178 |
+| multi | `map-sets` | 360 | 379 | 85 | 87 | 316 ms | 340 ms | 206 | 212 |
+| unique | `ordered` | 73 | 101 | 81 | 109 | 179 ms | 264 ms | 35 | 48 |
+| unique | `btree-map` | 37 | 56 | 37 | 37 | 59 ms | 76 ms | 19 | 25 |
 
 What follows for a choice:
-- **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` (0.97-1.11×) and adds range queries.
-- **String keys:** `hashed` is 1.4-2.1× as fast for point operations. Take `ordered` when you need range queries or ordered iteration: a range query on `hashed` scans every key and costs 15× as much already at 4K keys.
-- **Against writing it yourself:** both use about half the memory of a map or B-tree of Go sets, and `ordered` is 2.0-4.4× faster than the B-tree.
-- **One value per key:** `ordered` is 1.4-5.6× faster than `btree-map` for lookups and changes, but `btree-map` answers range queries 1.6-3.6× faster, needs half the memory and a third of the GC time. The B-tree keeps each key and value in one flat array per node; `ordered` has a leaf object per key with a pointer to its key.
+- **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` (0.96-1.09×) and adds range queries.
+- **String keys:** `hashed` is 1.4-2.0× as fast for point operations. Take `ordered` when you need range queries or ordered iteration: a range query on `hashed` scans every key and costs 15× as much already at 4K keys.
+- **Against writing it yourself:** both use about half the memory of a map or B-tree of Go sets, and `ordered` is 2.1-4.6× faster than the B-tree.
+- **One value per key:** `ordered` is 1.6-5.8× faster than `btree-map` for lookups and changes, but `btree-map` answers range queries 1.4-3.1× faster, needs half the memory and a third of the GC time. The B-tree keeps each key and value in one flat array per node; `ordered` has a leaf object per key with a pointer to its key.
 - **Memory after deletions:** `ordered` shrinks with its keys; the maps keep their tables.
 - **GC:** with string keys `ordered` costs about 1.3× the GC time per cycle of `hashed`, with integer keys about the same; both cost less than the hand-written candidates. Its leaves and nodes are many small objects with pointers.
 
@@ -159,12 +165,19 @@ each interval but not the scatter
 ([rtcompare#109](https://github.com/TomTonic/rtcompare/issues/109)).
 
 The driver `cmd/bench` therefore runs every scenario (key kind × number of
-keys) in separate processes:
-- Each process gets its own `-layoutseed`. Package [`layout`](layout/layout.go) then puts random spacers between the candidates and builds them in a random order, so the processes sample different layouts instead of repeating one biased layout.
-- Each process counts as one observation. Package [`stats`](stats/stats.go) reports the median difference and a 95% t-interval across processes.
-- Five processes are the minimum in the release suite (the dev suite runs 3-5 and accepts wider intervals). After that, the driver adds processes until every comparison's interval is within ±2 percentage points or within ±10% of the difference itself, up to 20. Five are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points gives ±2.5-6 with five processes and needs 10-20 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M.
+keys) in separate processes, through rtcompare's
+[`multiproc`](https://pkg.go.dev/github.com/TomTonic/rtcompare/multiproc)
+package (rtcompare v0.7.0 or later):
+- Each process perturbs its heap from its own seed before it builds anything (`rtcompare.PerturbHeap`) and builds the candidates in its own order: two candidates alternate from process to process, more are shuffled. The processes thus sample different layouts instead of repeating one biased layout, and whichever candidate is built last has no lasting advantage.
+- Each process counts as one observation. `rtcompare.Combine` pools them: the mean difference, a 95% t-interval across processes, the spread between processes and how far it exceeds a single process's interval.
+- Five processes are the minimum in the release suite (the dev suite runs 3-5 and accepts wider intervals). After that, processes are added until every comparison's interval is within ±2 percentage points or within ±10% of the difference itself, up to 20. Five are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points gives ±2.5-6 with five processes and needs 10-20 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M.
 - Fewer than five would estimate the spread from too few processes, and a run that happened to scatter little would stop early by luck.
-- Where 20 were not enough, `-continue` adds processes to an existing `results/` under a higher `-maxprocs`: every scenario resumes after its last process, and scenarios that are already precise are skipped. The run of 2026-09-25 went on this way at 1M keys with several values: `str` became precise after 27 processes, `u64` stopped at 40.
+
+Before rtcompare v0.7.0, every comparison from about 64K keys up favoured
+candidate B, the other candidate, by 5-20%: rtcompare validated B last, and B
+started the measurement with the cache full of its own data
+([rtcompare#111](https://github.com/TomTonic/rtcompare/issues/111)). Results
+measured before 2026-09-28 carry that bias against `ordered` at large sizes.
 
 **Memory** is not an rtcompare comparison. GC cost depends on the whole live
 heap, so each candidate is measured alone in its own process, together with a
@@ -177,7 +190,6 @@ order each, and the tables show medians.
 go run ./cmd/bench                                  # the dev suite, for frequent runs while trying a change
 go run ./cmd/bench -suite release                   # the complete suite, before a release
 go run ./cmd/bench -keys str,street -sizes 16384    # a quicker subset
-go run ./cmd/bench -continue -skipmem -maxprocs 40  # more processes where 20 were not enough
 go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 2 -maxprocs 2 -memn 16384 -memrounds 1
 go run ./cmd/summarize results/speed.jsonl          # pool the raw results again
 ```
@@ -197,10 +209,22 @@ The driver starts its own binary for every process and writes to `results/`:
 While it runs, the driver keeps the machine from sleeping (package
 [`awake`](awake/awake.go): `caffeinate` on macOS, `systemd-inhibit` on Linux,
 `SetThreadExecutionState` on Windows) and warns in the log about every process
-that the machine slept through anyway. Under WSL2, `systemd-inhibit` holds
-only the Linux VM awake, not Windows: switch off sleep in the Windows power
-plan for the run. The run of 2026-09-25 took 3 h 38 min on the Ryzen above,
-plus 49 min to continue it, and did not sleep.
+that the machine slept through anyway (rtcompare reports it per
+comparison). Under WSL2, `systemd-inhibit` holds only the Linux VM awake, not
+Windows: switch off sleep in the Windows power plan for the run. The run of
+2026-09-28 above took 4 h 49 min on the Ryzen and did not sleep.
+
+To measure a change against an earlier commit, copy that commit's library
+into the bench as the candidate `baseline` and compare Ordered with it alone,
+in the same process and interleaved like every other pair:
+
+```sh
+go run ./cmd/mkbaseline -ref main                   # writes ./baseline (ignored by git)
+go run -tags baseline ./cmd/bench -vs baseline      # Ordered against main's Ordered
+```
+
+`-vs` limits the candidates Ordered is compared with; `run.json` records the
+commit of the baseline.
 
 `-repeats`, `-loopscale` and `-validation` pass through to rtcompare. The
 defaults are rtcompare's. Lower values are for smoke tests only.
