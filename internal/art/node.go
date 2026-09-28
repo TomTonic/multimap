@@ -14,11 +14,14 @@
 //     first 12 bytes of the compressed path. Longer paths are skipped
 //     optimistically and verified against the full key, which every leaf
 //     holds (lazy expansion: a subtree with one key is just its leaf).
-//   - A leaf holds its key inline, in the smallest of four size classes (16,
-//     32, 48 or 64 bytes) that fits, and its values right after it; only a
-//     longer key is a separate string. Comparing a key at the leaf therefore
-//     costs no second pointer chase, and a leaf with uint64 values fills a Go
-//     size class (64 B for integer keys, one cache line).
+//   - Every leaf starts with a 4-byte head and holds its key inline right
+//     after it; only a key of more than 254 bytes is a separate string.
+//     Comparing a key at the leaf therefore costs no second pointer chase.
+//   - For small pointer-free values (flat.go) the values follow the key in
+//     the same object, which grows through Go size classes from 32 to 512
+//     bytes as values arrive. Such a leaf holds no pointer, so the garbage
+//     collector never scans it. Beyond 512 bytes, and for other values, a
+//     leaf holds a vset.Set after its key (set leaves).
 //   - A key that ends at an inner node (a prefix of other keys) is that
 //     node's term leaf. It takes the node's last child slot, which the byte
 //     children reach only when there is no term: few keys are prefixes of
@@ -61,10 +64,10 @@ const (
 	shrink256 = 48
 )
 
-// maxInline is the longest key a leaf holds inline, in an array of 16, 32, 48
-// or 64 bytes, whichever is the smallest that fits. A longer key is held as a
-// string, which costs a separate allocation and a pointer chase on every
-// comparison.
+// maxInline is the longest key a set leaf holds inline, in an array of 16,
+// 32, 48 or 64 bytes, whichever is the smallest that fits. A longer key is
+// held as a string, which costs a separate allocation and a pointer chase on
+// every comparison. Flat leaves hold keys of up to maxFlatKey bytes inline.
 const maxInline = 64
 
 // header is the common start of all inner nodes (16 B).
@@ -79,18 +82,24 @@ type header struct {
 // length is then read from the leaves (see pathLen).
 const longPath = 1<<16 - 1
 
-// leafHead is the start of every leaf (8 B). The key follows it at keyOff,
-// inline or as a string (see maxInline); the key's values follow the key, at
-// valsOff, which depends on the key's size class and on T.
+// leafHead is the start of every leaf (4 B). An inline key follows at keyOff;
+// a string key at strOff.
 type leafHead struct {
-	kind    kind
-	_       uint8
-	valsOff uint16 // offset of the value set from the start of the leaf
-	klen    uint32
+	kind kind
+	klen uint8 // length of an inline key, or longKey for a string key
+	n    uint8 // flat leaves: number of values
+	cls  uint8 // flat leaves: size class (see flatSizes); 0 in a set leaf
 }
 
-// keyOff is the offset of the key in every leaf: right after the leafHead.
-const keyOff = unsafe.Sizeof(leafHead{})
+// longKey in leafHead.klen marks a key held as a string.
+const longKey = 255
+
+// keyOff is the offset of an inline key in every leaf: right after the
+// leafHead. A string key sits at strOff, where a string is aligned.
+const (
+	keyOff = unsafe.Sizeof(leafHead{})
+	strOff = 8
+)
 
 // keyArea is the storage of a leaf's key: an inline array of one of the
 // size classes, or a string for keys longer than maxInline.
@@ -98,9 +107,9 @@ type keyArea interface {
 	[16]byte | [32]byte | [48]byte | [64]byte | string
 }
 
-// leaf is a leafHead followed by its key and the values of its key. For
-// T = uint64 it is 64, 80, 96 or 112 B with an inline key, all Go size
-// classes, and 64 B plus the string with a longer key.
+// leaf is a set leaf: a leafHead followed by its key and the values of its
+// key. For T = uint64 it is 64, 80, 96 or 112 B with an inline key, all Go
+// size classes, and 64 B plus the string with a longer key.
 type leaf[T comparable, K keyArea] struct {
 	leafHead
 	k    K
@@ -163,17 +172,11 @@ func leafHdr(l *leafHead) *header { return (*header)(unsafe.Pointer(l)) }
 // key returns the leaf's key. The slice aliases the leaf and must not be
 // modified.
 func (l *leafHead) key() []byte {
-	p := unsafe.Add(unsafe.Pointer(l), keyOff)
-	if l.klen <= maxInline {
-		return unsafe.Slice((*byte)(p), l.klen)
+	if l.klen != longKey {
+		return unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), l.klen)
 	}
-	s := *(*string)(p)
+	s := *(*string)(unsafe.Add(unsafe.Pointer(l), strOff))
 	return unsafe.Slice(unsafe.StringData(s), len(s))
-}
-
-// init marks a new leaf for a key of klen bytes whose values lie at valsOff.
-func (l *leafHead) init(klen int, valsOff uintptr) {
-	l.kind, l.klen, l.valsOff = kLeaf, uint32(klen), uint16(valsOff)
 }
 
 // setPrefix stores a compressed path of plen bytes, of which p holds at least
@@ -240,12 +243,15 @@ func termOf(n *header) *leafHead {
 	return *(**leafHead)(unsafe.Add(unsafe.Pointer(n), termOff[k]))
 }
 
+// termSlot returns the address of n's term slot, which holds its term leaf
+// whenever it has one.
+func termSlot(n *header) **header {
+	return (**header)(unsafe.Add(unsafe.Pointer(n), termOff[n.kind&15]))
+}
+
 // setTermSlot stores l, or nil to remove the term, in n's term slot; n must
 // have room for it.
-func setTermSlot(n *header, l *leafHead) {
-	s := slots(n)
-	s[len(s)-1] = leafHdr(l)
-}
+func setTermSlot(n *header, l *leafHead) { *termSlot(n) = leafHdr(l) }
 
 // full reports whether n has no room for another byte child or a term.
 func full(n *header) bool {

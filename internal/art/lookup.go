@@ -103,6 +103,24 @@ func (t *Tree) find(key []byte) *leafHead {
 	return nil
 }
 
+// findSlot returns the slot that holds the leaf of key, which must be in the
+// tree. Writers use it to replace a leaf they have found. Since the key is
+// present, its paths need no checking: the descent only follows them.
+func (t *Tree) findSlot(key []byte) **header {
+	loc, depth := &t.root, 0
+	for (*loc).kind != kLeaf {
+		n := *loc
+		depth += n.pathLen(depth)
+		if depth == len(key) {
+			loc = termSlot(n)
+			continue
+		}
+		loc = findLoc(n, key[depth])
+		depth++
+	}
+	return loc
+}
+
 // childAt returns the i-th child from the first child slot c on, without the
 // bounds check the compiler cannot prove away: the callers have checked i
 // against the node's count, which never exceeds its slots.

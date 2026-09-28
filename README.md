@@ -29,7 +29,9 @@ answers range queries faster and needs about half the memory of `Ordered`,
 which remains faster for lookups and changes. The benchmarks behind these statements are in [bench/README.md](bench/README.md).
 
 Both keep the values of a key in a compact container: up to three values
-inline, then a plain array, then a hash set.
+inline, then a plain array, then a hash set. `Ordered` keeps small values
+without pointers, such as integers, right in the key's leaf, up to 512 bytes
+per key, where the garbage collector never scans them.
 
 ## Concurrency
 

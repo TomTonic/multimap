@@ -9,11 +9,7 @@ import (
 	"sort"
 	"testing"
 	"unsafe"
-
-	"github.com/TomTonic/multimap/internal/vset"
 )
-
-type valset = vset.Set[uint64]
 
 // keySets returns key corpora that exercise every structural case: keys that
 // are prefixes of other keys, the empty key, paths longer than the 12 inline
@@ -130,39 +126,47 @@ func (r reference) sortedKeys() []string {
 // multimap.Ordered stores, finds, removes and ranges over keys and values
 // exactly like a trivially correct reference, through phases of growth and
 // of heavy deletion, and that after every phase the tree has the shape its
-// invariants demand (see checkInvariants).
+// invariants demand (see checkInvariants). It runs every corpus with flat
+// leaves, which small pointer-free values get, and with set leaves, which
+// all other values get.
 func TestAgainstReference(t *testing.T) {
-	for name, keys := range keySets() {
-		t.Run(name, func(t *testing.T) {
-			r := rand.New(rand.NewPCG(7, 8))
-			var m Map[uint64]
-			ref := reference{}
-			for phase := range 6 {
-				removing := phase%2 == 1
-				for _, k := range keys {
-					switch op := r.IntN(10); {
-					case removing && op < 3:
-						m.RemoveKey(k)
-						delete(ref, string(k))
-					case removing && op < 7:
-						v := uint64(r.IntN(8))
-						m.Remove(k, v)
-						ref.remove(k, v)
-					case !removing || op < 8:
-						for range 1 + r.IntN(4) {
-							v := uint64(r.IntN(8))
-							if r.IntN(30) == 0 {
-								v = uint64(r.IntN(200)) // spill into array and hash
-							}
-							m.Add(k, v)
-							ref.add(k, v)
-						}
+	for _, mode := range []int8{1, -1} {
+		for name, keys := range keySets() {
+			t.Run(fmt.Sprintf("%s/flat=%d", name, mode), func(t *testing.T) {
+				againstReference(t, keys, mode)
+			})
+		}
+	}
+}
+
+func againstReference(t *testing.T, keys [][]byte, mode int8) {
+	r := rand.New(rand.NewPCG(7, 8))
+	m := Map[uint64]{flat: mode}
+	ref := reference{}
+	for phase := range 6 {
+		removing := phase%2 == 1
+		for _, k := range keys {
+			switch op := r.IntN(10); {
+			case removing && op < 3:
+				m.RemoveKey(k)
+				delete(ref, string(k))
+			case removing && op < 7:
+				v := uint64(r.IntN(8))
+				m.Remove(k, v)
+				ref.remove(k, v)
+			case !removing || op < 8:
+				for range 1 + r.IntN(4) {
+					v := uint64(r.IntN(8))
+					if r.IntN(30) == 0 {
+						v = uint64(r.IntN(200)) // grow flat leaves, spill sets into array and hash
 					}
+					m.Add(k, v)
+					ref.add(k, v)
 				}
-				compare(t, &m, ref, r)
-				checkInvariants(t, &m.t)
 			}
-		})
+		}
+		compare(t, &m, ref, r)
+		checkInvariants(t, &m.t)
 	}
 }
 
@@ -172,22 +176,21 @@ func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
 		t.Fatalf("Len = %d, want %d", m.Len(), len(ref))
 	}
 	for k, want := range ref {
-		s := m.Values([]byte(k))
-		if s == nil || s.Len() != len(want) {
-			t.Fatalf("Values(%q) has wrong size", k)
+		got := valuesOf(m, []byte(k))
+		if len(got) != len(want) {
+			t.Fatalf("key %q holds %d values, want %d", k, len(got), len(want))
 		}
-		s.Each(func(v uint64) bool {
+		for _, v := range got {
 			if !want[v] {
-				t.Fatalf("Values(%q) holds %d unexpectedly", k, v)
+				t.Fatalf("key %q holds %d unexpectedly", k, v)
 			}
-			return true
-		})
+		}
 	}
 	for k := range ref {
 		for _, probe := range nearMisses([]byte(k)) {
 			_, want := ref[string(probe)]
-			if got := m.Values(probe) != nil; got != want {
-				t.Fatalf("Values(%q) found = %v, want %v", probe, got, want)
+			if got := m.Has(probe); got != want {
+				t.Fatalf("Has(%q) = %v, want %v", probe, got, want)
 			}
 		}
 	}
@@ -202,9 +205,16 @@ func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
 	checkRange(t, m, ref, sorted, &Bounds{}) // everything
 }
 
+// valuesOf returns the values of key in m, in the map's order.
+func valuesOf(m *Map[uint64], key []byte) []uint64 {
+	var out []uint64
+	m.Each(key, func(v uint64) bool { out = append(out, v); return true })
+	return out
+}
+
 // nearMisses returns keys that differ from k only slightly: shorter, longer,
-// or with one byte changed at the end, in the middle, or at positions 9 and
-// 12, which lie beyond the 8 path bytes a node checks itself. The last byte
+// or with one byte changed at the end, in the middle, or at positions 9, 12
+// and 13, which lie around the 12 path bytes a node checks itself. The last byte
 // is also changed in its top bit, which a dense node rarely holds.
 func nearMisses(k []byte) [][]byte {
 	out := [][]byte{append(bytes.Clone(k), 0)}
@@ -213,7 +223,7 @@ func nearMisses(k []byte) [][]byte {
 		x[len(x)-1] ^= 0x80
 		out = append(out, k[:len(k)-1], x)
 	}
-	for _, p := range []int{len(k) - 1, len(k) / 2, 9, 12} {
+	for _, p := range []int{len(k) - 1, len(k) / 2, 9, 12, 13} {
 		if p >= 0 && p < len(k) {
 			x := bytes.Clone(k)
 			x[p] ^= 1
@@ -269,10 +279,7 @@ func checkRange(t *testing.T, m *Map[uint64], ref reference, sorted []string, b 
 		}
 	}
 	var got []string
-	m.Range(b, func(k []byte, s *valset) bool {
-		if s.Len() != len(ref[string(k)]) {
-			t.Fatalf("Range: key %q has %d values, want %d", k, s.Len(), len(ref[string(k)]))
-		}
+	m.Range(b, func(k []byte) bool {
 		got = append(got, string(k))
 		return true
 	})
@@ -281,7 +288,7 @@ func checkRange(t *testing.T, m *Map[uint64], ref reference, sorted []string, b 
 	}
 	// stopping early must stop
 	n := 0
-	m.Range(b, func([]byte, *valset) bool { n++; return n < 3 })
+	m.Range(b, func([]byte) bool { n++; return n < 3 })
 	if n != min(3, len(want)) {
 		t.Fatalf("Range did not stop when asked: %d calls", n)
 	}
@@ -350,11 +357,11 @@ func TestEmptyMap(t *testing.T) {
 	var m Map[uint64]
 	m.Remove([]byte("k"), 1)
 	m.RemoveKey([]byte("k"))
-	if m.Len() != 0 || m.Values([]byte("k")) != nil || m.Values(nil) != nil {
+	if m.Len() != 0 || m.Has([]byte("k")) || m.Has(nil) || valuesOf(&m, []byte("k")) != nil {
 		t.Fatalf("empty map: Len %d, or a key was found", m.Len())
 	}
 	for _, b := range []*Bounds{{}, {From: []byte("a"), To: []byte("z"), HasFrom: true, HasTo: true}} {
-		m.Range(b, func([]byte, *valset) bool { t.Fatalf("Range called back on an empty map"); return false })
+		m.Range(b, func([]byte) bool { t.Fatalf("Range called back on an empty map"); return false })
 		m.RangeValues(b, func(uint64) bool { t.Fatalf("RangeValues called back on an empty map"); return false })
 	}
 }
@@ -368,7 +375,7 @@ func leafLayout[T comparable, K keyArea]() (size, kOff, vOff uintptr) {
 
 // TestLeafLayout makes sure that every key of multimap.Ordered keeps its bytes
 // and its values, whatever its length and whatever the value type. It covers
-// the leaves of the ART behind Ordered, which hold a key inline in the
+// the set leaves of the ART behind Ordered, which hold a key inline in the
 // smallest of four size classes, or as a string beyond 64 bytes, and which the
 // untyped tree code reads through fixed offsets. For each class boundary it
 // checks that the leaf returns an independent copy of its key, that its values
@@ -395,16 +402,19 @@ func TestLeafLayout(t *testing.T) {
 	}
 	for _, cs := range [][5]class{u64, str} {
 		for i, c := range cs {
-			if c.kOff != keyOff {
-				t.Errorf("class %d: key at offset %d, want keyOff = %d", i, c.kOff, keyOff)
+			if want := [5]uintptr{keyOff, keyOff, keyOff, keyOff, strOff}[i]; c.kOff != want {
+				t.Errorf("class %d: key at offset %d, want %d", i, c.kOff, want)
 			}
 		}
 	}
-	if tail := leafTail[uint64](); tail >= u64[0].size {
-		t.Errorf("leafTail[uint64] = %d lies outside the smallest leaf (%d B)", tail, u64[0].size)
+	if tail := (&Map[uint64]{flat: -1}).leafTail(); tail >= u64[0].size {
+		t.Errorf("leafTail = %d lies outside the smallest set leaf for uint64 (%d B)", tail, u64[0].size)
 	}
-	if tail := leafTail[string](); tail >= str[0].size {
-		t.Errorf("leafTail[string] = %d lies outside the smallest leaf (%d B)", tail, str[0].size)
+	if tail := (&Map[string]{flat: -1}).leafTail(); tail >= str[0].size {
+		t.Errorf("leafTail = %d lies outside the smallest set leaf for string (%d B)", tail, str[0].size)
+	}
+	if tail := (&Map[uint64]{flat: 1}).leafTail(); tail >= flatSizes[1] {
+		t.Errorf("leafTail = %d lies outside the smallest flat leaf (%d B)", tail, flatSizes[1])
 	}
 
 	for _, tc := range []struct {
@@ -431,17 +441,23 @@ func TestLeafLayout(t *testing.T) {
 			}
 			want := bytes.Clone(key)
 
-			l := newLeaf[uint64](key)
-			ls := newLeaf[string](key)
+			l := newSetLeaf[uint64](key)
+			ls := newSetLeaf[string](key)
 			clear(key) // the leaves must hold copies
+			wantLen := uint8(tc.n)
+			if tc.n > maxInline {
+				wantLen = longKey
+			}
 			for _, x := range []*leafHead{l, ls} {
-				if x.kind != kLeaf || int(x.klen) != tc.n || !bytes.Equal(x.key(), want) {
-					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a leaf of %d bytes %v", x.kind, x.klen, x.key(), tc.n, want)
+				if x.kind != kLeaf || x.klen != wantLen || x.cls != 0 || !bytes.Equal(x.key(), want) {
+					t.Fatalf("leaf holds kind %d, klen %d, class %d, key %v; want a set leaf of %d bytes %v", x.kind, x.klen, x.cls, x.key(), tc.n, want)
 				}
 			}
-			if uintptr(l.valsOff) != u64[tc.class].vOff || uintptr(ls.valsOff) != str[tc.class].vOff {
+			gotU := uintptr(unsafe.Pointer(vals[uint64](l))) - uintptr(unsafe.Pointer(l))
+			gotS := uintptr(unsafe.Pointer(vals[string](ls))) - uintptr(unsafe.Pointer(ls))
+			if gotU != u64[tc.class].vOff || gotS != str[tc.class].vOff {
 				t.Fatalf("values at offsets %d and %d, want %d and %d (size class %d)",
-					l.valsOff, ls.valsOff, u64[tc.class].vOff, str[tc.class].vOff, tc.class)
+					gotU, gotS, u64[tc.class].vOff, str[tc.class].vOff, tc.class)
 			}
 			vals[uint64](l).Add(42)
 			vals[string](ls).Add("v")
@@ -642,7 +658,7 @@ func TestShrinkAndCollapse(t *testing.T) {
 						t.Fatalf("Len = %d after %d deletes", m.Len(), i+1)
 					}
 					for _, other := range keys[i+1:] {
-						if m.Values(other) == nil {
+						if !m.Has(other) {
 							t.Fatalf("deleting %q lost %q", k, other)
 						}
 					}
@@ -652,7 +668,7 @@ func TestShrinkAndCollapse(t *testing.T) {
 				}
 				m.Add(keys[0], 1)
 				m.Clear()
-				if m.Len() != 0 || m.Values(keys[0]) != nil {
+				if m.Len() != 0 || m.Has(keys[0]) {
 					t.Fatalf("Clear left keys behind")
 				}
 			})
@@ -663,12 +679,15 @@ func TestShrinkAndCollapse(t *testing.T) {
 // FuzzOperations drives the tree with arbitrary operation sequences over
 // short keys from a tiny alphabet (which maximises shared paths, splits and
 // merges), checking every result against the reference and the structural
-// invariants at the end.
+// invariants at the end. The first byte chooses flat or set leaves.
 func FuzzOperations(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
 	f.Fuzz(func(t *testing.T, ops []byte) {
-		var m Map[uint64]
+		m := Map[uint64]{flat: 1}
+		if len(ops) > 0 && ops[0]&1 == 1 {
+			m.flat = -1
+		}
 		ref := reference{}
 		for len(ops) >= 2 {
 			op, n := ops[0], int(ops[1]%6)
