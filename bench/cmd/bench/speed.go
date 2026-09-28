@@ -81,7 +81,7 @@ func pairOf(name string) pair {
 // rowOf turns the report of one process into a row of speed.jsonl.
 func rowOf(kind, profile string, n int, p pair, process int, seed uint64, r rtcompare.Report) result {
 	return result{
-		Keys: kind, Values: profile, N: n, Op: p.op, A: p.a, B: p.b, Process: process, Seed: seed,
+		Keys: kind, Values: profile + valueTag, N: n, Op: p.op, A: p.a, B: p.b, Process: process, Seed: seed,
 		NsA: r.NsPerOpA, NsB: r.NsPerOpB, Delta: r.Estimate.Delta, Low: r.Estimate.Low, High: r.Estimate.High,
 		Level: r.Estimate.Level, Resolved: r.Resolved, Validated: r.Validated, NoiseFloor: r.NoiseFloor,
 		SuspendedS: r.Suspended.Seconds(), LiveHeap: r.LiveHeap, Warnings: slices.DeleteFunc(slices.Clone(r.Warnings), multiprocAdvice),
@@ -206,7 +206,7 @@ func (f *fixture) pointSum(impl string, i int) uint64 {
 		return mapSum(f.gm, s)
 	case btreeMapC:
 		v, _ := f.bm.Get(s)
-		return v
+		return weigh(v)
 	}
 	return baseKit.sum(f.base, k)
 }
@@ -246,7 +246,7 @@ func (f *fixture) verifyBuild(impls ...string) error {
 		for i := range n {
 			var want uint64
 			for _, v := range f.vals[f.offs[i]:f.offs[i+1]] {
-				want += v
+				want += weigh(v)
 			}
 			if got(i) != want {
 				return fmt.Errorf("build stream leaves %s with wrong values for %q", impl, f.c.Keys.S[i])
@@ -262,10 +262,10 @@ func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
 	kb, ks := f.c.Keys.B, f.c.Keys.S
 	switch impl {
 	case ordered:
-		o := m.(*multimap.Ordered[uint64])
+		o := m.(*multimap.Ordered[V])
 		return int(o.NumberOfKeys()), func(i int) uint64 { return sum(o.ValuesForSeq(kb[i])) }
 	case hashed:
-		h := m.(*multimap.Hashed[uint64])
+		h := m.(*multimap.Hashed[V])
 		return int(h.NumberOfKeys()), func(i int) uint64 { return sum(h.ValuesForSeq(kb[i])) }
 	case btreeSets:
 		b := m.(*btreeMM)
@@ -275,15 +275,15 @@ func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
 		return len(g), func(i int) uint64 { return mapSum(g, ks[i]) }
 	case btreeMapC:
 		b := m.(*btreeMap)
-		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return v }
+		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return weigh(v) }
 	}
 	return baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, kb[i]) }
 }
 
-func sum(s func(func(uint64) bool)) uint64 {
+func sum(s func(func(V) bool)) uint64 {
 	var a uint64
 	for v := range s {
-		a += v
+		a += weigh(v)
 	}
 	return a
 }
@@ -292,7 +292,7 @@ func btreeSum(m *btreeMM, k string) uint64 {
 	var a uint64
 	if s, ok := m.Get(k); ok {
 		for v := range s {
-			a += v
+			a += weigh(v)
 		}
 	}
 	return a
@@ -301,19 +301,19 @@ func btreeSum(m *btreeMM, k string) uint64 {
 func mapSum(m mapMM, k string) uint64 {
 	var a uint64
 	for v := range m[k] {
-		a += v
+		a += weigh(v)
 	}
 	return a
 }
 
 func btreeRangeSum(m *btreeMM, from, to string) uint64 {
 	var a uint64
-	m.Ascend(from, func(k string, s map[uint64]struct{}) bool {
+	m.Ascend(from, func(k string, s map[V]struct{}) bool {
 		if k > to {
 			return false
 		}
 		for v := range s {
-			a += v
+			a += weigh(v)
 		}
 		return true
 	})
@@ -325,7 +325,7 @@ func mapRangeSum(m mapMM, from, to string) uint64 {
 	for k, s := range m {
 		if k >= from && k <= to {
 			for v := range s {
-				a += v
+				a += weigh(v)
 			}
 		}
 	}
@@ -334,11 +334,11 @@ func mapRangeSum(m mapMM, from, to string) uint64 {
 
 func btreeMapRangeSum(m *btreeMap, from, to string) uint64 {
 	var a uint64
-	m.Ascend(from, func(k string, v uint64) bool {
+	m.Ascend(from, func(k string, v V) bool {
 		if k > to {
 			return false
 		}
-		a += v
+		a += weigh(v)
 		return true
 	})
 	return a

@@ -73,10 +73,11 @@ func TestWorkloads(t *testing.T) {
 	const n = 3000
 	type kv struct {
 		key uint32
-		val uint64
+		val V
 	}
 	for _, profile := range []string{multi, unique} {
-		vals, offs := profileValues(keys.Corpus{}, profile, n)
+		nums, offs := profileValues(keys.Corpus{}, profile, n)
+		vals := toVs(nums)
 		corpus := map[kv]bool{}
 		for i := range n {
 			for _, v := range vals[offs[i]:offs[i+1]] {
@@ -109,7 +110,7 @@ func TestWorkloads(t *testing.T) {
 					for i, op := range tt.ops {
 						x := kv{p.key[op.ID], p.val[op.ID]}
 						if del := op.Kind == workload.Delete; del != state[x] {
-							t.Fatalf("operation %d (%v): value %d of key %d present=%v", i, op.Kind, x.val, x.key, state[x])
+							t.Fatalf("operation %d (%v): value %v of key %d present=%v", i, op.Kind, x.val, x.key, state[x])
 						}
 						if op.Kind == workload.Insert {
 							state[x] = true

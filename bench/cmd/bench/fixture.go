@@ -57,19 +57,19 @@ func implsFor(profile string) []string {
 }
 
 type (
-	btreeMM  = btree.Map[string, map[uint64]struct{}]
-	mapMM    = map[string]map[uint64]struct{}
-	btreeMap = btree.Map[string, uint64]
+	btreeMM  = btree.Map[string, map[V]struct{}]
+	mapMM    = map[string]map[V]struct{}
+	btreeMap = btree.Map[string, V]
 )
 
 // fixture holds one scenario's corpus and every candidate built from it.
 type fixture struct {
 	c       keys.Corpus
 	profile string
-	vals    []uint64
+	vals    []V
 	offs    []int
-	ord     *multimap.Ordered[uint64]
-	hsh     *multimap.Hashed[uint64]
+	ord     *multimap.Ordered[V]
+	hsh     *multimap.Hashed[V]
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
@@ -96,7 +96,8 @@ const rangeKeys = 100
 // percent faster, so the speed processes vary the order (see buildOrder).
 func newFixture(kind keys.Kind, n int, profile string, impls []string, ratio float64, arrange func([]string)) *fixture {
 	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
-	f.vals, f.offs = profileValues(f.c, profile, n)
+	nums, offs := profileValues(f.c, profile, n)
+	f.vals, f.offs = toVs(nums), offs
 	builds := map[string]func(){
 		ordered:   func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
 		hashed:    func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
@@ -135,8 +136,8 @@ func buildOrder(p *multiproc.Process) func([]string) {
 	}
 }
 
-// profileValues returns the values of the n keys of c under a value profile:
-// key i holds vals[offs[i]:offs[i+1]]. Under multi, keys with natural values
+// profileValues returns the value numbers of the n keys of c under a value
+// profile: key i holds vals[offs[i]:offs[i+1]], which toVs turns into values. Under multi, keys with natural values
 // (street names: their localities) hold those, others a skewed number of
 // synthetic ones (see keys.Values).
 func profileValues(c keys.Corpus, profile string, n int) (vals []uint64, offs []int) {
@@ -196,8 +197,8 @@ func ranges(all keys.Set, n int) (from, to keys.Set) {
 	return keys.Pack(f), keys.Pack(t)
 }
 
-func buildOrdered(k [][]byte, vals []uint64, offs []int) *multimap.Ordered[uint64] {
-	m := multimap.NewOrdered[uint64]()
+func buildOrdered(k [][]byte, vals []V, offs []int) *multimap.Ordered[V] {
+	m := multimap.NewOrdered[V]()
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
 			m.AddValue(key, v)
@@ -206,8 +207,8 @@ func buildOrdered(k [][]byte, vals []uint64, offs []int) *multimap.Ordered[uint6
 	return m
 }
 
-func buildHashed(k [][]byte, vals []uint64, offs []int) *multimap.Hashed[uint64] {
-	m := multimap.NewHashed[uint64]()
+func buildHashed(k [][]byte, vals []V, offs []int) *multimap.Hashed[V] {
+	m := multimap.NewHashed[V]()
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
 			m.AddValue(key, v)
@@ -216,7 +217,7 @@ func buildHashed(k [][]byte, vals []uint64, offs []int) *multimap.Hashed[uint64]
 	return m
 }
 
-func buildBtree(k []string, vals []uint64, offs []int) *btreeMM {
+func buildBtree(k []string, vals []V, offs []int) *btreeMM {
 	m := &btreeMM{}
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
@@ -226,7 +227,7 @@ func buildBtree(k []string, vals []uint64, offs []int) *btreeMM {
 	return m
 }
 
-func buildMap(k []string, vals []uint64, offs []int) mapMM {
+func buildMap(k []string, vals []V, offs []int) mapMM {
 	m := mapMM{}
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
@@ -236,7 +237,7 @@ func buildMap(k []string, vals []uint64, offs []int) mapMM {
 	return m
 }
 
-func buildBtreeMap(k []string, vals []uint64, offs []int) *btreeMap {
+func buildBtreeMap(k []string, vals []V, offs []int) *btreeMap {
 	m := &btreeMap{}
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
@@ -249,16 +250,16 @@ func buildBtreeMap(k []string, vals []uint64, offs []int) *btreeMap {
 // The hand-written candidates own their keys, as the library does: the corpus
 // strings are views into one shared buffer.
 
-func btreeAdd(m *btreeMM, k string, v uint64) {
+func btreeAdd(m *btreeMM, k string, v V) {
 	s, ok := m.Get(k)
 	if !ok {
-		s = map[uint64]struct{}{}
+		s = map[V]struct{}{}
 		m.Set(strings.Clone(k), s)
 	}
 	s[v] = struct{}{}
 }
 
-func btreeRemove(m *btreeMM, k string, v uint64) {
+func btreeRemove(m *btreeMM, k string, v V) {
 	if s, ok := m.Get(k); ok {
 		delete(s, v)
 		if len(s) == 0 {
@@ -267,16 +268,16 @@ func btreeRemove(m *btreeMM, k string, v uint64) {
 	}
 }
 
-func mapAdd(m mapMM, k string, v uint64) {
+func mapAdd(m mapMM, k string, v V) {
 	s := m[k]
 	if s == nil {
-		s = map[uint64]struct{}{}
+		s = map[V]struct{}{}
 		m[strings.Clone(k)] = s
 	}
 	s[v] = struct{}{}
 }
 
-func mapRemove(m mapMM, k string, v uint64) {
+func mapRemove(m mapMM, k string, v V) {
 	if s := m[k]; s != nil {
 		delete(s, v)
 		if len(s) == 0 {

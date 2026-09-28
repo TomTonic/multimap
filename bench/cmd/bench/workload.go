@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/TomTonic/multimap"
@@ -27,7 +28,7 @@ const transientBit = 1 << 63
 // val[id] of the churn key key[id] (see fixture.ck).
 type pairs struct {
 	key []uint32
-	val []uint64
+	val []V
 }
 
 // newPairs lays out the elements of a corpus of n keys whose key i holds
@@ -39,13 +40,13 @@ type pairs struct {
 // Otherwise half of them go to random corpus keys, whose value sets then grow
 // and shrink, and half to n/2 extra keys, which appear and disappear as whole
 // keys.
-func newPairs(n int, vals []uint64, offs []int, r float64, unique bool) pairs {
+func newPairs(n int, vals []V, offs []int, r float64, unique bool) pairs {
 	target := len(vals)
 	t := int((r-1)*float64(target) + 0.5)
-	p := pairs{key: make([]uint32, target+t), val: make([]uint64, target+t)}
+	key, trans := make([]uint32, target+t), make([]uint64, t)
 	for i := range n {
 		for j := offs[i]; j < offs[i+1]; j++ {
-			p.key[j], p.val[j] = uint32(i), vals[j]
+			key[j] = uint32(i)
 		}
 	}
 	rng := rtcompare.NewDPRNG(0x7A15)
@@ -58,9 +59,11 @@ func newPairs(n int, vals []uint64, offs []int, r float64, unique bool) pairs {
 				k = uint64(n) + rng.Uint64()%extra
 			}
 		}
-		p.key[target+i], p.val[target+i] = uint32(k), transientBit|uint64(i)
+		key[target+i], trans[i] = uint32(k), transientBit|uint64(i)
 	}
-	return p
+	// The corpus elements are the very values the fixture holds, so that
+	// candidates built by the stream and by the fixture agree (see weigh).
+	return pairs{key: key, val: append(slices.Clip(vals), toVs(trans)...)}
 }
 
 // workloadConfig is the configuration of both streams of a scenario.
@@ -76,9 +79,9 @@ func (f *fixture) structure(impl string) workload.Structure[any] {
 	s := workload.Structure[any]{Name: impl}
 	switch impl {
 	case ordered:
-		s.New = func() any { return multimap.NewOrdered[uint64]() }
+		s.New = func() any { return multimap.NewOrdered[V]() }
 		s.Apply = func(a any, run []workload.Op) {
-			m := a.(*multimap.Ordered[uint64])
+			m := a.(*multimap.Ordered[V])
 			for _, op := range run {
 				if op.Kind == workload.Insert {
 					m.AddValue(kb[p.key[op.ID]], p.val[op.ID])
@@ -88,9 +91,9 @@ func (f *fixture) structure(impl string) workload.Structure[any] {
 			}
 		}
 	case hashed:
-		s.New = func() any { return multimap.NewHashed[uint64]() }
+		s.New = func() any { return multimap.NewHashed[V]() }
 		s.Apply = func(a any, run []workload.Op) {
-			m := a.(*multimap.Hashed[uint64])
+			m := a.(*multimap.Hashed[V])
 			for _, op := range run {
 				if op.Kind == workload.Insert {
 					m.AddValue(kb[p.key[op.ID]], p.val[op.ID])

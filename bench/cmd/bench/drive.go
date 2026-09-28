@@ -291,7 +291,7 @@ func writeRunInfo(c config, start time.Time) error {
 		"cpu": cpuName(), "args": os.Args[1:], "rtcompare": rtcompareVersion(),
 		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
 		"values": c.profiles, "keys": c.kinds, "sizes": c.sizes, "ops": c.ops, "memn": c.memN,
-		"suite": flag.Lookup("suite").Value.String(), "vs": vsOnly,
+		"suite": flag.Lookup("suite").Value.String(), "vs": vsOnly, "value_type": fmt.Sprintf("%T", *new(V)),
 	}
 	if baseKit != nil {
 		info["baseline"] = baseKit.ref

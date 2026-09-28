@@ -17,9 +17,9 @@ const baseline = "baseline"
 // candidates' loops do.
 type kit struct {
 	ref       string // the commit the candidate was copied from
-	build     func(k [][]byte, vals []uint64, offs []int) any
+	build     func(k [][]byte, vals []V, offs []int) any
 	empty     func() any
-	apply     func(m any, k [][]byte, key []uint32, val []uint64, run []workload.Op) // see fixture.structure
+	apply     func(m any, k [][]byte, key []uint32, val []V, run []workload.Op) // see fixture.structure
 	valuesFor func(m any, p keys.Set) func(uint64)
 	between   func(m any, from, to keys.Set) func(uint64)
 	sum       func(m any, key []byte) uint64

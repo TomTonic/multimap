@@ -38,7 +38,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			var acc uint64
 			for range n {
 				for v := range m.ValuesForSeq(p.B[j]) {
-					acc += v
+					acc += weigh(v)
 				}
 				if j++; j == len(p.B) {
 					j = 0
@@ -54,7 +54,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			var acc uint64
 			for range n {
 				for v := range m.ValuesForSeq(p.B[j]) {
-					acc += v
+					acc += weigh(v)
 				}
 				if j++; j == len(p.B) {
 					j = 0
@@ -69,7 +69,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			for range n {
 				if s, ok := m.Get(p.S[j]); ok {
 					for v := range s {
-						acc += v
+						acc += weigh(v)
 					}
 				}
 				if j++; j == len(p.B) {
@@ -84,7 +84,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			var acc uint64
 			for range n {
 				for v := range m[p.S[j]] {
-					acc += v
+					acc += weigh(v)
 				}
 				if j++; j == len(p.B) {
 					j = 0
@@ -98,7 +98,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			var acc uint64
 			for range n {
 				if v, ok := m.Get(p.S[j]); ok {
-					acc += v
+					acc += weigh(v)
 				}
 				if j++; j == len(p.B) {
 					j = 0
@@ -122,7 +122,7 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 			var acc uint64
 			for range n {
 				for v := range m.ValuesBetweenInclusiveSeq(from.B[j], to.B[j]) {
-					acc += v
+					acc += weigh(v)
 				}
 				if j++; j == len(from.B) {
 					j = 0
@@ -138,7 +138,7 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 			var acc uint64
 			for range n {
 				for v := range m.ValuesBetweenInclusiveSeq(from.B[j], to.B[j]) {
-					acc += v
+					acc += weigh(v)
 				}
 				if j++; j == len(from.B) {
 					j = 0

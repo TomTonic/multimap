@@ -11,11 +11,11 @@ import (
 // The kit of the baseline candidate: the same code as the ordered candidate's,
 // on the copy of Ordered in package baseline.
 func init() {
-	type om = multimap.Ordered[uint64]
+	type om = multimap.Ordered[V]
 	baseKit = &kit{
 		ref: multimap.BaselineRef,
-		build: func(k [][]byte, vals []uint64, offs []int) any {
-			m := multimap.NewOrdered[uint64]()
+		build: func(k [][]byte, vals []V, offs []int) any {
+			m := multimap.NewOrdered[V]()
 			for i, key := range k {
 				for _, v := range vals[offs[i]:offs[i+1]] {
 					m.AddValue(key, v)
@@ -23,8 +23,8 @@ func init() {
 			}
 			return m
 		},
-		empty: func() any { return multimap.NewOrdered[uint64]() },
-		apply: func(a any, k [][]byte, key []uint32, val []uint64, run []workload.Op) {
+		empty: func() any { return multimap.NewOrdered[V]() },
+		apply: func(a any, k [][]byte, key []uint32, val []V, run []workload.Op) {
 			m := a.(*om)
 			for _, op := range run {
 				if op.Kind == workload.Insert {
@@ -40,7 +40,7 @@ func init() {
 				var acc uint64
 				for range n {
 					for v := range m.ValuesForSeq(p.B[j]) {
-						acc += v
+						acc += weigh(v)
 					}
 					if j++; j == len(p.B) {
 						j = 0
@@ -55,7 +55,7 @@ func init() {
 				var acc uint64
 				for range n {
 					for v := range m.ValuesBetweenInclusiveSeq(from.B[j], to.B[j]) {
-						acc += v
+						acc += weigh(v)
 					}
 					if j++; j == len(from.B) {
 						j = 0

@@ -68,6 +68,18 @@ unique column, and `ordered` is compared with `btree-map`. In `churn` and
 the value and disappears with it; there are as many such keys as corpus
 keys, so `-ratio` is at most 2 with unique values.
 
+Built with the tag `strvals`, the bench uses `string` values instead: each
+value number as 16 hex digits, like a record ID
+(`go run -tags strvals ./cmd/bench`). Values that hold a pointer take other
+paths than integers in some candidates, `ordered` among them, and the
+garbage collector has to scan them. The profiles are then reported as
+`multi-str` and `unique-str`. All value strings are views into one buffer
+that no candidate owns, as the key corpus is, so the memory figures count
+each value's 16-byte string header but not its bytes. The timed loops add
+up the address of each value's bytes, which reads the string header the
+candidate holds but not the bytes behind it. Both builds share one source;
+the `uint64` build compiles its timed loops exactly as before.
+
 ## Results
 
 AMD Ryzen 9 7900 (12 cores, 24 threads), Linux 6.18 under WSL2 on Windows,

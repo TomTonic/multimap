@@ -86,15 +86,16 @@ func writeMem(c config, rows []memResult) error {
 	b.WriteString("| values | keys | n | candidate | rounds | heap B/key | scannable B/key | GC CPU per cycle | heap B/key after removing half the keys |\n")
 	b.WriteString("|---|---|---:|---|---:|---:|---:|---:|---:|\n")
 	for _, profile := range c.profiles {
+		label := profile + valueTag
 		for _, kind := range c.kinds {
-			base := median(field(groups[key{profile, kind, "none"}], func(r memResult) float64 { return r.GCCPUMs }))
+			base := median(field(groups[key{label, kind, "none"}], func(r memResult) float64 { return r.GCCPUMs }))
 			for _, impl := range implsFor(profile) {
-				g := groups[key{profile, kind, impl}]
+				g := groups[key{label, kind, impl}]
 				if len(g) == 0 {
 					continue
 				}
 				f := func(get func(memResult) float64) float64 { return median(field(g, get)) }
-				fmt.Fprintf(&b, "| %s | %s | %d | %s | %d | %.0f | %.0f | %+.0f ms | %.0f |\n", profile, kind, g[0].N, impl, len(g),
+				fmt.Fprintf(&b, "| %s | %s | %d | %s | %d | %.0f | %.0f | %+.0f ms | %.0f |\n", label, kind, g[0].N, impl, len(g),
 					f(func(r memResult) float64 { return r.HeapPerKey }),
 					f(func(r memResult) float64 { return r.ScanPerKey }),
 					f(func(r memResult) float64 { return r.GCCPUMs })-base,
