@@ -3,15 +3,18 @@
 // that anyone can check where the data comes from and rebuild it byte for
 // byte; the benchmark itself never touches the network.
 //
-//	go run ./cmd/mkcorpora            # from the bench directory
+//	go run ./cmd/mkcorpora                # all corpora, from the bench directory
+//	go run ./cmd/mkcorpora hosts streets  # only these
 //
-// Two corpora:
+// Three corpora:
 //   - streets.tsv.gz: German street names and the localities that have a
 //     street of that name, from the OpenPLZ API data, which is an extract of
 //     OpenStreetMap (ODbL 1.0, see keys/testdata/README.md).
 //   - paths.txt.gz: a deterministic sample of the file paths in the packages
 //     of Debian 12 "bookworm" (main, all and amd64), from the archive's
 //     Contents files as of the snapshot below.
+//   - hosts.txt.gz: the most popular host names of the Tranco list below,
+//     including subdomains, in rank order (see keys/testdata/README.md).
 package main
 
 import (
@@ -24,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,18 +36,37 @@ import (
 const (
 	streetsURL = "https://raw.githubusercontent.com/openpotato/openplzapi.data/c26389b30573ab2738d0b14fd350f143aa0a1251/src/de/osm/streets.updated.csv"
 	debianURL  = "https://snapshot.debian.org/archive/debian/20260901T000000Z/dists/bookworm/main/"
+	// trancoURL is Tranco list 8P48V with subdomains, generated on
+	// 2026-09-27 from the ranks of 2026-08-29 to 2026-09-27; a list ID is
+	// permanent.
+	trancoURL = "https://tranco-list.eu/download/8P48V/1000000"
 	// pathSample is how many paths the sample keeps: enough for 256K keys
 	// with as many miss keys (see keys.Generate), with some to spare.
 	pathSample = 600_000
+	// hostCount is how many hosts the host corpus keeps, from the top; the
+	// url kind draws hosts by rank and rarely reaches further down.
+	hostCount = 200_000
 )
 
 func main() {
 	out := filepath.Join("keys", "testdata")
-	if err := streets(filepath.Join(out, "streets.tsv.gz")); err != nil {
-		fail(err)
+	all := map[string]func(string) error{"streets": streets, "paths": paths, "hosts": hosts}
+	names := os.Args[1:]
+	if len(names) == 0 {
+		names = []string{"streets", "paths", "hosts"}
 	}
-	if err := paths(filepath.Join(out, "paths.txt.gz")); err != nil {
-		fail(err)
+	for _, name := range names {
+		build, ok := all[name]
+		if !ok {
+			fail(fmt.Errorf("unknown corpus %q; want streets, paths or hosts", name))
+		}
+		ext := ".txt.gz"
+		if name == "streets" {
+			ext = ".tsv.gz"
+		}
+		if err := build(filepath.Join(out, name+ext)); err != nil {
+			fail(err)
+		}
 	}
 }
 
@@ -190,6 +213,41 @@ func contents(url string, seen map[string]bool) error {
 		seen["/"+p] = true
 	}
 	return sc.Err()
+}
+
+// validHost matches the host names the host corpus keeps: lowercase letters,
+// digits, dashes and dots, at least two labels, at most 64 bytes. It drops
+// the few service names with underscores and the long machine-made names of
+// DNS infrastructure.
+var validHost = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)+$`)
+
+// hosts writes the first hostCount valid host names of the Tranco list, one
+// per line in rank order.
+func hosts(path string) error {
+	body, err := get(trancoURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = body.Close() }()
+	r := csv.NewReader(body)
+	var keep []string
+	for len(keep) < hostCount {
+		rec, err := r.Read()
+		if err == io.EOF {
+			return fmt.Errorf("%s: only %d valid hosts", trancoURL, len(keep))
+		}
+		if err != nil {
+			return err
+		}
+		if h := rec[1]; len(h) <= 64 && validHost.MatchString(h) {
+			keep = append(keep, h)
+		}
+	}
+	return writeGzip(path, func(w *strings.Builder) {
+		for _, h := range keep {
+			w.WriteString(h + "\n")
+		}
+	})
 }
 
 func sortedKeys[V any](m map[string]V) []string {

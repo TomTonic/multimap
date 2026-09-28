@@ -48,13 +48,14 @@ with 262,144 keys, which fit only partly, and in the release suite with
 | `str` | synthetic paths such as `tenant/category/word/12345` | about 26 B |
 | `uuid` | random UUIDs in lowercase hex: no shared prefixes | 36 B |
 | `email` | `first.last@domain` over five domains: the shared part comes last | about 25 B |
-| `url` | three hosts, 2-4 path segments and a query: long shared prefixes | about 66 B |
+| `url` | real host names from the Tranco list with synthetic paths shaped like real sites | about 63 B, up to 190 |
 | `path` | real file paths from the packages of Debian 12 | about 65 B, up to 300 |
 | `street` | real German street names from OpenStreetMap | about 14 B |
 
-`path` and `street` come from [`keys/testdata`](keys/testdata/README.md),
-where their sources and licenses are documented; they hold enough keys for
-262,144 and 212,000 keys respectively, and larger scenarios are skipped.
+`path`, `street` and the hosts of `url` come from
+[`keys/testdata`](keys/testdata/README.md), where their sources and licenses
+are documented. `path` and `street` hold enough keys for 262,144 and 212,000
+keys respectively, and larger scenarios are skipped; `url` has no limit.
 
 Values are `uint64`, and their number per key is skewed like a real index
 (`-values multi`): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and

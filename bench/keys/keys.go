@@ -61,8 +61,9 @@ const (
 	// Email are addresses "first.last@domain" over a few common domains,
 	// about 25 bytes: the shared part comes last.
 	Email Kind = "email"
-	// URL are web addresses over three hosts with 2-4 path segments and a
-	// query, about 66 bytes: long shared prefixes, differences at the end.
+	// URL are web addresses over the real host names of the Tranco list,
+	// with paths shaped like those of real sites (see url.go), about 70
+	// bytes: many hosts near the start, shared sections behind each host.
 	URL Kind = "url"
 	// Path are real file paths from the packages of Debian 12, about 65
 	// bytes and up to 300 (testdata/paths.txt.gz, see cmd/mkcorpora).
@@ -180,17 +181,8 @@ func generator(kind Kind, rng *rtcompare.DPRNG) func() []byte {
 			return append(k, domains[rng.Uint64()%uint64(len(domains))]...)
 		}
 	case URL:
-		hosts := []string{"https://www.example.com/", "https://shop.example.com/", "https://api.example.net/v2/"}
-		segs := []string{"products", "category", "users", "orders", "items", "search", "images", "static"}
-		return func() []byte {
-			k := []byte(hosts[rng.Uint64()%3])
-			for range 2 + rng.Uint64()%3 {
-				k = append(append(k, segs[rng.Uint64()%uint64(len(segs))]...), '/')
-			}
-			k = strconv.AppendUint(k, rng.Uint64()%1_000_000, 10)
-			k = append(k, "?ref="...)
-			return strconv.AppendUint(k, rng.Uint64()%(1<<32), 16)
-		}
+		m := theURLModel()
+		return func() []byte { return m.url(rng) }
 	case Str:
 		tenants := words(rng, 16)
 		cats := words(rng, 256)
