@@ -1,0 +1,223 @@
+diff --git a/internal/art/flat_test.go b/internal/art/flat_test.go
+index 5d4f5e6..a7017fa 100644
+--- a/internal/art/flat_test.go
++++ b/internal/art/flat_test.go
+@@ -217,3 +217,28 @@ func TestPointerFree(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// TestReachInFirstValue makes sure that range queries over long keys fetch
++// the right memory ahead: the first value of each key, not a neighbouring
++// object. The scan of the ART (touchChildren) reads the byte at key length
++// plus reach.val from every flat leaf; for every value type alignment and
++// every key length a flat leaf holds, that byte must lie inside the leaf's
++// first value.
++func TestReachInFirstValue(t *testing.T) {
++	check := func(name string, r reach, off func(klen int) uintptr, size uintptr) {
++		for klen := 0; klen <= maxFlatKey; klen++ {
++			if b := uintptr(klen) + r.val; b < off(klen) || b >= off(klen)+size {
++				t.Fatalf("%s, key of %d bytes: byte %d lies outside the first value at [%d, %d)", name, klen, b, off(klen), off(klen)+size)
++			}
++		}
++	}
++	check("uint8", (&Map[uint8]{flat: 1}).reach(), flatOff[uint8], 1)
++	check("uint16", (&Map[uint16]{flat: 1}).reach(), flatOff[uint16], 2)
++	check("uint32", (&Map[uint32]{flat: 1}).reach(), flatOff[uint32], 4)
++	check("uint64", (&Map[uint64]{flat: 1}).reach(), flatOff[uint64], 8)
++	check("[3]uint32", (&Map[[3]uint32]{flat: 1}).reach(), flatOff[[3]uint32], 12)
++	check("[2]uint64", (&Map[[2]uint64]{flat: 1}).reach(), flatOff[[2]uint64], 16)
++	if r := (&Map[string]{flat: -1}).reach(); r.val != 0 {
++		t.Fatalf("set leaves only: reach.val = %d, want 0", r.val)
++	}
++}
+diff --git a/internal/art/map.go b/internal/art/map.go
+index b112131..5f29aeb 100644
+--- a/internal/art/map.go
++++ b/internal/art/map.go
+@@ -176,15 +176,26 @@ func (m *Map[T]) leafTail() uintptr {
+ 	return unsafe.Sizeof(leaf[T, [16]byte]{}) - 1
+ }
+ 
++// reach returns what the scan touches ahead in this map's leaves (see
++// touchChildren): the smallest leaf's last byte and, with flat leaves, the
++// first value behind a long key.
++func (m *Map[T]) reach() reach {
++	if m.flat > 0 {
++		var z T
++		return reach{tail: m.leafTail(), val: 3 + unsafe.Sizeof(z)}
++	}
++	return reach{tail: m.leafTail()}
++}
++
+ // Range calls fn for every key within b, in ascending key order, until fn
+ // returns false. The key belongs to the map: fn must not modify or retain
+ // it, and must not modify the map.
+ func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
+-	m.t.scan(b, m.leafTail(), func(l *leafHead) bool { return fn(l.key()) })
++	m.t.scan(b, m.reach(), func(l *leafHead) bool { return fn(l.key()) })
+ }
+ 
+ // RangeValues calls yield for every value of every key within b, key by key
+ // in ascending key order, until yield returns false.
+ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
+-	m.t.scan(b, m.leafTail(), func(l *leafHead) bool { return eachValue(l, yield) })
++	m.t.scan(b, m.reach(), func(l *leafHead) bool { return eachValue(l, yield) })
+ }
+diff --git a/internal/art/scan.go b/internal/art/scan.go
+index 8170012..668e921 100644
+--- a/internal/art/scan.go
++++ b/internal/art/scan.go
+@@ -17,10 +17,10 @@ type Bounds struct {
+ }
+ 
+ // scan calls fn for every leaf within b, in ascending key order, until fn
+-// returns false. leafTail is the offset of the last byte of a leaf, which
+-// the scan touches ahead (see touchChildren).
+-func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
+-	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, fn)
++// returns false. r says which bytes of the leaves the scan touches ahead
++// (see touchChildren).
++func (t *Tree) scan(b *Bounds, r reach, fn func(*leafHead) bool) {
++	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, r, fn)
+ }
+ 
+ // scanRange visits the leaves of the subtree n within b in order and returns
+@@ -30,7 +30,7 @@ func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
+ // are checked structurally: a node's path and child bytes are compared with a
+ // bound only while on its path, so a subtree strictly inside the range is
+ // visited without reading a single key.
+-func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, fn func(*leafHead) bool) bool {
++func scanRange(n *header, b *Bounds, depth int, lo, hi bool, r reach, fn func(*leafHead) bool) bool {
+ 	if n == nil {
+ 		return true
+ 	}
+@@ -84,8 +84,8 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
+ 	if hi {
+ 		hiB = b.To[depth]
+ 	}
+-	touchChildren(n, loB, hiB, leafTail)
+-	if !scanChildren(n, b, depth, lo, hi, loB, hiB, leafTail, fn) {
++	touchChildren(n, loB, hiB, r)
++	if !scanChildren(n, b, depth, lo, hi, loB, hiB, r, fn) {
+ 		return false
+ 	}
+ 	return !hi // on To's path, everything after the child for hiB is above To
+@@ -107,9 +107,9 @@ func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(*leafHead) bool) bool
+ 
+ // scanChildren visits the children with byte in [loB, hiB] in order. Only the
+ // child for loB stays on From's path, only the one for hiB on To's.
+-func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, fn func(*leafHead) bool) bool {
++func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, r reach, fn func(*leafHead) bool) bool {
+ 	visit := func(c *header, k byte) bool {
+-		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, fn)
++		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, r, fn)
+ 	}
+ 	switch n.kind {
+ 	case kN26, kN58:
+@@ -156,30 +156,37 @@ func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, l
+ 	return true
+ }
+ 
++// reach says which bytes of a leaf the scan touches ahead (see
++// touchChildren). tail is the last byte of the smallest leaf the map creates,
++// which every leaf has. val, if not 0, is 3 plus the size of a value in flat
++// leaves: the byte at klen+val always lies in a flat leaf's first value,
++// whatever the value's alignment.
++type reach struct{ tail, val uintptr }
++
+ // touchChildren reads one byte from the start of every child of n with byte in
+-// [loB, hiB], and from leaves also the byte at leafTail, the last one of the
+-// smallest leaf, which lies in or near the value set. The scan would otherwise take the cache misses for these objects
+-// one after another, each only once it has finished the previous child's
+-// subtree. These loads do not depend on each other, so the CPU keeps all their
+-// misses in flight at once. A node with fewer than two children in range has
+-// nothing to overlap and is skipped.
++// [loB, hiB], and from leaves also the byte at r.tail, the last one of the
++// smallest leaf, which lies in or near the value set. The scan would
++// otherwise take the cache misses for these objects one after another, each
++// only once it has finished the previous child's subtree. These loads do not
++// depend on each other, so the CPU keeps all their misses in flight at once.
++// A node with fewer than two children in range has nothing to overlap and is
++// skipped.
++//
++// A flat leaf with a long key holds its first value beyond r.tail, in a cache
++// line the first wave did not touch. A second wave reads that value, at an
++// offset each leaf's key length gives: its loads wait for the first wave, but
++// again all at once, rather than one per leaf during the scan.
+ //
+ // Touching is unconditional: once a tree no longer fits in the cache it makes
+ // range scans up to 20% faster, while a tree that stays in the cache loses at
+ // most about 4% (bench/README.md). Where that line lies depends on the cache
+ // size and on what else the program keeps in it, so no fixed tree size could
+ // draw it.
+-func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
++func touchChildren(n *header, loB, hiB byte, r reach) {
+ 	if loB >= hiB { // at most one child in range
+ 		return
+ 	}
+-	var acc uint8
+-	touch := func(c *header) {
+-		acc += uint8(c.kind)
+-		if isLeaf(c.kind) {
+-			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTail))
+-		}
+-	}
++	var cs []*header // may hold nil in a 256-way node
+ 	switch n.kind {
+ 	case kN26, kN58:
+ 		bm, child := bitmapOf(n)
+@@ -187,20 +194,9 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
+ 		if swar.Has(bm, hiB) {
+ 			end++
+ 		}
+-		start := swar.Rank(bm, loB)
+-		if end-start < 2 {
+-			return
+-		}
+-		for _, c := range child[start:end] {
+-			touch(c)
+-		}
++		cs = child[swar.Rank(bm, loB):end]
+ 	case kN256:
+-		x := asN256(n)
+-		for k := int(loB); k <= int(hiB); k++ {
+-			if c := x.child[k]; c != nil {
+-				touch(c)
+-			}
+-		}
++		cs = asN256(n).child[loB : int(hiB)+1]
+ 	default:
+ 		keys, child := sorted(n)
+ 		start, end := 0, len(keys)
+@@ -210,11 +206,26 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
+ 		for end > start && keys[end-1] > hiB {
+ 			end--
+ 		}
+-		if end-start < 2 {
+-			return
++		cs = child[start:end]
++	}
++	if len(cs) < 2 {
++		return
++	}
++	var acc uint8
++	for _, c := range cs {
++		if c != nil {
++			acc += uint8(c.kind)
++			if isLeaf(c.kind) {
++				acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), r.tail))
++			}
+ 		}
+-		for _, c := range child[start:end] {
+-			touch(c)
++	}
++	if r.val != 0 {
++		for _, c := range cs {
++			if c != nil && c.kind > kSet && c.kind <= kLastLeaf {
++				off := max(uintptr(asLeaf(c).klen)+r.val, r.tail)
++				acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), off))
++			}
+ 		}
+ 	}
+ 	runtime.KeepAlive(acc) // keeps the loads from being optimized away
