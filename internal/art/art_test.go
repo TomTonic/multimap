@@ -449,8 +449,8 @@ func TestLeafLayout(t *testing.T) {
 				wantLen = longKey
 			}
 			for _, x := range []*leafHead{l, ls} {
-				if x.kind != kLeaf || x.klen != wantLen || x.cls != 0 || !bytes.Equal(x.key(), want) {
-					t.Fatalf("leaf holds kind %d, klen %d, class %d, key %v; want a set leaf of %d bytes %v", x.kind, x.klen, x.cls, x.key(), tc.n, want)
+				if x.kind != kSet || x.klen != wantLen || !bytes.Equal(x.key(), want) {
+					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a set leaf of %d bytes %v", x.kind, x.klen, x.key(), tc.n, want)
 				}
 			}
 			gotU := uintptr(unsafe.Pointer(vals[uint64](l))) - uintptr(unsafe.Pointer(l))
@@ -513,7 +513,7 @@ func checkInvariants(t *testing.T, tr *Tree) {
 // returns its number of leaves.
 func checkNode(t *testing.T, n *header, depth int) int {
 	t.Helper()
-	if n.kind == kLeaf {
+	if isLeaf(n.kind) {
 		if len(asLeaf(n).key()) < depth {
 			t.Fatalf("leaf %q is shorter than its depth %d", asLeaf(n).key(), depth)
 		}
@@ -611,7 +611,7 @@ func eachChild(n *header, fn func(byte, *header)) {
 }
 
 func walkLeaves(n *header, fn func(*leafHead)) {
-	if n.kind == kLeaf {
+	if isLeaf(n.kind) {
 		fn(asLeaf(n))
 		return
 	}

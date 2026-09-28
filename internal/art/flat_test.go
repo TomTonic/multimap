@@ -41,12 +41,12 @@ func TestFlatLeaves(t *testing.T) {
 				l := m.t.find(key)
 				switch {
 				case klen > maxFlatKey:
-					if l.cls != 0 {
+					if l.cls() != 0 {
 						t.Fatalf("a key of %d bytes got a flat leaf", klen)
 					}
-				case l.cls != 0:
-					if int(l.n) != len(want) || len(want) > flatCap[uint64](l.cls, klen) {
-						t.Fatalf("flat leaf of class %d holds %d values, want %d", l.cls, l.n, len(want))
+				case l.cls() != 0:
+					if int(l.n) != len(want) || len(want) > flatCap[uint64](l.cls(), klen) {
+						t.Fatalf("flat leaf of class %d holds %d values, want %d", l.cls(), l.n, len(want))
 					}
 				case len(want) <= maxCap/2:
 					t.Fatalf("set leaf with %d values, want a flat leaf again", len(want))
@@ -57,7 +57,7 @@ func TestFlatLeaves(t *testing.T) {
 				m.Add(key, v) // a duplicate changes nothing
 				want = append(want, v)
 				check()
-				if l := m.t.find(key); klen <= maxFlatKey && len(want) > maxCap && l.cls != 0 {
+				if l := m.t.find(key); klen <= maxFlatKey && len(want) > maxCap && l.cls() != 0 {
 					t.Fatalf("%d values in a flat leaf, the largest holds %d", len(want), maxCap)
 				}
 			}
@@ -89,8 +89,8 @@ func TestFlatLeafHysteresis(t *testing.T) {
 		m.Add(key, v)
 	}
 	l := m.t.find(key)
-	if want := flatClass[uint64](len(key), 2*full); l.cls != want {
-		t.Fatalf("leaf in class %d after %d values, want class %d, which holds twice as many", l.cls, full+1, want)
+	if want := flatClass[uint64](len(key), 2*full); l.cls() != want {
+		t.Fatalf("leaf in class %d after %d values, want class %d, which holds twice as many", l.cls(), full+1, want)
 	}
 	for range 10 {
 		m.Remove(key, uint64(full))
@@ -114,7 +114,7 @@ func TestFlatLeafHysteresis(t *testing.T) {
 		for v := range uint64(3) {
 			m.Add(few, v+1)
 		}
-		if m.t.find(few) != l || l.cls != minGrown {
+		if m.t.find(few) != l || l.cls() != minGrown {
 			t.Fatalf("hovering between 1 and 4 values moved the leaf or left the cache line")
 		}
 	}
@@ -152,7 +152,7 @@ func TestFlatValueTypes(t *testing.T) {
 	}
 }
 
-// roundTrip returns a test that adds 150 values, made by mk, to each of a
+// roundTrip returns a test that adds 300 values, made by mk, to each of a
 // few keys, removes every other one, checks what is left and reports the
 // map's leaf mode. Values that mk makes equal count once.
 func roundTrip[T comparable](mk func(int) T) func(t *testing.T) int8 {
@@ -160,19 +160,19 @@ func roundTrip[T comparable](mk func(int) T) func(t *testing.T) int8 {
 		var m Map[T]
 		keys := [][]byte{nil, []byte("a"), []byte("ab"), bytes.Repeat([]byte("x"), 70)}
 		for _, k := range keys {
-			for i := range 150 {
+			for i := range 300 {
 				m.Add(k, mk(i))
 			}
-			for i := 0; i < 150; i += 2 {
+			for i := 0; i < 300; i += 2 {
 				m.Remove(k, mk(i))
 			}
 		}
 		runtime.GC()
 		want := map[T]bool{}
-		for i := range 150 {
+		for i := range 300 {
 			want[mk(i)] = true
 		}
-		for i := 0; i < 150; i += 2 {
+		for i := 0; i < 300; i += 2 {
 			delete(want, mk(i))
 		}
 		for _, k := range keys {

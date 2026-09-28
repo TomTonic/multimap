@@ -22,7 +22,7 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 			t.size++
 			return loc
 		}
-		if n.kind == kLeaf {
+		if isLeaf(n.kind) {
 			return t.splitLeaf(loc, asLeaf(n), key, depth, nl)
 		}
 		if n.plen > 0 {

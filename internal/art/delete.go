@@ -25,7 +25,7 @@ func del(loc **header, key []byte, depth int) *leafHead {
 	if n == nil {
 		return nil
 	}
-	if n.kind == kLeaf {
+	if isLeaf(n.kind) {
 		l := asLeaf(n)
 		if !bytes.Equal(l.key(), key) {
 			return nil
@@ -77,7 +77,7 @@ func collapse(n *header, pl, cd int) *header {
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.kind == kLeaf {
+	if isLeaf(c.kind) {
 		return c
 	}
 	cl := c.pathLen(cd)

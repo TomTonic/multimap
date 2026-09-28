@@ -34,7 +34,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 	if n == nil {
 		return true
 	}
-	if n.kind == kLeaf {
+	if isLeaf(n.kind) {
 		return scanLeaf(asLeaf(n), b, lo, hi, fn)
 	}
 	pl := n.pathLen(depth)
@@ -176,7 +176,7 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 	var acc uint8
 	touch := func(c *header) {
 		acc += uint8(c.kind)
-		if c.kind == kLeaf {
+		if isLeaf(c.kind) {
 			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTail))
 		}
 	}

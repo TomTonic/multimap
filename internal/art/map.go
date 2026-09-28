@@ -31,7 +31,7 @@ func newSetLeaf[T comparable](key []byte) *leafHead {
 		return newInline[T, [64]byte](key)
 	}
 	l := &leaf[T, string]{k: string(key)}
-	l.kind, l.klen = kLeaf, longKey
+	l.kind, l.klen = kSet, longKey
 	return &l.leafHead
 }
 
@@ -39,7 +39,7 @@ func newSetLeaf[T comparable](key []byte) *leafHead {
 func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte](key []byte) *leafHead {
 	l := &leaf[T, K]{}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), key)
-	l.kind, l.klen = kLeaf, uint8(len(key))
+	l.kind, l.klen = kSet, uint8(len(key))
 	return &l.leafHead
 }
 
@@ -97,7 +97,7 @@ func (m *Map[T]) Add(key []byte, v T) {
 	}
 	loc := m.t.upsert(key, nl)
 	l := asLeaf(*loc)
-	if l.cls == 0 {
+	if l.kind == kSet {
 		vals[T](l).Add(v)
 		return
 	}
@@ -116,7 +116,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	if l == nil {
 		return
 	}
-	if l.cls != 0 {
+	if l.kind != kSet {
 		switch c, empty := flatRemove(l, v); {
 		case empty:
 			m.t.remove(key)
@@ -154,7 +154,7 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 // eachValue calls yield for every value of leaf l and reports whether it ran
 // to completion.
 func eachValue[T comparable](l *leafHead, yield func(T) bool) bool {
-	if l.cls == 0 {
+	if l.kind == kSet {
 		return vals[T](l).Each(yield)
 	}
 	for _, v := range flatVals[T](l) {

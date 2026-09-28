@@ -31,7 +31,7 @@ func (t *Tree) find(key []byte) *leafHead {
 	depth := 0
 	skipped := false // whether path bytes beyond the twelfth went unchecked
 	for n != nil {
-		if n.kind == kLeaf {
+		if isLeaf(n.kind) {
 			// Every key below a path starts with it, so once the whole path
 			// to the leaf is checked, only the rest of the key needs comparing.
 			from := depth
@@ -108,7 +108,7 @@ func (t *Tree) find(key []byte) *leafHead {
 // present, its paths need no checking: the descent only follows them.
 func (t *Tree) findSlot(key []byte) **header {
 	loc, depth := &t.root, 0
-	for (*loc).kind != kLeaf {
+	for !isLeaf((*loc).kind) {
 		n := *loc
 		depth += n.pathLen(depth)
 		if depth == len(key) {
@@ -160,7 +160,7 @@ func findLoc(n *header, b byte) **header {
 
 // minLeaf returns the leaf with the smallest key below n.
 func minLeaf(n *header) *leafHead {
-	for n.kind != kLeaf {
+	for !isLeaf(n.kind) {
 		if t := termOf(n); t != nil {
 			return t // a prefix of every other key below n
 		}
@@ -175,7 +175,7 @@ func minLeaf(n *header) *leafHead {
 
 // maxLeaf returns the leaf with the largest key below n.
 func maxLeaf(n *header) *leafHead {
-	for n.kind != kLeaf {
+	for !isLeaf(n.kind) {
 		if n.kind == kN256 {
 			x := asN256(n)
 			k := 255

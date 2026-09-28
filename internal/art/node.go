@@ -42,10 +42,21 @@ import (
 	"github.com/TomTonic/multimap/internal/vset"
 )
 
+// kind tells the node or leaf type, and a flat leaf's size class: an object
+// is a leaf iff its kind is at most kLastLeaf (see isLeaf).
 type kind uint8
 
 const (
-	kLeaf kind = iota + 1
+	kSet kind = iota + 1 // set leaf; kSet+c is a flat leaf of class c (see flatSizes)
+	_
+	_
+	_
+	_
+	_
+	_
+	_
+	_
+	kLastLeaf // flat leaf of the largest class
 	kN5
 	kN12
 	kN26
@@ -85,11 +96,17 @@ const longPath = 1<<16 - 1
 // leafHead is the start of every leaf (4 B). An inline key follows at keyOff;
 // a string key at strOff.
 type leafHead struct {
-	kind kind
-	klen uint8 // length of an inline key, or longKey for a string key
-	n    uint8 // flat leaves: number of values
-	cls  uint8 // flat leaves: size class (see flatSizes); 0 in a set leaf
+	kind kind   // kSet, or kSet+c for a flat leaf of class c
+	klen uint8  // length of an inline key, or longKey for a string key
+	n    uint16 // flat leaves: number of values
 }
+
+// isLeaf reports whether an object of kind k is a leaf.
+func isLeaf(k kind) bool { return k <= kLastLeaf }
+
+// cls returns the size class of a flat leaf (see flatSizes), or 0 for a set
+// leaf.
+func (l *leafHead) cls() uint8 { return uint8(l.kind - kSet) }
 
 // longKey in leafHead.klen marks a key held as a string.
 const longKey = 255

@@ -27,7 +27,7 @@ import (
 // Up to 512 bytes the scan reads a few adjacent cache lines, which costs less
 // than the extra cache miss of a separate value array.
 
-// flatSizes are the size classes of flat leaves, indexed by leafHead.cls;
+// flatSizes are the size classes of flat leaves, indexed by leafHead.cls();
 // class 0 marks a set leaf.
 var flatSizes = [...]uintptr{0, 32, 48, 64, 96, 128, 192, 256, 384, 512}
 
@@ -122,7 +122,7 @@ func allocFlat(cls uint8) *leafHead {
 		p = unsafe.Pointer(new([64]uint64))
 	}
 	l := (*leafHead)(p)
-	l.kind, l.cls = kLeaf, cls
+	l.kind = kSet + kind(cls)
 	return l
 }
 
@@ -161,7 +161,7 @@ func flatAdd[T comparable](l *leafHead, v T) *leafHead {
 		return nil
 	}
 	n := int(l.n)
-	if n == flatCap[T](l.cls, int(l.klen)) {
+	if n == flatCap[T](l.cls(), int(l.klen)) {
 		if flatClass[T](int(l.klen), n+1) == 0 {
 			return spill(l, v)
 		}
@@ -199,7 +199,7 @@ func flatRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 	if l.n == 0 {
 		return 0, true
 	}
-	if c := flatClass[T](int(l.klen), 2*int(l.n)); c != 0 && max(c, minGrown) < l.cls {
+	if c := flatClass[T](int(l.klen), 2*int(l.n)); c != 0 && max(c, minGrown) < l.cls() {
 		return max(c, minGrown), false
 	}
 	return 0, false
@@ -211,7 +211,7 @@ func resize[T comparable](l *leafHead, c uint8) *leafHead {
 	used := flatOff[T](int(l.klen)) + uintptr(l.n)*unsafe.Sizeof(z)
 	nl := allocFlat(c)
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(nl)), used), unsafe.Slice((*byte)(unsafe.Pointer(l)), used))
-	nl.cls = c
+	nl.kind = kSet + kind(c)
 	return nl
 }
 
