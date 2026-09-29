@@ -1,0 +1,679 @@
+== path multi n=4096 valuesFor: ordered vs hashed
+A 114.9 per op, B 50.21 per op
+difference -128.75% [-135.55%, -124.79%] at 95% confidence
+noise floor 0.748%, autocorrelation +0.455, resampled in blocks of 3
+resolved: A is slower than B
+  warning: the program holds 68 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: the ratio B/A shifted -5.44% from the first half of the run to the second, so the candidates had not reached a steady state and the difference depends on how long the run was; a common cause is a head start for whichever candidate ran alone last before the comparison or had its data built last, which a longer CollectOptions.WarmupDuration removes
+
+== path multi n=4096 valuesFor: ordered vs btree-sets
+A 115.7 per op, B 203 per op
+difference +43.00% [+41.85%, +44.08%] at 95% confidence
+noise floor 1.223%, autocorrelation +0.058
+resolved: A is faster than B
+  warning: the program holds 76 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 valuesFor: ordered vs map-sets
+A 114.4 per op, B 100.9 per op
+difference -13.38% [-15.02%, -11.89%] at 95% confidence
+noise floor 0.471%, autocorrelation -0.112
+resolved: A is slower than B
+  warning: the program holds 76 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs hashed
+A 4895 per op, B 6.38e+04 per op
+difference +92.33% [+92.23%, +92.50%] at 95% confidence
+noise floor 0.962%, autocorrelation +0.328, resampled in blocks of 3
+resolved: A is faster than B
+  warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs btree-sets
+A 4744 per op, B 7811 per op
+difference +39.26% [+38.14%, +41.17%] at 95% confidence
+noise floor 2.101%, autocorrelation -0.160
+resolved: A is faster than B
+  warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 valuesBetween: ordered vs map-sets
+A 4806 per op, B 6.506e+04 per op
+difference +92.61% [+92.36%, +92.79%] at 95% confidence
+noise floor 0.755%, autocorrelation -0.103
+resolved: A is faster than B
+  warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs hashed
+A 491.2 per op, B 5.833e+04 per op
+difference +99.16% [+99.07%, +99.21%] at 95% confidence
+noise floor 1.511%, autocorrelation +0.345, resampled in blocks of 3
+resolved: A is faster than B
+  warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs btree-sets
+A 363.3 per op, B 478.8 per op
+difference +24.12% [+19.64%, +27.66%] at 95% confidence
+noise floor 3.373%, autocorrelation -0.197
+resolved: A is faster than B
+  warning: the program holds 76 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs map-sets
+A 505.8 per op, B 5.45e+04 per op
+difference +99.07% [+98.99%, +99.13%] at 95% confidence
+noise floor 1.065%, autocorrelation +0.073
+resolved: A is faster than B
+  warning: the program holds 76 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: candidate B drifted during the run, shifting -1.08% from its first half to its second; the machine did not hold still
+
+== path multi n=4096 churn and build: ordered vs hashed
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 174.9 per op, B 78.68 per op
+  difference -122.35% [-126.21%, -116.57%] at 95% confidence
+  noise floor 1.822%, autocorrelation +0.251, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: candidate B drifted during the run, shifting +4.91% from its first half to its second; the machine did not hold still
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.358e+07 per op, B 6.674e+06 per op
+  difference -103.48% [-106.02%, -98.32%] at 95% confidence
+  noise floor 2.923%, autocorrelation -0.031
+  resolved: A is slower than B
+    warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 187.7 per op, B 252.8 per op
+  difference +25.74% [+21.34%, +28.04%] at 95% confidence
+  noise floor 1.889%, autocorrelation +0.051
+  resolved: A is faster than B
+    warning: the program holds 81 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.355e+07 per op, B 1.841e+07 per op
+  difference +26.41% [+25.42%, +28.53%] at 95% confidence
+  noise floor 0.794%, autocorrelation +0.126
+  resolved: A is faster than B
+    warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs map-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 175.4 per op, B 88.82 per op
+  difference -97.50% [-104.09%, -91.90%] at 95% confidence
+  noise floor 1.895%, autocorrelation +0.054
+  resolved: A is slower than B
+    warning: the program holds 81 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.374e+07 per op, B 7.35e+06 per op
+  difference -86.90% [-94.19%, -83.02%] at 95% confidence
+  noise floor 1.261%, autocorrelation +0.082
+  resolved: A is slower than B
+    warning: the program holds 77 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+checksum 1822005285560137312
+== path multi n=4096 valuesFor: ordered vs hashed
+A 114.9 per op, B 50.63 per op
+difference -126.97% [-130.49%, -124.04%] at 95% confidence
+noise floor 0.590%, autocorrelation +0.157
+resolved: A is slower than B
+  warning: the program holds 71 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs btree-sets
+A 116.5 per op, B 203.8 per op
+difference +42.85% [+41.93%, +44.41%] at 95% confidence
+noise floor 0.582%, autocorrelation +0.193
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs map-sets
+A 113.7 per op, B 100.7 per op
+difference -12.85% [-16.59%, -10.63%] at 95% confidence
+noise floor 0.896%, autocorrelation +0.145
+resolved: A is slower than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs hashed
+A 4892 per op, B 6.377e+04 per op
+difference +92.33% [+92.22%, +92.49%] at 95% confidence
+noise floor 2.337%, autocorrelation +0.062
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs btree-sets
+A 4756 per op, B 7796 per op
+difference +38.99% [+38.28%, +40.34%] at 95% confidence
+noise floor 2.057%, autocorrelation -0.156
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: the ratio B/A shifted +2.59% from the first half of the run to the second, so the candidates had not reached a steady state and the difference depends on how long the run was; a common cause is a head start for whichever candidate ran alone last before the comparison or had its data built last, which a longer CollectOptions.WarmupDuration removes
+
+== path multi n=4096 valuesBetween: ordered vs map-sets
+A 4801 per op, B 6.51e+04 per op
+difference +92.63% [+92.42%, +92.83%] at 95% confidence
+noise floor 0.687%, autocorrelation +0.089
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 prefix: ordered vs hashed
+A 483.2 per op, B 5.904e+04 per op
+difference +99.18% [+99.11%, +99.23%] at 95% confidence
+noise floor 5.154%, autocorrelation +0.128
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs btree-sets
+A 365.1 per op, B 495.8 per op
+difference +26.36% [+21.73%, +30.82%] at 95% confidence
+noise floor 1.876%, autocorrelation -0.365
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs map-sets
+A 461.9 per op, B 5.498e+04 per op
+difference +99.16% [+99.10%, +99.20%] at 95% confidence
+noise floor 6.091%, autocorrelation +0.152
+resolved: A is faster than B
+  warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs hashed
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 175.3 per op, B 81.1 per op
+  difference -116.13% [-119.93%, -113.48%] at 95% confidence
+  noise floor 1.516%, autocorrelation +0.306, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 84 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.328e+07 per op, B 6.629e+06 per op
+  difference -100.29% [-103.55%, -98.47%] at 95% confidence
+  noise floor 2.022%, autocorrelation +0.126
+  resolved: A is slower than B
+    warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 188.7 per op, B 255.9 per op
+  difference +26.28% [+24.44%, +31.22%] at 95% confidence
+  noise floor 2.939%, autocorrelation -0.066
+  resolved: A is faster than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.346e+07 per op, B 1.823e+07 per op
+  difference +26.18% [+24.38%, +27.17%] at 95% confidence
+  noise floor 1.087%, autocorrelation -0.051
+  resolved: A is faster than B
+    warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs map-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 174.1 per op, B 87.65 per op
+  difference -98.64% [-101.74%, -93.36%] at 95% confidence
+  noise floor 1.298%, autocorrelation +0.227, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.345e+07 per op, B 6.821e+06 per op
+  difference -97.11% [-98.67%, -94.39%] at 95% confidence
+  noise floor 1.233%, autocorrelation +0.150
+  resolved: A is slower than B
+    warning: the program holds 80 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: the ratio B/A shifted -2.23% from the first half of the run to the second, so the candidates had not reached a steady state and the difference depends on how long the run was; a common cause is a head start for whichever candidate ran alone last before the comparison or had its data built last, which a longer CollectOptions.WarmupDuration removes
+
+checksum 10076311671975959184
+== path multi n=4096 valuesFor: ordered vs hashed
+A 112.4 per op, B 49.7 per op
+difference -126.07% [-131.71%, -123.79%] at 95% confidence
+noise floor 0.715%, autocorrelation +0.012
+resolved: A is slower than B
+  warning: the program holds 76 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs btree-sets
+A 113.8 per op, B 203.5 per op
+difference +44.08% [+42.81%, +45.09%] at 95% confidence
+noise floor 1.490%, autocorrelation -0.081
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 valuesFor: ordered vs map-sets
+A 112.3 per op, B 99.92 per op
+difference -12.35% [-14.90%, -9.64%] at 95% confidence
+noise floor 1.287%, autocorrelation +0.033
+resolved: A is slower than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs hashed
+A 4880 per op, B 6.435e+04 per op
+difference +92.42% [+92.26%, +92.76%] at 95% confidence
+noise floor 0.727%, autocorrelation -0.025
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs btree-sets
+A 4703 per op, B 7823 per op
+difference +39.88% [+38.08%, +40.62%] at 95% confidence
+noise floor 1.679%, autocorrelation +0.092
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs map-sets
+A 4773 per op, B 6.502e+04 per op
+difference +92.66% [+92.49%, +92.83%] at 95% confidence
+noise floor 1.474%, autocorrelation +0.024
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs hashed
+A 469.8 per op, B 5.91e+04 per op
+difference +99.21% [+99.14%, +99.24%] at 95% confidence
+noise floor 5.235%, autocorrelation +0.071
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs btree-sets
+A 353.6 per op, B 482.8 per op
+difference +26.75% [+23.04%, +30.21%] at 95% confidence
+noise floor 3.340%, autocorrelation -0.108
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs map-sets
+A 459.7 per op, B 5.499e+04 per op
+difference +99.16% [+99.09%, +99.20%] at 95% confidence
+noise floor 2.522%, autocorrelation -0.065
+resolved: A is faster than B
+  warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs hashed
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 175 per op, B 79.96 per op
+  difference -118.90% [-123.32%, -114.48%] at 95% confidence
+  noise floor 0.676%, autocorrelation +0.057
+  resolved: A is slower than B
+    warning: the program holds 88 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.349e+07 per op, B 6.743e+06 per op
+  difference -100.10% [-103.46%, -97.18%] at 95% confidence
+  noise floor 2.317%, autocorrelation +0.221, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 188.3 per op, B 256.7 per op
+  difference +26.66% [+24.24%, +30.30%] at 95% confidence
+  noise floor 2.821%, autocorrelation +0.062
+  resolved: A is faster than B
+    warning: the program holds 89 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.363e+07 per op, B 1.848e+07 per op
+  difference +26.23% [+25.16%, +27.33%] at 95% confidence
+  noise floor 0.398%, autocorrelation +0.027
+  resolved: A is faster than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: candidate A drifted during the run, shifting -2.24% from its first half to its second; the machine did not hold still
+
+== path multi n=4096 churn and build: ordered vs map-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 181.3 per op, B 99.45 per op
+  difference -82.34% [-99.32%, -75.10%] at 95% confidence
+  noise floor 1.509%, autocorrelation +0.175
+  resolved: A is slower than B
+    warning: the program holds 89 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: candidate B drifted during the run, shifting +15.62% from its first half to its second; the machine did not hold still
+    warning: the ratio B/A shifted +17.47% from the first half of the run to the second, so the candidates had not reached a steady state and the difference depends on how long the run was; a common cause is a head start for whichever candidate ran alone last before the comparison or had its data built last, which a longer CollectOptions.WarmupDuration removes
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.361e+07 per op, B 7.163e+06 per op
+  difference -89.98% [-98.05%, -85.84%] at 95% confidence
+  noise floor 0.916%, autocorrelation +0.311, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+checksum 7314107972667757840
+== path multi n=4096 valuesFor: ordered vs hashed
+A 113.1 per op, B 50 per op
+difference -126.11% [-129.47%, -123.92%] at 95% confidence
+noise floor 1.669%, autocorrelation -0.076
+resolved: A is slower than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 valuesFor: ordered vs btree-sets
+A 114.7 per op, B 206.6 per op
+difference +44.47% [+43.28%, +45.71%] at 95% confidence
+noise floor 1.912%, autocorrelation -0.037
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs map-sets
+A 113.1 per op, B 101.1 per op
+difference -11.88% [-13.28%, -9.71%] at 95% confidence
+noise floor 2.935%, autocorrelation +0.047
+resolved: A is slower than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 valuesBetween: ordered vs hashed
+A 4946 per op, B 6.43e+04 per op
+difference +92.31% [+92.09%, +92.65%] at 95% confidence
+noise floor 1.629%, autocorrelation +0.196
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs btree-sets
+A 4734 per op, B 7833 per op
+difference +39.57% [+38.16%, +41.28%] at 95% confidence
+noise floor 1.518%, autocorrelation +0.036
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs map-sets
+A 4894 per op, B 6.58e+04 per op
+difference +92.56% [+92.34%, +92.82%] at 95% confidence
+noise floor 1.528%, autocorrelation -0.039
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 prefix: ordered vs hashed
+A 531 per op, B 5.847e+04 per op
+difference +99.09% [+99.01%, +99.14%] at 95% confidence
+noise floor 3.433%, autocorrelation +0.059
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs btree-sets
+A 358.4 per op, B 462.3 per op
+difference +22.47% [+19.48%, +29.26%] at 95% confidence
+noise floor 2.304%, autocorrelation -0.158
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs map-sets
+A 471.4 per op, B 5.54e+04 per op
+difference +99.15% [+98.98%, +99.19%] at 95% confidence
+noise floor 5.026%, autocorrelation +0.039
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs hashed
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 181.8 per op, B 84.74 per op
+  difference -114.51% [-123.57%, -108.59%] at 95% confidence
+  noise floor 1.076%, autocorrelation +0.137
+  resolved: A is slower than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.359e+07 per op, B 6.736e+06 per op
+  difference -101.71% [-105.54%, -96.77%] at 95% confidence
+  noise floor 0.592%, autocorrelation +0.046
+  resolved: A is slower than B
+    warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 183 per op, B 245.9 per op
+  difference +25.58% [+22.47%, +29.89%] at 95% confidence
+  noise floor 3.309%, autocorrelation +0.055
+  resolved: A is faster than B
+    warning: the program holds 86 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.358e+07 per op, B 1.839e+07 per op
+  difference +26.18% [+25.27%, +28.11%] at 95% confidence
+  noise floor 1.289%, autocorrelation +0.196
+  resolved: A is faster than B
+    warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 churn and build: ordered vs map-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 179.9 per op, B 88.88 per op
+  difference -102.37% [-108.63%, -92.87%] at 95% confidence
+  noise floor 1.934%, autocorrelation +0.144
+  resolved: A is slower than B
+    warning: the program holds 86 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.368e+07 per op, B 7.062e+06 per op
+  difference -93.77% [-97.19%, -88.66%] at 95% confidence
+  noise floor 1.692%, autocorrelation +0.103
+  resolved: A is slower than B
+    warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+checksum 1324915086997911408
+== path multi n=4096 valuesFor: ordered vs hashed
+A 113.2 per op, B 49.62 per op
+difference -128.22% [-131.26%, -123.97%] at 95% confidence
+noise floor 0.993%, autocorrelation -0.194
+resolved: A is slower than B
+  warning: the program holds 71 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs btree-sets
+A 115.2 per op, B 207.1 per op
+difference +44.37% [+43.03%, +45.36%] at 95% confidence
+noise floor 0.880%, autocorrelation -0.273
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs map-sets
+A 113.2 per op, B 100.9 per op
+difference -12.17% [-14.84%, -9.36%] at 95% confidence
+noise floor 1.076%, autocorrelation +0.038
+resolved: A is slower than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs hashed
+A 4967 per op, B 6.404e+04 per op
+difference +92.24% [+92.11%, +92.39%] at 95% confidence
+noise floor 1.244%, autocorrelation +0.179
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs btree-sets
+A 4826 per op, B 7893 per op
+difference +38.86% [+37.14%, +40.61%] at 95% confidence
+noise floor 2.327%, autocorrelation +0.116
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: candidate B drifted during the run, shifting +2.59% from its first half to its second; the machine did not hold still
+
+== path multi n=4096 valuesBetween: ordered vs map-sets
+A 4895 per op, B 6.559e+04 per op
+difference +92.54% [+92.27%, +92.81%] at 95% confidence
+noise floor 1.830%, autocorrelation +0.059
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 100% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 prefix: ordered vs hashed
+A 468.3 per op, B 5.822e+04 per op
+difference +99.20% [+99.10%, +99.26%] at 95% confidence
+noise floor 7.543%, autocorrelation +0.225, resampled in blocks of 3
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs btree-sets
+A 357 per op, B 489.1 per op
+difference +27.00% [+24.20%, +28.95%] at 95% confidence
+noise floor 8.177%, autocorrelation -0.502
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs map-sets
+A 472.8 per op, B 5.465e+04 per op
+difference +99.13% [+99.06%, +99.24%] at 95% confidence
+noise floor 2.283%, autocorrelation +0.105
+resolved: A is faster than B
+  warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs hashed
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 175.4 per op, B 81.06 per op
+  difference -116.38% [-122.49%, -112.72%] at 95% confidence
+  noise floor 1.623%, autocorrelation +0.076
+  resolved: A is slower than B
+    warning: the program holds 90 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.36e+07 per op, B 6.73e+06 per op
+  difference -102.02% [-107.77%, -96.54%] at 95% confidence
+  noise floor 0.693%, autocorrelation +0.221, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 188.4 per op, B 251.9 per op
+  difference +25.22% [+21.52%, +29.77%] at 95% confidence
+  noise floor 1.890%, autocorrelation +0.016
+  resolved: A is faster than B
+    warning: the program holds 91 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.367e+07 per op, B 1.867e+07 per op
+  difference +26.76% [+24.97%, +28.43%] at 95% confidence
+  noise floor 0.508%, autocorrelation -0.004
+  resolved: A is faster than B
+    warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs map-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 174.3 per op, B 91.27 per op
+  difference -90.99% [-103.46%, -84.50%] at 95% confidence
+  noise floor 1.940%, autocorrelation +0.192
+  resolved: A is slower than B
+    warning: the program holds 92 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.401e+07 per op, B 7.337e+06 per op
+  difference -90.96% [-97.14%, -82.88%] at 95% confidence
+  noise floor 2.474%, autocorrelation +0.061
+  resolved: A is slower than B
+    warning: the program holds 87 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: the ratio B/A shifted +7.14% from the first half of the run to the second, so the candidates had not reached a steady state and the difference depends on how long the run was; a common cause is a head start for whichever candidate ran alone last before the comparison or had its data built last, which a longer CollectOptions.WarmupDuration removes
+    warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 14103421898065281136
+== path multi n=4096 valuesFor: ordered vs hashed
+A 116.5 per op, B 50.98 per op
+difference -128.43% [-133.10%, -125.08%] at 95% confidence
+noise floor 0.766%, autocorrelation -0.055
+resolved: A is slower than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs btree-sets
+A 116 per op, B 208 per op
+difference +44.21% [+43.17%, +45.29%] at 95% confidence
+noise floor 0.950%, autocorrelation +0.186
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesFor: ordered vs map-sets
+A 114 per op, B 99.99 per op
+difference -14.04% [-16.08%, -11.58%] at 95% confidence
+noise floor 1.142%, autocorrelation -0.167
+resolved: A is slower than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs hashed
+A 4912 per op, B 6.416e+04 per op
+difference +92.34% [+92.24%, +92.82%] at 95% confidence
+noise floor 0.887%, autocorrelation +0.064
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs btree-sets
+A 4696 per op, B 7753 per op
+difference +39.43% [+37.16%, +40.53%] at 95% confidence
+noise floor 0.999%, autocorrelation -0.095
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 valuesBetween: ordered vs map-sets
+A 4916 per op, B 6.561e+04 per op
+difference +92.51% [+92.33%, +92.70%] at 95% confidence
+noise floor 1.758%, autocorrelation -0.102
+resolved: A is faster than B
+  warning: the program holds 81 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs hashed
+A 524.7 per op, B 5.884e+04 per op
+difference +99.11% [+99.08%, +99.17%] at 95% confidence
+noise floor 4.708%, autocorrelation -0.006
+resolved: A is faster than B
+  warning: the program holds 81 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 prefix: ordered vs btree-sets
+A 345 per op, B 472.9 per op
+difference +27.05% [+19.00%, +32.51%] at 95% confidence
+noise floor 4.879%, autocorrelation -0.089
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== path multi n=4096 prefix: ordered vs map-sets
+A 451.4 per op, B 5.485e+04 per op
+difference +99.18% [+99.09%, +99.21%] at 95% confidence
+noise floor 5.777%, autocorrelation +0.103
+resolved: A is faster than B
+  warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs hashed
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 173.6 per op, B 78.88 per op
+  difference -120.11% [-128.48%, -111.24%] at 95% confidence
+  noise floor 1.712%, autocorrelation +0.377, resampled in blocks of 3
+  resolved: A is slower than B
+    warning: the program holds 85 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.348e+07 per op, B 6.656e+06 per op
+  difference -102.55% [-104.14%, -100.57%] at 95% confidence
+  noise floor 0.705%, autocorrelation +0.105
+  resolved: A is slower than B
+    warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 185.2 per op, B 252.3 per op
+  difference +26.60% [+25.35%, +29.67%] at 95% confidence
+  noise floor 1.783%, autocorrelation +0.271, resampled in blocks of 3
+  resolved: A is faster than B
+    warning: the program holds 86 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.365e+07 per op, B 1.846e+07 per op
+  difference +26.05% [+24.75%, +27.29%] at 95% confidence
+  noise floor 1.424%, autocorrelation +0.203, resampled in blocks of 3
+  resolved: A is faster than B
+    warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== path multi n=4096 churn and build: ordered vs map-sets
+steady state, per insertion or deletion in a structure of 25123 elements (cycle of 50246 operations, first pass untimed):
+  A 177 per op, B 93.38 per op
+  difference -89.51% [-102.61%, -85.34%] at 95% confidence
+  noise floor 4.132%, autocorrelation +0.171
+  resolved: A is slower than B
+    warning: the program holds 86 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 25123 elements, per whole build (75369 operations):
+  A 1.382e+07 per op, B 7.312e+06 per op
+  difference -88.99% [-94.94%, -85.85%] at 95% confidence
+  noise floor 1.306%, autocorrelation -0.009
+  resolved: A is slower than B
+    warning: the program holds 82 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    warning: in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 5935000717565814480
