@@ -198,52 +198,52 @@
 | multi | u64 | 1048576 | churn | ordered | btree-sets | 6 | 465 | 1462 | 3.13× [3.07, 3.19] | +68.0% | [+67.5%, +68.6%] | 0.5 pts | 1.9 | yes |
 | multi | u64 | 1048576 | churn | ordered | hashed | 6 | 376 | 356 | 0.96× [0.92, 0.99] | -4.7% | [-8.6%, -0.7%] | 3.7 pts | 0.7 | no |
 | multi | u64 | 1048576 | churn | ordered | map-sets | 6 | 411 | 455 | 1.08× [1.02, 1.16] | +7.8% | [+2.1%, +13.5%] | 5.4 pts | 4.1 | no |
-| multi | url | 4096 | valuesFor | ordered | btree-sets | 6 | 83.2 | 188 | 2.26× [2.24, 2.28] | +55.7% | [+55.3%, +56.0%] | 0.4 pts | 0.8 | yes |
-| multi | url | 4096 | valuesFor | ordered | hashed | 6 | 81.5 | 46.1 | 0.57× [0.56, 0.57] | -77.0% | [-77.8%, -76.2%] | 0.8 pts | 0.4 | yes |
-| multi | url | 4096 | valuesFor | ordered | map-sets | 6 | 81.5 | 98.2 | 1.21× [1.20, 1.21] | +17.0% | [+16.7%, +17.4%] | 0.3 pts | 0.4 | yes |
-| multi | url | 4096 | valuesBetween | ordered | btree-sets | 6 | 3579 | 7758 | 2.15× [2.13, 2.18] | +53.6% | [+53.0%, +54.2%] | 0.6 pts | 0.9 | yes |
-| multi | url | 4096 | valuesBetween | ordered | hashed | 6 | 3836 | 72.4 µs | 18.92× [18.69, 19.16] | +94.7% | [+94.6%, +94.8%] | 0.1 pts | 0.6 | yes |
-| multi | url | 4096 | valuesBetween | ordered | map-sets | 6 | 3676 | 73.0 µs | 20.02× [19.74, 20.31] | +95.0% | [+94.9%, +95.1%] | 0.1 pts | 0.7 | yes |
-| multi | url | 4096 | prefix | ordered | btree-sets | 6 | 407 | 810 | 1.99× [1.95, 2.02] | +49.6% | [+48.7%, +50.6%] | 0.9 pts | 1.2 | yes |
-| multi | url | 4096 | prefix | ordered | hashed | 6 | 519 | 67.3 µs | 129.63× [120.38, 140.42] | +99.2% | [+99.2%, +99.3%] | 0.1 pts | 2.9 | yes |
-| multi | url | 4096 | prefix | ordered | map-sets | 6 | 469 | 63.0 µs | 133.15× [127.41, 139.43] | +99.2% | [+99.2%, +99.3%] | 0.0 pts | 1.2 | yes |
-| multi | url | 4096 | churn | ordered | btree-sets | 6 | 125 | 216 | 1.73× [1.71, 1.75] | +42.1% | [+41.4%, +42.8%] | 0.7 pts | 0.7 | yes |
-| multi | url | 4096 | churn | ordered | hashed | 6 | 118 | 61.1 | 0.52× [0.52, 0.53] | -91.5% | [-93.9%, -89.2%] | 2.3 pts | 0.8 | yes |
-| multi | url | 4096 | churn | ordered | map-sets | 6 | 118 | 72.9 | 0.62× [0.61, 0.63] | -61.4% | [-64.2%, -58.5%] | 2.7 pts | 1.2 | yes |
-| multi | url | 4096 | build | ordered | btree-sets | 6 | 9.16 ms | 16.01 ms | 1.74× [1.72, 1.76] | +42.5% | [+42.0%, +43.0%] | 0.5 pts | 0.7 | yes |
-| multi | url | 4096 | build | ordered | hashed | 6 | 9.17 ms | 5.17 ms | 0.56× [0.56, 0.57] | -77.3% | [-79.2%, -75.4%] | 1.8 pts | 1.0 | yes |
-| multi | url | 4096 | build | ordered | map-sets | 6 | 9.14 ms | 5.80 ms | 0.64× [0.63, 0.65] | -57.1% | [-59.4%, -54.7%] | 2.2 pts | 0.6 | yes |
-| multi | url | 16384 | valuesFor | ordered | btree-sets | 6 | 99.7 | 240 | 2.34× [2.23, 2.47] | +57.3% | [+55.1%, +59.4%] | 2.1 pts | 4.2 | yes |
-| multi | url | 16384 | valuesFor | ordered | hashed | 6 | 96.3 | 51.5 | 0.53× [0.53, 0.54] | -87.0% | [-88.0%, -86.1%] | 0.9 pts | 0.5 | yes |
-| multi | url | 16384 | valuesFor | ordered | map-sets | 6 | 98.2 | 111 | 1.14× [1.12, 1.16] | +11.9% | [+10.3%, +13.5%] | 1.5 pts | 1.3 | yes |
-| multi | url | 16384 | valuesBetween | ordered | btree-sets | 6 | 4035 | 8328 | 2.05× [2.01, 2.09] | +51.1% | [+50.2%, +52.1%] | 0.9 pts | 1.4 | yes |
-| multi | url | 16384 | valuesBetween | ordered | hashed | 6 | 5144 | 309.4 µs | 60.24× [58.08, 62.56] | +98.3% | [+98.3%, +98.4%] | 0.1 pts | 1.2 | yes |
-| multi | url | 16384 | valuesBetween | ordered | map-sets | 6 | 5306 | 302.3 µs | 55.19× [48.84, 63.42] | +98.2% | [+98.0%, +98.4%] | 0.2 pts | 2.2 | yes |
-| multi | url | 16384 | prefix | ordered | btree-sets | 6 | 1370 | 2799 | 2.06× [2.02, 2.10] | +51.4% | [+50.4%, +52.4%] | 0.9 pts | 0.7 | yes |
-| multi | url | 16384 | prefix | ordered | hashed | 6 | 2416 | 315.5 µs | 131.35× [126.56, 136.52] | +99.2% | [+99.2%, +99.3%] | 0.0 pts | 1.1 | yes |
-| multi | url | 16384 | prefix | ordered | map-sets | 6 | 2383 | 298.4 µs | 126.77× [119.93, 134.44] | +99.2% | [+99.2%, +99.3%] | 0.0 pts | 1.2 | yes |
-| multi | url | 16384 | churn | ordered | btree-sets | 6 | 184 | 350 | 1.89× [1.83, 1.95] | +47.1% | [+45.5%, +48.7%] | 1.5 pts | 2.1 | yes |
-| multi | url | 16384 | churn | ordered | hashed | 6 | 170 | 92.2 | 0.55× [0.54, 0.55] | -83.5% | [-84.4%, -82.5%] | 0.9 pts | 0.4 | yes |
-| multi | url | 16384 | churn | ordered | map-sets | 6 | 180 | 137 | 0.77× [0.74, 0.80] | -30.5% | [-35.8%, -25.2%] | 5.0 pts | 1.9 | no |
-| multi | url | 16384 | build | ordered | btree-sets | 6 | 48.53 ms | 94.40 ms | 1.94× [1.92, 1.96] | +48.4% | [+47.9%, +48.9%] | 0.5 pts | 0.6 | yes |
-| multi | url | 16384 | build | ordered | hashed | 6 | 47.58 ms | 26.80 ms | 0.56× [0.56, 0.57] | -77.5% | [-79.1%, -75.9%] | 1.5 pts | 0.8 | yes |
-| multi | url | 16384 | build | ordered | map-sets | 6 | 47.91 ms | 36.89 ms | 0.76× [0.75, 0.78] | -31.2% | [-33.9%, -28.6%] | 2.5 pts | 1.4 | yes |
-| multi | url | 262144 | valuesFor | ordered | btree-sets | 6 | 467 | 862 | 1.85× [1.78, 1.93] | +45.9% | [+43.8%, +48.1%] | 2.1 pts | 3.0 | yes |
-| multi | url | 262144 | valuesFor | ordered | hashed | 6 | 412 | 216 | 0.51× [0.50, 0.53] | -94.3% | [-100.4%, -88.2%] | 5.8 pts | 2.3 | yes |
-| multi | url | 262144 | valuesFor | ordered | map-sets | 6 | 426 | 436 | 1.03× [1.01, 1.04] | +2.6% | [+0.9%, +4.3%] | 1.6 pts | 1.4 | yes |
-| multi | url | 262144 | valuesBetween | ordered | btree-sets | 6 | 11.6 µs | 27.7 µs | 2.39× [2.36, 2.43] | +58.2% | [+57.6%, +58.9%] | 0.6 pts | 1.6 | yes |
-| multi | url | 262144 | prefix | ordered | btree-sets | 6 | 57.3 µs | 138.5 µs | 2.46× [2.39, 2.53] | +59.3% | [+58.1%, +60.5%] | 1.1 pts | 0.5 | yes |
-| multi | url | 262144 | churn | ordered | btree-sets | 6 | 656 | 1116 | 1.72× [1.67, 1.78] | +41.9% | [+40.0%, +43.7%] | 1.8 pts | 3.5 | yes |
-| multi | url | 262144 | churn | ordered | hashed | 6 | 528 | 373 | 0.70× [0.69, 0.72] | -42.1% | [-44.3%, -39.8%] | 2.1 pts | 1.1 | yes |
-| multi | url | 262144 | churn | ordered | map-sets | 6 | 574 | 454 | 0.79× [0.78, 0.81] | -25.9% | [-28.1%, -23.6%] | 2.2 pts | 1.4 | yes |
-| multi | url | 1048576 | valuesFor | ordered | btree-sets | 6 | 595 | 1330 | 2.21× [2.14, 2.28] | +54.8% | [+53.3%, +56.2%] | 1.3 pts | 3.5 | yes |
-| multi | url | 1048576 | valuesFor | ordered | hashed | 6 | 525 | 245 | 0.46× [0.45, 0.48] | -115.7% | [-121.1%, -110.2%] | 5.2 pts | 2.7 | yes |
-| multi | url | 1048576 | valuesFor | ordered | map-sets | 6 | 551 | 509 | 0.92× [0.91, 0.93] | -8.5% | [-9.4%, -7.6%] | 0.9 pts | 0.7 | yes |
-| multi | url | 1048576 | valuesBetween | ordered | btree-sets | 6 | 13.1 µs | 31.9 µs | 2.46× [2.40, 2.53] | +59.4% | [+58.4%, +60.5%] | 1.0 pts | 2.5 | yes |
-| multi | url | 1048576 | prefix | ordered | btree-sets | 6 | 244.5 µs | 627.0 µs | 2.56× [2.46, 2.66] | +60.9% | [+59.4%, +62.5%] | 1.5 pts | 0.2 | yes |
-| multi | url | 1048576 | churn | ordered | btree-sets | 6 | 802 | 1679 | 2.10× [2.07, 2.14] | +52.4% | [+51.7%, +53.2%] | 0.7 pts | 1.6 | yes |
-| multi | url | 1048576 | churn | ordered | hashed | 6 | 704 | 487 | 0.67× [0.64, 0.71] | -48.2% | [-55.5%, -40.8%] | 7.0 pts | 2.8 | no |
-| multi | url | 1048576 | churn | ordered | map-sets | 6 | 786 | 575 | 0.72× [0.71, 0.74] | -37.9% | [-41.5%, -34.3%] | 3.4 pts | 2.3 | yes |
+| multi | url | 4096 | valuesFor | ordered | btree-sets | 6 | 92.3 | 199 | 2.15× [2.13, 2.18] | +53.5% | [+53.0%, +54.1%] | 0.5 pts | 1.2 | yes |
+| multi | url | 4096 | valuesFor | ordered | hashed | 6 | 91.0 | 46.4 | 0.51× [0.50, 0.52] | -95.8% | [-98.2%, -93.5%] | 2.3 pts | 1.3 | yes |
+| multi | url | 4096 | valuesFor | ordered | map-sets | 6 | 91.4 | 100.0 | 1.09× [1.08, 1.10] | +8.5% | [+7.8%, +9.2%] | 0.6 pts | 0.9 | yes |
+| multi | url | 4096 | valuesBetween | ordered | btree-sets | 6 | 3869 | 7625 | 1.97× [1.95, 1.98] | +49.2% | [+48.8%, +49.5%] | 0.3 pts | 0.5 | yes |
+| multi | url | 4096 | valuesBetween | ordered | hashed | 6 | 4073 | 63.7 µs | 15.58× [15.35, 15.81] | +93.6% | [+93.5%, +93.7%] | 0.1 pts | 0.7 | yes |
+| multi | url | 4096 | valuesBetween | ordered | map-sets | 6 | 3949 | 63.8 µs | 16.26× [16.07, 16.46] | +93.9% | [+93.8%, +93.9%] | 0.1 pts | 0.7 | yes |
+| multi | url | 4096 | prefix | ordered | btree-sets | 6 | 181 | 262 | 1.45× [1.43, 1.46] | +30.9% | [+30.2%, +31.5%] | 0.6 pts | 0.5 | yes |
+| multi | url | 4096 | prefix | ordered | hashed | 6 | 304 | 57.0 µs | 185.85× [172.34, 201.67] | +99.5% | [+99.4%, +99.5%] | 0.0 pts | 1.6 | yes |
+| multi | url | 4096 | prefix | ordered | map-sets | 6 | 276 | 51.6 µs | 184.25× [172.99, 197.09] | +99.5% | [+99.4%, +99.5%] | 0.0 pts | 1.2 | yes |
+| multi | url | 4096 | churn | ordered | btree-sets | 6 | 132 | 230 | 1.76× [1.67, 1.86] | +43.2% | [+40.2%, +46.3%] | 2.9 pts | 2.7 | yes |
+| multi | url | 4096 | churn | ordered | hashed | 6 | 128 | 65.3 | 0.52× [0.51, 0.52] | -94.0% | [-96.4%, -91.7%] | 2.2 pts | 0.8 | yes |
+| multi | url | 4096 | churn | ordered | map-sets | 6 | 130 | 81.2 | 0.62× [0.61, 0.63] | -61.1% | [-63.1%, -59.1%] | 1.9 pts | 0.6 | yes |
+| multi | url | 4096 | build | ordered | btree-sets | 6 | 9.59 ms | 16.92 ms | 1.77× [1.75, 1.78] | +43.4% | [+42.9%, +43.8%] | 0.4 pts | 0.7 | yes |
+| multi | url | 4096 | build | ordered | hashed | 6 | 9.45 ms | 5.25 ms | 0.56× [0.55, 0.58] | -78.0% | [-82.9%, -73.1%] | 4.6 pts | 4.3 | yes |
+| multi | url | 4096 | build | ordered | map-sets | 6 | 9.53 ms | 6.04 ms | 0.64× [0.63, 0.65] | -57.2% | [-59.5%, -54.8%] | 2.2 pts | 1.0 | yes |
+| multi | url | 16384 | valuesFor | ordered | btree-sets | 6 | 122 | 265 | 2.16× [2.13, 2.18] | +53.6% | [+53.1%, +54.1%] | 0.4 pts | 0.6 | yes |
+| multi | url | 16384 | valuesFor | ordered | hashed | 6 | 116 | 52.2 | 0.45× [0.45, 0.45] | -122.6% | [-124.3%, -120.9%] | 1.6 pts | 0.6 | yes |
+| multi | url | 16384 | valuesFor | ordered | map-sets | 6 | 121 | 115 | 0.97× [0.95, 0.99] | -3.3% | [-5.6%, -0.9%] | 2.2 pts | 0.9 | no |
+| multi | url | 16384 | valuesBetween | ordered | btree-sets | 6 | 4588 | 8501 | 1.84× [1.80, 1.89] | +45.8% | [+44.3%, +47.2%] | 1.4 pts | 1.8 | yes |
+| multi | url | 16384 | valuesBetween | ordered | hashed | 6 | 5451 | 269.5 µs | 48.32× [44.70, 52.58] | +97.9% | [+97.8%, +98.1%] | 0.2 pts | 2.3 | yes |
+| multi | url | 16384 | valuesBetween | ordered | map-sets | 6 | 5928 | 257.2 µs | 40.73× [35.70, 47.43] | +97.5% | [+97.2%, +97.9%] | 0.3 pts | 2.8 | yes |
+| multi | url | 16384 | prefix | ordered | btree-sets | 6 | 283 | 438 | 1.54× [1.50, 1.59] | +35.2% | [+33.2%, +37.1%] | 1.8 pts | 1.1 | yes |
+| multi | url | 16384 | prefix | ordered | hashed | 6 | 711 | 260.5 µs | 356.43× [323.14, 397.36] | +99.7% | [+99.7%, +99.7%] | 0.0 pts | 1.2 | yes |
+| multi | url | 16384 | prefix | ordered | map-sets | 6 | 703 | 239.6 µs | 338.78× [321.59, 357.91] | +99.7% | [+99.7%, +99.7%] | 0.0 pts | 0.7 | yes |
+| multi | url | 16384 | churn | ordered | btree-sets | 6 | 214 | 377 | 1.75× [1.72, 1.79] | +43.0% | [+41.9%, +44.1%] | 1.0 pts | 1.3 | yes |
+| multi | url | 16384 | churn | ordered | hashed | 6 | 202 | 98.5 | 0.49× [0.48, 0.50] | -105.1% | [-108.8%, -101.4%] | 3.5 pts | 1.0 | yes |
+| multi | url | 16384 | churn | ordered | map-sets | 6 | 205 | 130 | 0.64× [0.63, 0.66] | -55.1% | [-59.6%, -50.6%] | 4.3 pts | 0.8 | yes |
+| multi | url | 16384 | build | ordered | btree-sets | 6 | 57.48 ms | 101.36 ms | 1.77× [1.74, 1.79] | +43.3% | [+42.4%, +44.3%] | 0.9 pts | 1.6 | yes |
+| multi | url | 16384 | build | ordered | hashed | 6 | 56.92 ms | 29.30 ms | 0.51× [0.51, 0.52] | -95.2% | [-97.0%, -93.4%] | 1.7 pts | 0.8 | yes |
+| multi | url | 16384 | build | ordered | map-sets | 6 | 57.46 ms | 37.53 ms | 0.66× [0.64, 0.68] | -51.3% | [-55.7%, -46.9%] | 4.2 pts | 1.9 | yes |
+| multi | url | 262144 | valuesFor | ordered | btree-sets | 6 | 576 | 898 | 1.57× [1.53, 1.63] | +36.4% | [+34.4%, +38.5%] | 1.9 pts | 2.5 | yes |
+| multi | url | 262144 | valuesFor | ordered | hashed | 6 | 496 | 212 | 0.43× [0.42, 0.44] | -133.1% | [-139.9%, -126.2%] | 6.5 pts | 2.4 | yes |
+| multi | url | 262144 | valuesFor | ordered | map-sets | 6 | 512 | 444 | 0.85× [0.83, 0.87] | -17.9% | [-21.2%, -14.7%] | 3.1 pts | 2.1 | no |
+| multi | url | 262144 | valuesBetween | ordered | btree-sets | 6 | 13.3 µs | 27.4 µs | 2.07× [2.04, 2.11] | +51.8% | [+51.0%, +52.6%] | 0.8 pts | 1.3 | yes |
+| multi | url | 262144 | prefix | ordered | btree-sets | 6 | 2588 | 4982 | 1.95× [1.88, 2.01] | +48.6% | [+46.9%, +50.3%] | 1.6 pts | 0.5 | yes |
+| multi | url | 262144 | churn | ordered | btree-sets | 6 | 858 | 1143 | 1.35× [1.33, 1.37] | +25.9% | [+24.6%, +27.1%] | 1.2 pts | 1.4 | yes |
+| multi | url | 262144 | churn | ordered | hashed | 6 | 674 | 388 | 0.57× [0.56, 0.59] | -74.9% | [-79.1%, -70.6%] | 4.0 pts | 1.6 | yes |
+| multi | url | 262144 | churn | ordered | map-sets | 6 | 763 | 476 | 0.63× [0.61, 0.64] | -59.4% | [-63.4%, -55.5%] | 3.8 pts | 1.6 | yes |
+| multi | url | 1048576 | valuesFor | ordered | btree-sets | 6 | 831 | 1406 | 1.67× [1.62, 1.72] | +40.1% | [+38.1%, +42.0%] | 1.8 pts | 2.5 | yes |
+| multi | url | 1048576 | valuesFor | ordered | hashed | 6 | 693 | 236 | 0.34× [0.33, 0.35] | -193.4% | [-200.3%, -186.5%] | 6.6 pts | 2.5 | yes |
+| multi | url | 1048576 | valuesFor | ordered | map-sets | 6 | 736 | 510 | 0.70× [0.68, 0.71] | -43.7% | [-47.0%, -40.3%] | 3.2 pts | 1.7 | yes |
+| multi | url | 1048576 | valuesBetween | ordered | btree-sets | 6 | 14.7 µs | 31.6 µs | 2.15× [2.12, 2.19] | +53.6% | [+52.9%, +54.3%] | 0.7 pts | 1.2 | yes |
+| multi | url | 1048576 | prefix | ordered | btree-sets | 6 | 11.8 µs | 27.6 µs | 2.33× [2.25, 2.43] | +57.2% | [+55.5%, +58.9%] | 1.6 pts | 0.3 | yes |
+| multi | url | 1048576 | churn | ordered | btree-sets | 6 | 1125 | 1694 | 1.50× [1.48, 1.53] | +33.5% | [+32.3%, +34.6%] | 1.1 pts | 2.1 | yes |
+| multi | url | 1048576 | churn | ordered | hashed | 6 | 993 | 482 | 0.49× [0.47, 0.51] | -105.7% | [-114.9%, -96.4%] | 8.8 pts | 2.7 | yes |
+| multi | url | 1048576 | churn | ordered | map-sets | 6 | 1034 | 560 | 0.55× [0.53, 0.57] | -83.4% | [-90.0%, -76.7%] | 6.3 pts | 2.6 | yes |
 | multi | uuid | 4096 | valuesFor | ordered | btree-sets | 6 | 55.0 | 181 | 3.29× [3.27, 3.30] | +69.6% | [+69.4%, +69.7%] | 0.1 pts | 0.4 | yes |
 | multi | uuid | 4096 | valuesFor | ordered | hashed | 6 | 54.5 | 42.5 | 0.78× [0.78, 0.78] | -28.3% | [-28.7%, -27.9%] | 0.4 pts | 0.3 | yes |
 | multi | uuid | 4096 | valuesFor | ordered | map-sets | 6 | 54.8 | 96.4 | 1.76× [1.75, 1.77] | +43.2% | [+42.9%, +43.6%] | 0.3 pts | 0.7 | yes |
@@ -364,24 +364,24 @@
 | unique | u64 | 1048576 | valuesFor | ordered | btree-map | 6 | 161 | 483 | 2.99× [2.96, 3.02] | +66.5% | [+66.2%, +66.9%] | 0.3 pts | 1.0 | yes |
 | unique | u64 | 1048576 | valuesBetween | ordered | btree-map | 6 | 3327 | 2228 | 0.69× [0.62, 0.79] | -44.0% | [-61.0%, -27.0%] | 16.2 pts | 10.4 | no |
 | unique | u64 | 1048576 | churn | ordered | btree-map | 6 | 412 | 919 | 2.23× [2.20, 2.26] | +55.2% | [+54.6%, +55.8%] | 0.6 pts | 0.9 | yes |
-| unique | url | 4096 | valuesFor | ordered | btree-map | 6 | 61.7 | 109 | 1.77× [1.76, 1.78] | +43.6% | [+43.2%, +43.9%] | 0.3 pts | 0.7 | yes |
-| unique | url | 4096 | valuesBetween | ordered | btree-map | 6 | 1625 | 604 | 0.37× [0.37, 0.37] | -169.6% | [-172.0%, -167.2%] | 2.3 pts | 0.7 | yes |
-| unique | url | 4096 | prefix | ordered | btree-map | 6 | 235 | 168 | 0.72× [0.71, 0.72] | -39.4% | [-40.3%, -38.5%] | 0.9 pts | 0.5 | yes |
-| unique | url | 4096 | churn | ordered | btree-map | 6 | 137 | 164 | 1.19× [1.17, 1.22] | +16.3% | [+14.8%, +17.8%] | 1.4 pts | 1.0 | yes |
-| unique | url | 4096 | build | ordered | btree-map | 6 | 1.58 ms | 2.06 ms | 1.29× [1.28, 1.31] | +22.7% | [+21.6%, +23.9%] | 1.1 pts | 0.4 | yes |
-| unique | url | 16384 | valuesFor | ordered | btree-map | 6 | 76.9 | 148 | 1.92× [1.90, 1.94] | +47.9% | [+47.2%, +48.6%] | 0.6 pts | 1.9 | yes |
-| unique | url | 16384 | valuesBetween | ordered | btree-map | 6 | 1847 | 720 | 0.39× [0.39, 0.39] | -156.1% | [-158.4%, -153.7%] | 2.3 pts | 1.1 | yes |
-| unique | url | 16384 | prefix | ordered | btree-map | 6 | 639 | 357 | 0.57× [0.56, 0.58] | -76.0% | [-79.1%, -72.8%] | 3.0 pts | 1.1 | yes |
-| unique | url | 16384 | churn | ordered | btree-map | 6 | 182 | 227 | 1.24× [1.18, 1.30] | +19.5% | [+15.6%, +23.3%] | 3.7 pts | 1.6 | no |
-| unique | url | 16384 | build | ordered | btree-map | 6 | 7.52 ms | 10.39 ms | 1.38× [1.37, 1.39] | +27.4% | [+26.8%, +28.0%] | 0.5 pts | 0.9 | yes |
-| unique | url | 262144 | valuesFor | ordered | btree-map | 6 | 417 | 457 | 1.09× [1.08, 1.11] | +8.7% | [+7.2%, +10.1%] | 1.3 pts | 2.0 | yes |
-| unique | url | 262144 | valuesBetween | ordered | btree-map | 6 | 6620 | 3788 | 0.58× [0.57, 0.59] | -73.2% | [-76.2%, -70.2%] | 2.9 pts | 1.3 | yes |
-| unique | url | 262144 | prefix | ordered | btree-map | 6 | 28.3 µs | 15.0 µs | 0.53× [0.53, 0.54] | -87.7% | [-89.1%, -86.3%] | 1.3 pts | 0.2 | yes |
-| unique | url | 262144 | churn | ordered | btree-map | 6 | 581 | 780 | 1.36× [1.31, 1.41] | +26.2% | [+23.6%, +28.9%] | 2.5 pts | 2.5 | no |
-| unique | url | 1048576 | valuesFor | ordered | btree-map | 6 | 544 | 892 | 1.64× [1.62, 1.66] | +38.9% | [+38.1%, +39.6%] | 0.7 pts | 1.0 | yes |
-| unique | url | 1048576 | valuesBetween | ordered | btree-map | 6 | 7736 | 4777 | 0.62× [0.61, 0.63] | -61.6% | [-63.8%, -59.3%] | 2.1 pts | 1.6 | yes |
-| unique | url | 1048576 | prefix | ordered | btree-map | 6 | 147.5 µs | 81.0 µs | 0.55× [0.52, 0.57] | -83.0% | [-91.6%, -74.3%] | 8.2 pts | 0.6 | no |
-| unique | url | 1048576 | churn | ordered | btree-map | 6 | 771 | 1244 | 1.61× [1.55, 1.67] | +37.7% | [+35.4%, +40.0%] | 2.2 pts | 2.9 | yes |
+| unique | url | 4096 | valuesFor | ordered | btree-map | 6 | 72.0 | 123 | 1.71× [1.69, 1.73] | +41.6% | [+40.9%, +42.2%] | 0.6 pts | 1.0 | yes |
+| unique | url | 4096 | valuesBetween | ordered | btree-map | 6 | 1857 | 607 | 0.33× [0.32, 0.33] | -206.0% | [-211.3%, -200.6%] | 5.1 pts | 1.1 | yes |
+| unique | url | 4096 | prefix | ordered | btree-map | 6 | 150 | 146 | 0.98× [0.96, 0.99] | -2.3% | [-3.8%, -0.9%] | 1.4 pts | 1.3 | yes |
+| unique | url | 4096 | churn | ordered | btree-map | 6 | 163 | 185 | 1.13× [1.11, 1.15] | +11.3% | [+9.8%, +12.8%] | 1.4 pts | 0.7 | yes |
+| unique | url | 4096 | build | ordered | btree-map | 6 | 1.79 ms | 2.08 ms | 1.15× [1.13, 1.17] | +13.3% | [+11.8%, +14.9%] | 1.5 pts | 1.6 | yes |
+| unique | url | 16384 | valuesFor | ordered | btree-map | 6 | 98.7 | 172 | 1.75× [1.72, 1.77] | +42.7% | [+41.9%, +43.5%] | 0.8 pts | 1.4 | yes |
+| unique | url | 16384 | valuesBetween | ordered | btree-map | 6 | 2388 | 765 | 0.32× [0.32, 0.33] | -210.9% | [-215.0%, -206.8%] | 3.9 pts | 1.5 | yes |
+| unique | url | 16384 | prefix | ordered | btree-map | 6 | 223 | 214 | 0.97× [0.95, 0.99] | -3.1% | [-5.6%, -0.7%] | 2.3 pts | 1.7 | no |
+| unique | url | 16384 | churn | ordered | btree-map | 6 | 250 | 259 | 1.05× [1.00, 1.10] | +4.8% | [+0.2%, +9.4%] | 4.4 pts | 1.4 | no |
+| unique | url | 16384 | build | ordered | btree-map | 6 | 9.83 ms | 11.55 ms | 1.18× [1.15, 1.22] | +15.6% | [+13.1%, +18.1%] | 2.4 pts | 1.5 | no |
+| unique | url | 262144 | valuesFor | ordered | btree-map | 6 | 518 | 519 | 1.01× [0.95, 1.06] | +0.6% | [-4.8%, +6.1%] | 5.2 pts | 2.4 | no |
+| unique | url | 262144 | valuesBetween | ordered | btree-map | 6 | 7924 | 3370 | 0.43× [0.42, 0.44] | -131.5% | [-137.5%, -125.6%] | 5.7 pts | 2.0 | yes |
+| unique | url | 262144 | prefix | ordered | btree-map | 6 | 1568 | 996 | 0.63× [0.60, 0.65] | -59.4% | [-66.0%, -52.9%] | 6.2 pts | 1.4 | no |
+| unique | url | 262144 | churn | ordered | btree-map | 6 | 881 | 830 | 1.01× [0.87, 1.20] | +0.9% | [-14.9%, +16.7%] | 15.1 pts | 7.9 | no |
+| unique | url | 1048576 | valuesFor | ordered | btree-map | 6 | 742 | 917 | 1.24× [1.22, 1.26] | +19.5% | [+18.2%, +20.7%] | 1.2 pts | 1.3 | yes |
+| unique | url | 1048576 | valuesBetween | ordered | btree-map | 6 | 9529 | 4558 | 0.48× [0.47, 0.48] | -109.2% | [-112.0%, -106.4%] | 2.7 pts | 1.4 | yes |
+| unique | url | 1048576 | prefix | ordered | btree-map | 6 | 6037 | 3271 | 0.55× [0.52, 0.58] | -83.1% | [-92.9%, -73.3%] | 9.3 pts | 0.7 | no |
+| unique | url | 1048576 | churn | ordered | btree-map | 6 | 1105 | 1260 | 1.16× [1.14, 1.17] | +13.4% | [+12.5%, +14.4%] | 0.9 pts | 0.8 | yes |
 | unique | uuid | 4096 | valuesFor | ordered | btree-map | 6 | 30.5 | 101 | 3.33× [3.31, 3.35] | +70.0% | [+69.8%, +70.2%] | 0.2 pts | 0.4 | yes |
 | unique | uuid | 4096 | valuesBetween | ordered | btree-map | 6 | 1385 | 473 | 0.34× [0.34, 0.35] | -193.1% | [-196.4%, -189.8%] | 3.2 pts | 1.3 | yes |
 | unique | uuid | 4096 | prefix | ordered | btree-map | 6 | 66.7 | 104 | 1.55× [1.54, 1.57] | +35.7% | [+35.1%, +36.2%] | 0.5 pts | 1.1 | yes |
@@ -452,18 +452,18 @@ Warnings from pooling:
 - multi u64 n=1048576 valuesFor: ordered vs map-sets: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - multi u64 n=1048576 valuesBetween: ordered vs btree-sets: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - multi u64 n=1048576 churn: ordered vs map-sets: the processes scatter 4.1 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=4096 prefix: ordered vs hashed: the processes scatter 2.9 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=16384 valuesFor: ordered vs btree-sets: the processes scatter 4.2 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=16384 valuesBetween: ordered vs map-sets: the processes scatter 2.2 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=16384 churn: ordered vs btree-sets: the processes scatter 2.1 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=262144 valuesFor: ordered vs btree-sets: the processes scatter 3.0 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=262144 valuesFor: ordered vs hashed: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=262144 churn: ordered vs btree-sets: the processes scatter 3.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=1048576 valuesFor: ordered vs btree-sets: the processes scatter 3.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=1048576 valuesFor: ordered vs hashed: the processes scatter 2.7 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=1048576 valuesBetween: ordered vs btree-sets: the processes scatter 2.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=1048576 churn: ordered vs hashed: the processes scatter 2.8 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- multi url n=1048576 churn: ordered vs map-sets: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=4096 churn: ordered vs btree-sets: the processes scatter 2.7 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=4096 build: ordered vs hashed: the processes scatter 4.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=16384 valuesBetween: ordered vs hashed: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=16384 valuesBetween: ordered vs map-sets: the processes scatter 2.8 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=262144 valuesFor: ordered vs btree-sets: the processes scatter 2.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=262144 valuesFor: ordered vs hashed: the processes scatter 2.4 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=262144 valuesFor: ordered vs map-sets: the processes scatter 2.1 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=1048576 valuesFor: ordered vs btree-sets: the processes scatter 2.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=1048576 valuesFor: ordered vs hashed: the processes scatter 2.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=1048576 churn: ordered vs btree-sets: the processes scatter 2.1 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=1048576 churn: ordered vs hashed: the processes scatter 2.7 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- multi url n=1048576 churn: ordered vs map-sets: the processes scatter 2.6 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - multi uuid n=16384 valuesFor: ordered vs btree-sets: the processes scatter 2.2 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - multi uuid n=16384 valuesBetween: ordered vs hashed: the processes scatter 3.8 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - multi uuid n=16384 valuesBetween: ordered vs map-sets: the processes scatter 2.9 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
@@ -490,8 +490,16 @@ Warnings from pooling:
 - unique street n=16384 valuesFor: ordered vs btree-map: the processes scatter 3.0 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - unique street n=16384 valuesBetween: ordered vs btree-map: the processes scatter 2.1 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - unique u64 n=1048576 valuesBetween: ordered vs btree-map: the processes scatter 10.4 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- unique url n=262144 churn: ordered vs btree-map: the processes scatter 2.5 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
-- unique url n=1048576 churn: ordered vs btree-map: the processes scatter 2.9 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- unique url n=16384 prefix: ordered vs btree-map: the pooled difference of -3.13% does not clear the 3.34% median noise floor of the processes
+- unique url n=262144 valuesFor: ordered vs btree-map: the pooled difference of 0.61% does not clear the 1.38% median noise floor of the processes
+- unique url n=262144 valuesFor: ordered vs btree-map: the pooled interval [-4.84%, 6.07%] includes zero
+- unique url n=262144 valuesFor: ordered vs btree-map: the processes scatter 2.4 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- unique url n=262144 valuesFor: ordered vs btree-map: 1 processes resolved A as faster and 1 as slower; each was confident, and the disagreement between them is the layout of memory, not the code
+- unique url n=262144 valuesBetween: ordered vs btree-map: the processes scatter 2.0 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- unique url n=262144 churn: ordered vs btree-map: the pooled difference of 0.92% does not clear the 1.29% median noise floor of the processes
+- unique url n=262144 churn: ordered vs btree-map: the pooled interval [-14.88%, 16.73%] includes zero
+- unique url n=262144 churn: ordered vs btree-map: the processes scatter 7.9 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
+- unique url n=262144 churn: ordered vs btree-map: 2 processes resolved A as faster and 4 as slower; each was confident, and the disagreement between them is the layout of memory, not the code
 - unique uuid n=16384 valuesFor: ordered vs btree-map: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - unique uuid n=262144 valuesFor: ordered vs btree-map: the processes scatter 2.1 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - unique uuid n=262144 valuesBetween: ordered vs btree-map: the processes scatter 2.8 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own

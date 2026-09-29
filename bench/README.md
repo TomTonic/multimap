@@ -73,11 +73,14 @@ keys, so `-ratio` is at most 2 with unique values.
 AMD Ryzen 9 7900 (12 cores, 24 threads), Linux 6.18 under WSL2 on Windows,
 Go 1.27.1, rtcompare v0.7.0, 2026-09-28: the dev suite with 5-6 processes per
 scenario, all four sizes and memory at 1M keys (`-suite dev -sizes
-4096,16384,262144,1048576 -maxprocs 6 -memn 1048576 -memrounds 3`). Every
+4096,16384,262144,1048576 -maxprocs 6 -memn 1048576 -memrounds 3`). The
+`url` rows come from a run with the same flags on 2026-09-29
+(`-keys url`, [`results/run-url.log`](results/run-url.log)), after `url`
+changed to real Tranco hosts. Every
 factor is how many operations the first candidate completes in the time the
-second needs for one: above 1 it is faster. 356 of the 400 comparisons have
+second needs for one: above 1 it is faster. 352 of the 400 comparisons have
 an interval across processes within ±2 percentage points or ±10% of the
-difference. The other 44, mostly `churn` from 256K keys up, spread 2-9
+difference. The other 48, mostly `churn` from 256K keys up, spread 2-17
 points between processes and would have needed more than 6 processes; none
 of them changes which candidate is faster, except where the interval
 includes 1. Those in the tables below are marked `*`, with their 95%
