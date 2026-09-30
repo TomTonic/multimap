@@ -10,15 +10,20 @@
 // multiproc package, because rtcompare's interval covers only the noise
 // within one process: each process perturbs its heap from its own seed and
 // builds the candidates in its own order, and the driver pools the processes
-// with rtcompare.Combine. It starts at least -minprocs processes per scenario
-// and adds more until every comparison's pooled 95% interval is within -abs
-// percentage points or -rel of the difference, or -maxprocs is reached. See
-// README.md.
+// with rtcompare.CombineStaged. The first -minprocs processes of a scenario
+// show how much the processes scatter, from that the run works out once how
+// many processes every comparison's pooled 95% interval needs to be within
+// -abs percentage points or -rel of the difference, and runs that many, at
+// most -maxprocs. They run one after another (the serial regime, each with
+// the machine to itself) or, with -parallel, several at a time (the parallel
+// regime, sharing the caches and the memory bandwidth). The two regimes
+// measure different things and are never pooled. See README.md.
 //
 // Usage:
 //
 //	go run ./cmd/bench                          # the dev suite (-suite dev)
-//	go run ./cmd/bench -suite release           # everything; takes a day
+//	go run ./cmd/bench -suite release           # everything serial; takes a day
+//	go run ./cmd/bench -suite parallel          # the out-of-cache sizes, 8 processes at a time
 //	go run ./cmd/bench -sizes 4096 -skipmem     # a quicker subset
 //	go run -tags baseline ./cmd/bench -vs baseline      # head to head with an earlier Ordered (see cmd/mkbaseline)
 //
@@ -42,9 +47,11 @@ type config struct {
 	profiles           []string
 	sizes              []int
 	minProcs, maxProcs int
+	parallel           int
+	childProcs         int // GOMAXPROCS the children of a parallel run had, set by drive
 	abs, rel           float64
 	scanMax            int
-	ratio              float64
+	ratio, permChurn   float64
 	buildMax           int
 	memN, memRounds    int
 	cycles             int
@@ -64,12 +71,14 @@ func main() {
 	opsF := flag.String("ops", "valuesFor,valuesBetween,prefix,churn,build", "operations to compare")
 	vsF := flag.String("vs", "", "compare ordered only with these candidates (default: all of each value profile; baseline needs -tags baseline, see cmd/mkbaseline)")
 	var c config
-	flag.IntVar(&c.minProcs, "minprocs", 5, "processes per scenario before the stop rule applies")
-	flag.IntVar(&c.maxProcs, "maxprocs", 20, "processes per scenario at most")
-	flag.Float64Var(&c.abs, "abs", 0.02, "stop once every 95% interval is within this many (fractional) points ...")
+	flag.IntVar(&c.minProcs, "minprocs", 6, "processes in a scenario's first stage, whose scatter decides how many more it needs (in a parallel run: rounded up to whole waves)")
+	flag.IntVar(&c.maxProcs, "maxprocs", 0, "processes per scenario at most (0: rtcompare's default, "+strconv.Itoa(multiproc.DefaultMaxProcesses)+" serial or "+strconv.Itoa(multiproc.DefaultMaxWaves)+" waves parallel)")
+	flag.IntVar(&c.parallel, "parallel", 1, "processes to run at the same time: 1 runs them one after another (the serial regime); more runs them in waves (the parallel regime: the processes share caches and memory bandwidth, so results are never comparable with serial ones); keep it at or below the physical cores, and mind the memory, see README.md")
+	flag.Float64Var(&c.abs, "abs", 0.02, "size the run so that every 95% interval is within this many (fractional) points ...")
 	flag.Float64Var(&c.rel, "rel", 0.10, "... or within this fraction of its own difference")
 	flag.IntVar(&c.scanMax, "scanmax", 1<<16, "compare range queries on hashed and map-sets (a scan of all keys) only up to this many keys")
 	flag.Float64Var(&c.ratio, "ratio", 2, "churn and build: insertions per value the multimap holds in the end (at least 1)")
+	flag.Float64Var(&c.permChurn, "permchurn", 0.25, "churn and build: share of the deletions that take out a long-lived value, which is put back later (0 to below 1; 0 leaves the corpus untouched, as rtcompare's default does)")
 	flag.IntVar(&c.buildMax, "buildmax", 1<<16, "compare building only up to this many keys")
 	flag.IntVar(&c.memN, "memn", 1<<20, "number of keys for the memory measurements")
 	flag.IntVar(&c.memRounds, "memrounds", 5, "processes per candidate and key kind for the memory measurements")
@@ -91,7 +100,7 @@ func main() {
 	case err != nil:
 	case *child:
 		ps := pairsFor(keys.Kind(*kindsF), *n, *profilesF, c.ops, c.scanMax, c.buildMax)
-		_, err = multiproc.Run(c.procOptions(nil, nil, nil), speedSuite(keys.Kind(*kindsF), *profilesF, *n, c.ratio, ps))
+		_, err = multiproc.Run(c.procOptions(nil, nil, nil), speedSuite(keys.Kind(*kindsF), *profilesF, *n, c.stream(), ps))
 	case *memChild != "":
 		err = runMem(keys.Kind(*kindsF), *profilesF, *n, *memChild, c.cycles, c.seed, os.Stdout)
 	default:
@@ -108,12 +117,20 @@ func main() {
 // suites are the presets of -suite. dev is for the frequent runs while
 // trying a change: it leaves out 1M keys, where one process tells least
 // (see README.md), and trades precision for time with fewer processes and
-// A/A runs. release is the complete suite at full precision.
+// A/A runs. release is the complete suite at full precision, one process
+// after another. parallel is its out-of-cache sizes, where the scatter between
+// processes dominates and only more processes bring precision in reasonable
+// time, run in the parallel regime (8 at a time: a process at 1M keys needs
+// up to 5 GB, and 8 of them leave the 12 physical cores of the reference
+// machine room for the garbage collectors; one wave is the first stage) and
+// without the memory measurements, which the release suite already takes.
 var suites = map[string]map[string]string{
-	"dev": {"sizes": "4096,16384,262144", "minprocs": "3", "maxprocs": "5",
+	"dev": {"sizes": "4096,16384,262144", "minprocs": "4", "maxprocs": "8",
 		"validation": "2", "repeats": "41", "buildrepeats": "21", "buildvalidation": "2", "memn": "131072", "memrounds": "3"},
-	"release": {"sizes": "4096,16384,262144,1048576", "minprocs": "5", "maxprocs": "20",
+	"release": {"sizes": "4096,16384,262144,1048576", "minprocs": "6", "maxprocs": "0",
 		"validation": "0", "repeats": "0", "memn": "1048576", "memrounds": "5"},
+	"parallel": {"sizes": "262144,1048576", "parallel": "8", "minprocs": "8", "maxprocs": "0",
+		"validation": "0", "repeats": "0", "skipmem": "true"},
 }
 
 // applySuite sets the flags of fs that the named preset lists and the
@@ -148,6 +165,9 @@ func kindNames() []string {
 // keys (see newPairs and extraKeys).
 const maxUniqueRatio = 2
 
+// stream is the shape of the churn and build streams the flags ask for.
+func (c config) stream() stream { return stream{c.ratio, c.permChurn} }
+
 func (c *config) validate() error {
 	for _, v := range vsOnly {
 		switch {
@@ -165,8 +185,12 @@ func (c *config) validate() error {
 	switch {
 	case c.ratio < 1 || c.ratio == 1 && slices.Contains(c.ops, "churn"):
 		return fmt.Errorf("-ratio %v: must be at least 1, and more than 1 for churn", c.ratio)
-	case c.minProcs < 3 || c.maxProcs < c.minProcs:
-		return fmt.Errorf("-minprocs %d, -maxprocs %d: need 3 <= minprocs <= maxprocs", c.minProcs, c.maxProcs)
+	case c.minProcs < 3 || c.maxProcs != 0 && c.maxProcs < c.minProcs:
+		return fmt.Errorf("-minprocs %d, -maxprocs %d: need 3 <= minprocs <= maxprocs, or maxprocs 0", c.minProcs, c.maxProcs)
+	case c.parallel < 1:
+		return fmt.Errorf("-parallel %d: must be at least 1", c.parallel)
+	case c.permChurn < 0 || c.permChurn >= 1:
+		return fmt.Errorf("-permchurn %v: must be at least 0 and below 1", c.permChurn)
 	case c.ratio > maxUniqueRatio && slices.Contains(c.profiles, unique):
 		return fmt.Errorf("-ratio %v: at most %d with -values unique", c.ratio, maxUniqueRatio)
 	}

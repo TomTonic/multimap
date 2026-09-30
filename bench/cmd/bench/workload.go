@@ -66,9 +66,21 @@ func newPairs(n int, vals []V, offs []int, r float64, unique bool) pairs {
 	return pairs{key: key, val: append(slices.Clip(vals), toVs(trans)...)}
 }
 
-// workloadConfig is the configuration of both streams of a scenario.
-func workloadConfig(r float64) workload.Config {
-	return workload.Config{Seed: 0xC4A2, Ratio: r}
+// stream is the shape of the churn and build streams of a scenario: the
+// insertions per value the multimap holds in the end, and the share of the
+// deletions that take out a long-lived value (a corpus value) and put it back
+// later, so that the merges and shrinks of real deletions reach the whole
+// multimap and not only its newest part.
+type stream struct{ ratio, permChurn float64 }
+
+// workloadConfig is the configuration of both streams of a scenario. The
+// streams carry no lookups (workload.Config.Lookups), so an Apply function
+// only sees insertions and deletions. Keys stay at rtcompare's default, a
+// seeded permutation, though the driver maps the elements' IDs to corpus keys
+// itself (see newPairs): the IDs alone are sequential, and every transient one
+// lies above the permanent ones.
+func workloadConfig(s stream) workload.Config {
+	return workload.Config{Seed: 0xC4A2, Ratio: s.ratio, PermanentChurn: s.permChurn}
 }
 
 // structure describes candidate impl to workload.Compare. Each Apply asserts

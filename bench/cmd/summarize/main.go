@@ -1,8 +1,10 @@
 // Command summarize pools the results of comparisons that ran in several
-// processes (see cmd/bench) with rtcompare.Combine and prints one row per
+// processes (see cmd/bench) with rtcompare.CombineStaged, or rtcompare.Combine
+// for rows of a run before rtcompare v0.8.0, and prints one row per
 // comparison: the mean difference, its 95% interval across processes, the
 // spread between processes, and how far that spread exceeds the interval a
-// single process reports.
+// single process reports. Rows of the serial and the parallel regime (the
+// "parallel" field) are pooled separately, never together.
 //
 // Usage:
 //
@@ -33,13 +35,14 @@ var measured = map[string]bool{
 	"ns_a": true, "ns_b": true, "delta": true, "low": true, "high": true, "level": true,
 	"resolved": true, "validated": true, "noise_floor": true, "autocorr": true, "inner_loops": true,
 	"layout_seed": true, "seed": true, "process": true, "suspended_s": true, "live_heap": true, "warnings": true,
+	"first_stage": true, "aa_a": true, "aa_b": true, "quantization": true, "report_seed": true,
 }
 
 func main() {
 	asJSON := flag.Bool("json", false, "print JSON lines instead of a table")
 	flag.Parse()
 	var order []string
-	groups := map[string][]rtcompare.Report{}
+	groups := map[string]*group{}
 	for _, path := range flag.Args() {
 		if err := read(path, groups, &order); err != nil {
 			fail(err)
@@ -52,7 +55,7 @@ func main() {
 		fmt.Println("|---|---:|---:|---|---:|---:|---:|---|")
 	}
 	for _, k := range order {
-		p, err := rtcompare.Combine(groups[k], 0)
+		p, err := groups[k].pool()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "summarize: %s: %v\n", k, err)
 			continue
@@ -76,9 +79,27 @@ func fail(err error) {
 	os.Exit(1)
 }
 
+// group is the reports of one comparison, one per process, and the size of the
+// first stage of the run that made them, zero if the rows do not say.
+type group struct {
+	reports []rtcompare.Report
+	first   int
+}
+
+// pool pools the reports the way multiproc did in the run: with Stein's
+// interval from the recorded first stage, or with a plain t interval when the
+// rows lack one.
+func (g *group) pool() (rtcompare.Pooled, error) {
+	if g.first == 0 {
+		return rtcompare.Combine(g.reports, 0)
+	}
+	return rtcompare.CombineStaged(g.reports, g.first, 0)
+}
+
 // read adds every result row of one JSON lines file to its comparison's
-// reports, rebuilt from the fields that rtcompare.Combine pools.
-func read(path string, groups map[string][]rtcompare.Report, order *[]string) error {
+// reports, rebuilt from the fields that rtcompare.Combine and CombineStaged
+// pool.
+func read(path string, groups map[string]*group, order *[]string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -104,17 +125,36 @@ func read(path string, groups map[string][]rtcompare.Report, order *[]string) er
 		}
 		r := rtcompare.Report{
 			NsPerOpA: num("ns_a"), NsPerOpB: num("ns_b"), Resolved: res, NoiseFloor: num("noise_floor"),
-			Validated: val || num("noise_floor") > 0,
-			Estimate:  rtcompare.Estimate{Delta: d, Low: num("low"), High: num("high"), Level: level},
-			Suspended: time.Duration(num("suspended_s") * float64(time.Second)),
+			Validated:    val || num("noise_floor") > 0,
+			Estimate:     rtcompare.Estimate{Delta: d, Low: num("low"), High: num("high"), Level: level},
+			ValidationA:  rtcompare.HarnessValidation{Deltas: floats(row["aa_a"])},
+			ValidationB:  rtcompare.HarnessValidation{Deltas: floats(row["aa_b"])},
+			Suspended:    time.Duration(num("suspended_s") * float64(time.Second)),
+			Quantization: num("quantization"),
 		}
 		k := groupKey(row)
-		if _, ok := groups[k]; !ok {
+		g, ok := groups[k]
+		if !ok {
+			g = &group{}
+			groups[k] = g
 			*order = append(*order, k)
 		}
-		groups[k] = append(groups[k], r)
+		g.reports = append(g.reports, r)
+		g.first = max(g.first, int(num("first_stage")))
 	}
 	return sc.Err()
+}
+
+// floats decodes a JSON array of numbers, nil for anything else.
+func floats(v any) []float64 {
+	a, _ := v.([]any)
+	var out []float64
+	for _, x := range a {
+		if f, ok := x.(float64); ok {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // groupKey names the comparison a decoded result row belongs to, so that the

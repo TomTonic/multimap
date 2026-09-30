@@ -81,11 +81,11 @@ type fixture struct {
 	from, to   keys.Set
 	pfrom, pto keys.Set
 	// index workloads (see workload.go): churn keys (corpus keys, then extra
-	// keys that only the workloads use), the ratio of insertions to final
-	// values, and the key-value pair of every workload element
-	ck    keys.Set
-	ratio float64
-	pairs pairs
+	// keys that only the workloads use), the shape of their streams, and the
+	// key-value pair of every workload element
+	ck     keys.Set
+	stream stream
+	pairs  pairs
 }
 
 const rangeKeys = 100
@@ -94,7 +94,7 @@ const rangeKeys = 100
 // builds the candidates named in impls, one after another, in the order
 // arrange leaves them in. Whichever is built last can be consistently a few
 // percent faster, so the speed processes vary the order (see buildOrder).
-func newFixture(kind keys.Kind, n int, profile string, impls []string, ratio float64, arrange func([]string)) *fixture {
+func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream, arrange func([]string)) *fixture {
 	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
 	nums, offs := profileValues(f.c, profile, n)
 	f.vals, f.offs = toVs(nums), offs
@@ -117,8 +117,8 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string, ratio flo
 		f.pfrom, f.pto = prefixes(kind, f.c.Keys, n)
 	}
 	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:extraKeys(profile, n)]...))
-	f.ratio = ratio
-	f.pairs = newPairs(n, f.vals, f.offs, ratio, profile == unique)
+	f.stream = st
+	f.pairs = newPairs(n, f.vals, f.offs, st.ratio, profile == unique)
 	return f
 }
 

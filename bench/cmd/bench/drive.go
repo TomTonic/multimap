@@ -21,12 +21,15 @@ import (
 	"github.com/TomTonic/multimap/bench/awake"
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/bench/rtopt"
+	"github.com/TomTonic/rtcompare"
 	"github.com/TomTonic/rtcompare/multiproc"
 )
 
 // drive runs the whole suite: every speed scenario with as many processes as
 // its comparisons need (see driveScenario), then the memory measurements, and
-// writes the raw results and two summary tables to c.out.
+// writes the raw results and two summary tables to c.out. All speed scenarios
+// of one run share a regime, serial or parallel (see config.parallel), which
+// run.json records.
 func drive(c config) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -37,11 +40,15 @@ func drive(c config) error {
 	}
 	start := time.Now()
 	logf("start: %s", strings.Join(os.Args[1:], " "))
+	if c.parallel > 1 {
+		logf("parallel regime: %d processes at a time; the results are not comparable with serial runs%s", c.parallel, memoryPerProcess(c.parallel))
+	}
 	if release, err := awake.Hold("benchmark run"); err != nil {
 		logf("warning: %v; the run goes on, and processes the machine slept through are flagged", err)
 	} else {
 		defer release()
 	}
+	childProcs := 0 // GOMAXPROCS of the speed processes of a parallel run, see multiproc.Results
 	if !c.skipSpeed {
 		path := filepath.Join(c.out, "speed.jsonl")
 		if err := removeIfExists(path); err != nil {
@@ -50,9 +57,11 @@ func drive(c config) error {
 		for _, profile := range c.profiles {
 			for _, kind := range c.kinds {
 				for _, n := range c.sizes {
-					if err := driveScenario(c, kind, profile, n); err != nil {
+					g, err := driveScenario(c, kind, profile, n)
+					if err != nil {
 						return err
 					}
+					childProcs = max(childProcs, g)
 				}
 			}
 		}
@@ -60,6 +69,7 @@ func drive(c config) error {
 		if err != nil {
 			return err
 		}
+		c.childProcs = childProcs
 		if err := writeSpeed(c, all); err != nil {
 			return err
 		}
@@ -73,41 +83,46 @@ func drive(c config) error {
 		}
 	}
 	logf("done after %s", time.Since(start).Round(time.Second))
+	c.childProcs = childProcs
 	return writeRunInfo(c, start)
 }
 
 // driveScenario runs the speed processes of one key kind, value profile and
 // size through multiproc: each child builds the scenario's fixture after its
-// own heap perturbation and in its own build order, and processes are added
-// until every comparison's pooled interval is precise (after at least
-// c.minProcs) or c.maxProcs have run. Every process's reports go to
-// speed.jsonl, the children's rtcompare reports to one log per scenario.
-func driveScenario(c config, kind, profile string, n int) error {
+// own heap perturbation and in its own build order. The first c.minProcs
+// processes decide once how many the scenario needs for every comparison's
+// pooled interval to be precise (within c.abs or c.rel), and that many run,
+// at most c.maxProcs, one after another or c.parallel at a time. Every
+// process's reports go to speed.jsonl, the children's rtcompare reports to one
+// log per scenario. It returns the GOMAXPROCS the children ran with, zero if
+// they kept the runtime's default.
+func driveScenario(c config, kind, profile string, n int) (int, error) {
 	ps := pairsFor(keys.Kind(kind), n, profile, c.ops, c.scanMax, c.buildMax)
 	if len(ps) == 0 {
-		return nil
+		return 0, nil
 	}
 	if limit := keys.Capacity(keys.Kind(kind)); n > limit {
 		logf("%s %s n=%d: skipped, the corpus holds keys for n <= %d", kind, profile, n, limit)
-		return nil
+		return 0, nil
 	}
 	name := fmt.Sprintf("%s-%s-%d", kind, profile, n)
 	log, err := os.Create(filepath.Join(c.out, "logs", "speed-"+name+".log"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = log.Close() }()
-	res, err := multiproc.Run(c.procOptions(childArgs(c, kind, profile, n), log, func(r multiproc.Results) {
-		open, widest := imprecise(r, c.abs, c.rel)
-		logf("%s %s n=%d process %d: %d of %d comparisons not yet precise%s", kind, profile, n, r.Processes, open, len(ps), widest)
-	}), speedSuite(keys.Kind(kind), profile, n, c.ratio, ps))
+	res, err := multiproc.Run(c.procOptions(childArgs(c, kind, profile, n), log, c.progress(fmt.Sprintf("%s %s n=%d", kind, profile, n), len(ps))),
+		speedSuite(keys.Kind(kind), profile, n, c.stream(), ps))
 	if err != nil {
-		return fmt.Errorf("%s: %w (see logs/speed-%s.log)", name, err, name)
+		return 0, fmt.Errorf("%s: %w (see logs/speed-%s.log)", name, err, name)
+	}
+	if !res.Precise {
+		logf("warning: %s %s n=%d stopped after %d processes, before every interval was as precise as asked", kind, profile, n, res.Processes)
 	}
 	var rows []result
 	for _, cmp := range res.Comparisons {
 		for i, r := range cmp.Reports {
-			rows = append(rows, rowOf(kind, profile, n, pairOf(cmp.Name), i+1, res.Seeds[i], r))
+			rows = append(rows, rowOf(kind, profile, n, pairOf(cmp.Name), i+1, res.Seeds[i], cmp.Pooled.FirstStage, res.Parallel, r))
 			if r.Suspended > 0 {
 				logf("warning: the machine slept %s during process %d of %s", r.Suspended.Round(time.Second), i+1, name)
 			}
@@ -115,18 +130,124 @@ func driveScenario(c config, kind, profile string, n int) error {
 	}
 	b, err := encodeLines(rows)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return appendFile(filepath.Join(c.out, "speed.jsonl"), b)
+	if err := appendFile(filepath.Join(c.out, "speed.jsonl"), b); err != nil {
+		return 0, err
+	}
+	checkPooled(name, res, rows)
+	return res.ChildGOMAXPROCS, nil
+}
+
+// memoryPerProcess says how much memory each of parallel processes may use,
+// where the system reports what is free (Linux), for the log: a process of 1M
+// keys holds every candidate of its scenario and the streams' structures, and
+// the kernel ends a run that outgrows the machine's memory without a word.
+func memoryPerProcess(parallel int) string {
+	b, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return ""
+	}
+	for line := range strings.Lines(string(b)) {
+		if rest, ok := strings.CutPrefix(line, "MemAvailable:"); ok {
+			if kb, err := strconv.ParseFloat(strings.Fields(rest)[0], 64); err == nil {
+				return fmt.Sprintf("; %.1f GB of memory are available, %.1f GB for each process (a process at 1M keys needs 4-5 GB against the baseline, up to 8 GB with all candidates)", kb/1e6, kb/1e6/float64(parallel))
+			}
+		}
+	}
+	return ""
+}
+
+// checkPooled warns if pooling the rows of a comparison, as the summary will,
+// gives another result than multiproc's own pooling in the run: the summary
+// would then state figures the run never saw.
+func checkPooled(scenario string, res multiproc.Results, rows []result) {
+	byName := map[string][]result{}
+	for _, r := range rows {
+		k := pair{r.Op, r.A, r.B}.name()
+		byName[k] = append(byName[k], r)
+	}
+	for _, cmp := range res.Comparisons {
+		if cmp.Pooled.Processes == 0 {
+			continue
+		}
+		got, err := poolRows(byName[cmp.Name])
+		if err != nil || got.Delta != cmp.Pooled.Delta || got.Low != cmp.Pooled.Low || got.High != cmp.Pooled.High || got.NoiseFloor != cmp.Pooled.NoiseFloor {
+			logf("warning: %s: %s pools to %+v (%v) from its rows, but multiproc pooled %+v", scenario, cmp.Name, got, err, cmp.Pooled)
+		}
+	}
 }
 
 // procOptions are the multiproc options of a speed scenario. The seed is
 // fixed per scenario, so that a run can be repeated process for process.
 func (c config) procOptions(args []string, log io.Writer, progress func(multiproc.Results)) multiproc.Options {
 	return multiproc.Options{
-		MinProcesses: c.minProcs, MaxProcesses: c.maxProcs, AbsPrecision: c.abs, RelPrecision: c.rel,
+		MinProcesses: c.minProcs, MaxProcesses: c.maxProcs, Parallel: c.parallel, AbsPrecision: c.abs, RelPrecision: c.rel,
 		Seed: 0x5EED, Args: args, Stderr: log, Progress: progress,
 	}
+}
+
+// progress returns the callback that logs a scenario's progress after each
+// process (after each wave in a parallel run), and, once the first stage has
+// run, how many processes the scenario was sized for.
+func (c config) progress(scenario string, comparisons int) func(multiproc.Results) {
+	sized := false
+	return func(r multiproc.Results) {
+		first := 0
+		for _, cmp := range r.Comparisons {
+			first = max(first, cmp.Pooled.FirstStage)
+		}
+		if first == 0 {
+			logf("%s: %d processes done; the first stage is at least %d", scenario, r.Processes, c.minProcs)
+			return
+		}
+		if !sized {
+			sized = true
+			need, name := needed(r, first, c.abs, c.rel)
+			logf("%s: first stage of %d processes done; %s needs %d processes for its interval, run in whole %s (at most %s)",
+				scenario, first, name, need, c.unit(), c.limit())
+		}
+		open, widest := imprecise(r, c.abs, c.rel)
+		logf("%s: %d processes done; %d of %d comparisons not yet within the interval asked for%s", scenario, r.Processes, open, comparisons, widest)
+	}
+}
+
+// unit and limit describe how a run's size is rounded and capped, for the log.
+func (c config) unit() string {
+	if c.parallel > 1 {
+		return fmt.Sprintf("waves of %d", c.parallel)
+	}
+	return "pairs of processes"
+}
+
+func (c config) limit() string {
+	switch {
+	case c.maxProcs != 0:
+		return strconv.Itoa(c.maxProcs)
+	case c.parallel > 1:
+		return fmt.Sprintf("%d waves", multiproc.DefaultMaxWaves)
+	}
+	return strconv.Itoa(multiproc.DefaultMaxProcesses)
+}
+
+// needed returns how many processes the most demanding comparison of r asks
+// for, judged from the first stage's processes, and its name; multiproc sizes
+// the run from the same figures, then rounds up and caps it.
+func needed(r multiproc.Results, first int, abs, rel float64) (int, string) {
+	most, name := first, ""
+	for _, cmp := range r.Comparisons {
+		p, err := rtcompare.Combine(cmp.Reports[:first], cmp.Pooled.Level)
+		if err != nil {
+			continue
+		}
+		if k := p.ProcessesFor(abs, rel); k > most {
+			most, name = k, cmp.Name
+		}
+	}
+	if name == "" {
+		return most, "no comparison"
+	}
+	return most, name
 }
 
 // childArgs is the command line of a scenario's speed processes.
@@ -289,7 +410,8 @@ func writeRunInfo(c config, start time.Time) error {
 		"start": start.Format(time.RFC3339), "end": time.Now().Format(time.RFC3339),
 		"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
 		"cpu": cpuName(), "args": os.Args[1:], "rtcompare": rtcompareVersion(),
-		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "abs": c.abs, "rel": c.rel,
+		"minprocs": c.minProcs, "maxprocs": c.maxProcs, "ratio": c.ratio, "permchurn": c.permChurn, "abs": c.abs, "rel": c.rel,
+		"parallel": c.parallel, "child_gomaxprocs": c.childProcs,
 		"values": c.profiles, "keys": c.kinds, "sizes": c.sizes, "ops": c.ops, "memn": c.memN,
 		"suite": flag.Lookup("suite").Value.String(), "vs": vsOnly, "value_type": fmt.Sprintf("%T", *new(V)),
 	}
