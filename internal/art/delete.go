@@ -82,20 +82,19 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 		if l.base() <= depth {
 			return c
 		}
-		k := append(append(append(make([]byte, 0, l.keyLen()), key[:d]...), b), l.from(d+1)...)
-		return leafHdr(rk(l, k, depth))
+		return leafHdr(rk(l, key[:d], int(b), depth))
 	}
 	p := append(appendPath(nil, n), b)
 	return withPath(c, appendPath(p, c))
 }
 
 // lift returns leaf l, whose key is k, ready to stand at depth: l itself if it
-// holds its key from there on, a new leaf from rk otherwise.
+// holds its key from there on, the leaf from rk otherwise.
 func lift(l *leafHead, k []byte, depth int, rk rekeyFunc) *leafHead {
 	if l.base() <= depth {
 		return l
 	}
-	return rk(l, k, depth)
+	return rk(l, k, -1, depth)
 }
 
 // onlyChild returns the single child of n. Only a 5-way node can fall to one

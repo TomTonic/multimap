@@ -98,15 +98,51 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), off))
 }
 
-// rekey returns a leaf with l's values that holds key from base on (see
-// rekeyFunc). It captures nothing, so passing it allocates no closure.
-func rekey[T comparable](l *leafHead, key []byte, base int) *leafHead {
+// rekey returns a leaf with l's values that holds its key from depth on (see
+// rekeyFunc). It captures nothing, so passing it allocates no closure. It
+// keeps l where it is when the longer remainder fits its size class, and
+// builds the whole key only when it has to copy l.
+func rekey[T comparable](l *leafHead, pre []byte, b, depth int) *leafHead {
 	if l.kind != kSet {
-		return reflat[T](l, key, base)
+		if flatPrepend[T](l, pre, b, depth) {
+			return l
+		}
+		return reflat[T](l, wholeKey(l, pre, b), depth)
 	}
-	nl := newSetLeaf[T](key, base)
+	if setPrepend(l, pre, b, depth) {
+		return l
+	}
+	nl := newSetLeaf[T](wholeKey(l, pre, b), depth)
 	*vals[T](nl) = *vals[T](l)
 	return nl
+}
+
+// setKeyCap returns the size of the key area of a set leaf whose key
+// remainder is klen bytes long, at most maxInline: the class that klen falls
+// in (see vals), whose largest holds 256 bytes.
+func setKeyCap(klen int) int {
+	for _, c := range [...]int{16, 32, 48, 64, 96, 128, 192} {
+		if klen <= c {
+			return c
+		}
+	}
+	return 256
+}
+
+// setPrepend makes set leaf l hold its key from depth on in place when the
+// longer remainder still fits the key area of l's class, which keeps its value
+// set where it is. It saves rekey the allocation of a new leaf, see
+// flatPrepend, and reports whether it did.
+func setPrepend(l *leafHead, pre []byte, b, depth int) bool {
+	old, klen := int(l.klen), l.keyLen()-depth // a string leaf holds its whole key, and never gets here
+	if klen > maxInline || klen > setKeyCap(old) {
+		return false
+	}
+	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
+	copy(area[klen-old:], area[:old])
+	fillHead(area[:klen-old], pre, b, depth)
+	l.klen = uint8(klen)
+	return true
 }
 
 // decide settles once per map whether T takes flat leaves (see flatType).

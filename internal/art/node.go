@@ -150,10 +150,12 @@ type leaf[T comparable, K keyArea] struct {
 // its head. Map[T] supplies it so that the tree code does not need to know T.
 type newLeafFunc func(key []byte, base int) *leafHead
 
-// rekeyFunc moves leaf l to a smaller base: it returns a leaf with the same
-// values that holds key from base on. The tree calls it when a node above l
-// goes away and l takes its place. Map[T] supplies it.
-type rekeyFunc func(l *leafHead, key []byte, base int) *leafHead
+// rekeyFunc moves leaf l to depth, which is below its base: it returns a leaf
+// with the same values that holds its key from depth on. The tree calls it when
+// a node above l goes away and l takes its place. l's whole key is pre, then
+// the byte b unless b is negative, then l's key from there on. Map[T] supplies
+// it, and gets by without the whole key when the longer remainder still fits l.
+type rekeyFunc func(l *leafHead, pre []byte, b int, depth int) *leafHead
 
 // Every node kind but the 256-way one keeps its term leaf, if any, in its
 // last child slot, which is free whenever there is a term (see termOf).
@@ -241,6 +243,26 @@ func (l *leafHead) matches(key []byte) bool {
 	}
 	k := int(l.klen)
 	return len(key) == int(l.kl) && string(key[len(key)-k:]) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), k)
+}
+
+// wholeKey returns l's whole key, from its position in a rekeyFunc call: pre,
+// the byte b unless it is negative, then l's key from there on.
+func wholeKey(l *leafHead, pre []byte, b int) []byte {
+	k := append(make([]byte, 0, l.keyLen()), pre...)
+	at := len(pre)
+	if b >= 0 {
+		k = append(k, byte(b))
+		at++
+	}
+	return append(k, l.from(at)...)
+}
+
+// fillHead writes the bytes of a rekeyFunc call's whole key from depth on into
+// dst, as many as dst holds: the rest of pre, then b.
+func fillHead(dst, pre []byte, b, depth int) {
+	if n := copy(dst, pre[depth:]); n < len(dst) {
+		dst[n] = byte(b)
+	}
 }
 
 // slots returns all child slots of n, including the one its term takes.

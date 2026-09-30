@@ -257,3 +257,70 @@ func TestLeafMovesUp(t *testing.T) {
 		})
 	}
 }
+
+// TestRekeyInPlace makes sure a leaf that has to hold more of its key, because
+// the node above it went away, keeps every value, and that it stays where it is
+// as long as the longer key still fits its size class. It covers rekey for
+// flat leaves (integer values) and set leaves (values that hold a pointer): a
+// delete that merges a node into its only leaf then costs no new leaf, which
+// with one value per key is what churn and build pay for most; a longer key
+// than the class holds moves the leaf.
+func TestRekeyInPlace(t *testing.T) {
+	key := bytes.Repeat([]byte("abcdefghij"), 30) // 300 bytes
+	for _, tc := range []struct {
+		name         string
+		flat         bool
+		keyLen, base int
+		to           int
+		values       int
+		wantInPlace  bool
+	}{
+		{"flat leaf with room", true, 20, 17, 11, 1, true},
+		{"flat leaf with several values and room", true, 20, 17, 11, 3, true},
+		{"flat leaf without room", true, 40, 37, 0, 1, false},
+		{"set leaf with room in its class", false, 20, 17, 6, 1, true},
+		{"set leaf beyond its class", false, 20, 17, 2, 1, false},
+		{"set leaf in the largest class", false, 230, 30, 1, 1, true},
+		{"set leaf up to the longest inline remainder", false, 300, 100, 46, 1, true},
+		{"set leaf beyond the longest inline remainder", false, 300, 100, 45, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := key[:tc.keyLen]
+			var l, nl *leafHead
+			var got []string
+			want := make([]string, tc.values)
+			for i := range want {
+				want[i] = fmt.Sprint(i + 1)
+			}
+			if tc.flat {
+				l = newFlatLeaf[uint64](k, tc.base)
+				for i := range tc.values {
+					if g := flatAdd(l, uint64(i+1)); g != nil {
+						l = g
+					}
+				}
+				nl = rekey[uint64](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
+				for _, v := range flatVals[uint64](nl) {
+					got = append(got, fmt.Sprint(v))
+				}
+			} else {
+				l = newSetLeaf[string](k, tc.base)
+				for _, v := range want {
+					vals[string](l).Add(v)
+				}
+				nl = rekey[string](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
+				vals[string](nl).Each(func(v string) bool { got = append(got, v); return true })
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Errorf("values %v, want %v", got, want)
+			}
+			if nl.keyLen() != tc.keyLen || nl.base() > tc.to || !bytes.Equal(nl.from(tc.to), k[tc.to:]) {
+				t.Errorf("leaf holds %q from %d of a key of %d bytes, want the key from %d on", nl.stored(), nl.base(), nl.keyLen(), tc.to)
+			}
+			if inPlace := nl == l; inPlace != tc.wantInPlace {
+				t.Errorf("leaf stayed in place: %v, want %v", inPlace, tc.wantInPlace)
+			}
+		})
+	}
+}
