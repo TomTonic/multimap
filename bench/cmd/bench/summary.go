@@ -13,9 +13,38 @@ import (
 
 var opOrder = []string{"valuesFor", "valuesBetween", "prefix", "churn", "build"}
 
+// poolRows pools the rows of one comparison the way multiproc pooled them in
+// the run: with Stein's interval (rtcompare.CombineStaged) from the first
+// stage the run recorded, which the rows of a run all agree on. Rows without a
+// first stage, from runs before rtcompare v0.8.0, are pooled with a plain t
+// interval.
+func poolRows(g []result) (rtcompare.Pooled, error) {
+	reps := make([]rtcompare.Report, len(g))
+	first := 0
+	for i, r := range g {
+		reps[i] = reportOf(r)
+		first = max(first, r.FirstStage)
+	}
+	if first == 0 {
+		return rtcompare.Combine(reps, 0)
+	}
+	return rtcompare.CombineStaged(reps, first, 0)
+}
+
+// regime describes how the processes of a run ran, for the summary's notes:
+// the serial one, or the parallel one, whose figures are not comparable with
+// serial ones.
+func regime(c config) string {
+	if c.parallel > 1 {
+		return fmt.Sprintf("parallel: %d processes at a time, each with GOMAXPROCS %d, sharing the caches and the memory bandwidth", c.parallel, c.childProcs)
+	}
+	return "serial: one process at a time, each with the machine to itself"
+}
+
 // writeSpeed writes speed-summary.md: one row per comparison with the median
-// time per operation of both candidates, the median difference, its 95%
-// interval across processes, and whether that interval met the stop rule.
+// time per operation of both candidates, the pooled difference, its 95%
+// interval across processes, and whether that interval is as narrow as the
+// run was sized for.
 func writeSpeed(c config, rows []result) error {
 	type key struct {
 		keys    string
@@ -39,34 +68,34 @@ func writeSpeed(c config, rows []result) error {
 			strings.Compare(x.a, y.a), strings.Compare(x.b, y.b))
 	})
 	var b strings.Builder
-	b.WriteString("| values | keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | inflation | precise |\n")
-	b.WriteString("|---|---|---:|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---|\n")
+	b.WriteString("| values | keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | inflation | precise | resolved |\n")
+	b.WriteString("|---|---|---:|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---|---|\n")
 	var notes []string
 	for _, k := range ks {
 		g := groups[k]
-		reps := make([]rtcompare.Report, len(g))
 		var na, nb []float64
-		for i, r := range g {
-			reps[i] = reportOf(r)
+		for _, r := range g {
 			na, nb = append(na, r.NsA), append(nb, r.NsB)
 		}
 		name := fmt.Sprintf("%s %s n=%d %s: %s vs %s", k.values, k.keys, k.n, k.op, k.a, k.b)
-		p, err := rtcompare.Combine(reps, 0)
+		p, err := poolRows(g)
 		if err != nil {
-			fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | — | — | — | — | — | no |\n",
+			fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | — | — | — | — | — | no | no |\n",
 				k.values, k.keys, k.n, k.op, k.a, k.b, len(g), fmtNs(median(na)), fmtNs(median(nb)))
 			notes = append(notes, fmt.Sprintf("- %s: %v", name, err))
 			continue
 		}
-		fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | %.2f× [%.2f, %.2f] | %+.1f%% | [%+.1f%%, %+.1f%%] | %.1f pts | %.1f | %s |\n",
+		ratio, low, high := rtcompare.Estimate{Delta: p.Delta, Low: p.Low, High: p.High}.Ratio()
+		fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %d | %s | %s | %.2f× [%.2f, %.2f] | %+.1f%% | [%+.1f%%, %+.1f%%] | %.1f pts | %.1f | %s | %s |\n",
 			k.values, k.keys, k.n, k.op, k.a, k.b, p.Processes, fmtNs(median(na)), fmtNs(median(nb)),
-			speedup(p.Delta), speedup(p.Low), speedup(p.High), p.Delta*100, p.Low*100, p.High*100,
-			p.SpreadBetween*100, p.Inflation, yesNo(p.Precise(c.abs, c.rel)))
+			ratio, low, high, p.Delta*100, p.Low*100, p.High*100,
+			p.SpreadBetween*100, p.Inflation, yesNo(p.Precise(c.abs, c.rel)), yesNo(p.Resolved))
 		for _, w := range p.Warnings {
 			notes = append(notes, fmt.Sprintf("- %s: %s", name, w))
 		}
 	}
-	b.WriteString("\nA speed vs B: how many operations A completes in the time B needs for one (2.00× = twice as fast, 0.50× = half as fast), from the pooled difference; the bracket is its 95% interval across processes (rtcompare.Combine: a t interval over the per-process differences). Difference: rtcompare's relative difference, positive when A is faster. Inflation: spread between processes over the spread one process's interval implies. Churn and build come from rtcompare's workload package: churn is ns per insertion or deletion in a multimap in use, build ns per whole build.\n")
+	b.WriteString("\nRegime: " + regime(c) + ".\n")
+	b.WriteString("\nA speed vs B: how many operations A completes in the time B needs for one (2.00× = twice as fast, 0.50× = half as fast), from the pooled difference (Estimate.Ratio, B/A); the bracket is its 95% interval across processes (rtcompare.CombineStaged: a t interval over the per-process differences, with the scatter of the run's first stage, which sized the run once, so that stopping early on a calm scatter cannot narrow it). Difference: rtcompare's relative difference, positive when A is faster. Inflation: spread between processes over the spread one process's interval implies. Precise: the interval is within the asked-for points or share of the difference. Resolved: the interval excludes zero and the difference clears the systematic bias the A/A validations found in every process. Churn and build come from rtcompare's workload package: churn is ns per insertion or deletion in a multimap in use, build ns per whole build; the streams delete and put back long-lived values too (-permchurn).\n")
 	if len(notes) > 0 {
 		b.WriteString("\nWarnings from pooling:\n\n" + strings.Join(notes, "\n") + "\n")
 	}
@@ -105,10 +134,6 @@ func writeMem(c config, rows []memResult) error {
 	b.WriteString("\nn: keys per candidate. Heap figures exclude the key corpus. GC CPU is per full cycle minus a process that holds only the corpus. After removing every second key, bytes are still per key of the full corpus.\n")
 	return os.WriteFile(filepath.Join(c.out, "mem-summary.md"), []byte(b.String()), 0o644)
 }
-
-// speedup turns rtcompare's relative difference (1 - timeA/timeB) into how
-// many times as fast A is as B.
-func speedup(delta float64) float64 { return 1 / (1 - delta) }
 
 func field[T any](rows []T, get func(T) float64) []float64 {
 	out := make([]float64, len(rows))

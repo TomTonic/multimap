@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"slices"
 	"strings"
@@ -66,6 +67,18 @@ type result struct {
 	SuspendedS float64  `json:"suspended_s,omitempty"`
 	LiveHeap   uint64   `json:"live_heap"`
 	Warnings   []string `json:"warnings"`
+	// What rtcompare.CombineStaged needs to pool the rows the way multiproc
+	// did: the size of the run's first stage, and the A/A differences of each
+	// candidate, from which the pooled noise floor and bias come.
+	FirstStage int       `json:"first_stage,omitempty"`
+	AAA        []float64 `json:"aa_a,omitempty"`
+	AAB        []float64 `json:"aa_b,omitempty"`
+	// Parallel is how many processes ran at the same time: 1 is the serial
+	// regime, more the parallel one, whose rows are never pooled with serial
+	// ones (see multiproc.Options.Parallel).
+	Parallel     int     `json:"parallel"`
+	Quantization float64 `json:"quantization,omitempty"`
+	ReportSeed   uint64  `json:"report_seed,omitempty"`
 }
 
 // name is how a speed process records the comparison of p; the scenario is
@@ -78,13 +91,17 @@ func pairOf(name string) pair {
 	return pair{f[0], f[1], f[2]}
 }
 
-// rowOf turns the report of one process into a row of speed.jsonl.
-func rowOf(kind, profile string, n int, p pair, process int, seed uint64, r rtcompare.Report) result {
+// rowOf turns the report of one process into a row of speed.jsonl. first is
+// the size of the run's first stage and parallel the number of processes that
+// ran at the same time.
+func rowOf(kind, profile string, n int, p pair, process int, seed uint64, first, parallel int, r rtcompare.Report) result {
 	return result{
 		Keys: kind, Values: profile, N: n, Op: p.op, A: p.a, B: p.b, Process: process, Seed: seed,
 		NsA: r.NsPerOpA, NsB: r.NsPerOpB, Delta: r.Estimate.Delta, Low: r.Estimate.Low, High: r.Estimate.High,
 		Level: r.Estimate.Level, Resolved: r.Resolved, Validated: r.Validated, NoiseFloor: r.NoiseFloor,
 		SuspendedS: r.Suspended.Seconds(), LiveHeap: r.LiveHeap, Warnings: slices.DeleteFunc(slices.Clone(r.Warnings), multiprocAdvice),
+		FirstStage: first, AAA: r.ValidationA.Deltas, AAB: r.ValidationB.Deltas,
+		Parallel: parallel, Quantization: r.Quantization, ReportSeed: r.Seed,
 	}
 }
 
@@ -93,13 +110,25 @@ func rowOf(kind, profile string, n int, p pair, process int, seed uint64, r rtco
 func multiprocAdvice(w string) bool { return strings.Contains(w, "with the multiproc package") }
 
 // reportOf turns a row back into the parts of a report that rtcompare.Combine
-// pools, so that summaries can be pooled again from speed.jsonl.
+// and CombineStaged pool, so that summaries can be pooled again from
+// speed.jsonl.
 func reportOf(r result) rtcompare.Report {
 	return rtcompare.Report{
 		NsPerOpA: r.NsA, NsPerOpB: r.NsB, Resolved: r.Resolved, Validated: r.Validated, NoiseFloor: r.NoiseFloor,
-		Estimate:  rtcompare.Estimate{Delta: r.Delta, Low: r.Low, High: r.High, Level: r.Level},
+		Estimate:    rtcompare.Estimate{Delta: r.Delta, Low: r.Low, High: r.High, Level: r.Level},
+		ValidationA: rtcompare.HarnessValidation{Deltas: r.AAA}, ValidationB: rtcompare.HarnessValidation{Deltas: r.AAB},
 		Suspended: time.Duration(r.SuspendedS * float64(time.Second)), LiveHeap: r.LiveHeap,
+		Quantization: r.Quantization, Seed: r.ReportSeed,
 	}
+}
+
+// seedFor derives the seed of one comparison of process p from the process's
+// seed and the comparison's name, so that a process's resampling is
+// reproducible and no two comparisons draw from the same stream.
+func seedFor(p *multiproc.Process, name string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(name))
+	return p.Seed ^ h.Sum64() | 1 // zero would ask rtcompare for a random seed
 }
 
 // speedSuite is what one speed process of a scenario measures: it builds
@@ -107,9 +136,9 @@ func reportOf(r result) rtcompare.Report {
 // checks that they agree, and compares the pairs ps, recording each report
 // under the pair's name. Churn and build come from one workload.Compare per
 // pair of candidates (see workload.go). Reports go to stderr.
-func speedSuite(kind keys.Kind, profile string, n int, ratio float64, ps []pair) func(*multiproc.Process) error {
+func speedSuite(kind keys.Kind, profile string, n int, st stream, ps []pair) func(*multiproc.Process) error {
 	return func(p *multiproc.Process) error {
-		f := newFixture(kind, n, profile, implsFor(profile), ratio, buildOrder(p))
+		f := newFixture(kind, n, profile, implsFor(profile), st, buildOrder(p))
 		if err := f.verify(); err != nil {
 			return err
 		}
@@ -117,7 +146,7 @@ func speedSuite(kind keys.Kind, profile string, n int, ratio float64, ps []pair)
 		for _, pr := range ps {
 			if pr.op != "churn" && pr.op != "build" {
 				a, b := f.candidate(pr.op, pr.a), f.candidate(pr.op, pr.b)
-				rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, false))
+				rep, err := rtcompare.Compare(a, b, rtopt.Options(a, b, false, seedFor(p, pr.name())))
 				if err != nil {
 					return err
 				}
@@ -136,8 +165,9 @@ func speedSuite(kind keys.Kind, profile string, n int, ratio float64, ps []pair)
 					return err
 				}
 			}
+			seed := seedFor(p, "churn and build "+pr.b)
 			res, err := workload.Compare(len(f.vals), f.structure(pr.a), f.structure(pr.b), workload.Options{
-				Config: workloadConfig(ratio), SteadyState: rtopt.Plain(), Build: rtopt.Build(), SkipBuild: !wantBuild,
+				Config: workloadConfig(st), SteadyState: rtopt.Plain(seed), Build: rtopt.Build(seed + 2), SkipBuild: !wantBuild,
 			})
 			if err != nil {
 				return err
@@ -230,7 +260,7 @@ func (f *fixture) rangeSum(impl string, from, to keys.Set, i int) uint64 {
 // verifyBuild makes sure the build stream leaves both candidates with
 // exactly the corpus: as many keys, and the same values for every key.
 func (f *fixture) verifyBuild(impls ...string) error {
-	ops, err := workload.Build(len(f.vals), workloadConfig(f.ratio))
+	ops, err := workload.Build(len(f.vals), workloadConfig(f.stream))
 	if err != nil {
 		return err
 	}

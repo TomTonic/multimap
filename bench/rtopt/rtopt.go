@@ -37,32 +37,35 @@ func Forward() []string {
 
 // Plain returns the CompareOptions of -repeats and -validation for a
 // comparison whose candidates rtopt does not see, such as the steady-state
-// comparison of workload.Compare. -loopscale does not apply to it.
-func Plain() rtcompare.CompareOptions {
+// comparison of workload.Compare. -loopscale does not apply to it. seed
+// makes the comparison's resampling reproducible, see rtcompare.CompareOptions.
+func Plain(seed uint64) rtcompare.CompareOptions {
 	return rtcompare.CompareOptions{
 		Collect:        rtcompare.CollectOptions{MaxQuantizationError: maxQuantizationError, Repeats: *repeats},
 		ValidationRuns: *aaRuns,
+		Seed:           seed,
 	}
 }
 
 // Build returns the CompareOptions of -buildrepeats and -buildvalidation for
 // the build comparison of workload.Compare, where every sample is a whole
-// build; zero leaves workload's defaults.
-func Build() rtcompare.CompareOptions {
-	return rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{Repeats: *bRepeats}, ValidationRuns: *bAARuns}
+// build; zero leaves workload's defaults. seed is as for Plain.
+func Build(seed uint64) rtcompare.CompareOptions {
+	return rtcompare.CompareOptions{Collect: rtcompare.CollectOptions{Repeats: *bRepeats}, ValidationRuns: *bAARuns, Seed: seed}
 }
 
 // Options returns the CompareOptions for comparing a with b under the
 // -loopscale, -repeats and -validation flags. Call it after flag.Parse, once per pair:
 // with -loopscale it calibrates both candidates the way rtcompare.Compare
 // does, takes the larger batch size and scales it. gcBetween collects garbage
-// between batches, for operations that allocate a whole structure.
-func Options(a, b rtcompare.Candidate, gcBetween bool) rtcompare.CompareOptions {
+// between batches, for operations that allocate a whole structure. seed is as
+// for Plain.
+func Options(a, b rtcompare.Candidate, gcBetween bool, seed uint64) rtcompare.CompareOptions {
 	c := rtcompare.CollectOptions{MaxQuantizationError: maxQuantizationError, Repeats: *repeats, GCBetween: gcBetween}
 	if *loopScale != 1 {
 		c.InnerLoops = scaledLoops(a, b, c, *loopScale)
 	}
-	return rtcompare.CompareOptions{Collect: c, ValidationRuns: *aaRuns}
+	return rtcompare.CompareOptions{Collect: c, ValidationRuns: *aaRuns, Seed: seed}
 }
 
 // scaledLoops exists because rtcompare calibrates inside Compare and offers no

@@ -34,8 +34,8 @@ stores them, so every insertion adds a value its key does not hold yet.
 - **`valuesFor`:** iterate over all values of a random existing key.
 - **`valuesBetween`:** iterate over all values of 100 consecutive keys. `hashed` and `map-sets` have no order and scan every key, so they are compared only up to 64K keys: their cost grows linearly with the number of keys.
 - **`prefix`:** iterate over all values of the keys that start with what a user searches by: the first four characters of a random key, as typed into a search field, or, for paths and URLs, the directory the key lies in. Frequent prefixes come up as often as users would search them. Text keys only; `hashed` and `map-sets` again only up to 64K keys.
-- **`churn`:** add and remove values like a database index in use, as the steady-state comparison of rtcompare's [`workload`](https://pkg.go.dev/github.com/TomTonic/rtcompare/workload) package: on the filled multimap, bursts of 1-16 insertions alternate with bursts of deletions of values inserted earlier. Half of the new values go to existing keys, whose value sets grow and shrink; half go to keys that appear and disappear. The cycle inserts as many values as the multimap holds (`-ratio 2`) and ends in its start state, so it repeats endlessly; its first pass, where the multimap grows to its peak size, is played untimed. Timed per insertion or deletion.
-- **`build`:** build the whole multimap from empty with the same bursts, as the build comparison of the same `workload.Compare`: twice as many insertions as values in the end, until exactly the corpus is left. Every sample is a whole build, so it uses its own repeats (`-buildrepeats`, `-buildvalidation`). Only up to 64K keys, because at 1M one build takes too long for a timing sample.
+- **`churn`:** add and remove values like a database index in use, as the steady-state comparison of rtcompare's [`workload`](https://pkg.go.dev/github.com/TomTonic/rtcompare/workload) package: on the filled multimap, bursts of 1-16 insertions alternate with bursts of deletions of values inserted earlier. Half of the new values go to existing keys, whose value sets grow and shrink; half go to keys that appear and disappear. A quarter of the deletions (`-permchurn 0.25`) take out one of the multimap's own, long-lived values instead and put it back later in the cycle, so that the merges and shrinks of real deletions reach the whole multimap and not only its newest part. The cycle inserts as many values as the multimap holds (`-ratio 2`) and ends in its start state, so it repeats endlessly; its first pass, where the multimap grows to its peak size, is played untimed. Timed per insertion or deletion.
+- **`build`:** build the whole multimap from empty with the same bursts, as the build comparison of the same `workload.Compare`: twice as many insertions as values in the end, with the same share of long-lived values taken out and put back, until exactly the corpus is left. Every sample is a whole build, so it uses its own repeats (`-buildrepeats`, `-buildvalidation`). Only up to 64K keys, because at 1M one build takes too long for a timing sample.
 - **Memory**, at 1M keys (`-suite release`) or 128K keys (`-suite dev`), or fewer where a real-world corpus holds fewer keys: retained heap per key, including the keys' copies and values but excluding the input corpus. Also the CPU time of a full GC cycle while the multimap is alive, and the heap still retained after removing every second key. Go maps do not shrink.
 
 Each comparison runs with 4,096 and 16,384 keys, which fit in the CPU caches,
@@ -173,17 +173,50 @@ each interval but not the scatter
 The driver `cmd/bench` therefore runs every scenario (key kind × number of
 keys) in separate processes, through rtcompare's
 [`multiproc`](https://pkg.go.dev/github.com/TomTonic/rtcompare/multiproc)
-package (rtcompare v0.7.0 or later):
-- Each process perturbs its heap from its own seed before it builds anything (`rtcompare.PerturbHeap`) and builds the candidates in its own order: two candidates alternate from process to process, more are shuffled. The processes thus sample different layouts instead of repeating one biased layout, and whichever candidate is built last has no lasting advantage.
-- Each process counts as one observation. `rtcompare.Combine` pools them: the mean difference, a 95% t-interval across processes, the spread between processes and how far it exceeds a single process's interval.
-- Five processes are the minimum in the release suite (the dev suite runs 3-5 and accepts wider intervals). After that, processes are added until every comparison's interval is within ±2 percentage points or within ±10% of the difference itself, up to 20. Five are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points gives ±2.5-6 with five processes and needs 10-20 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M.
-- Fewer than five would estimate the spread from too few processes, and a run that happened to scatter little would stop early by luck.
+package (rtcompare v0.8.0 or later):
+- Each process perturbs its heap from its own seed before it builds anything (`rtcompare.PerturbHeap`) and builds the candidates in its own order: two candidates alternate from process to process, more are shuffled. The processes thus sample different layouts instead of repeating one biased layout, and whichever candidate is built last has no lasting advantage. The seed of a process also seeds each comparison's resampling, so a run can be repeated (`Options.Seed` of the driver is fixed).
+- Each process counts as one observation. `rtcompare.CombineStaged` pools them: the mean difference, a 95% t-interval across processes, the spread between processes and how far it exceeds a single process's interval.
+- The run is sized once, from its first stage (Stein's two-stage procedure): the first `-minprocs` processes (6 in the release suite; the dev suite takes 4 and accepts wider intervals) show how much the processes scatter, from that the run works out how many processes every comparison needs for its interval to be within ±2 percentage points or within ±10% of the difference itself, and runs exactly that many, up to `-maxprocs` (rtcompare's default: 40 serial, 10 waves parallel). It does not look at the intervals again and stop as soon as they are narrow enough: that stops preferably where the processes happened to agree, and such intervals covered the truth only 92-94% of the time instead of 95%. Five or six processes are plenty in the cache: a spread of 0.1-0.4 points gives about ±0.5. At 1M keys a spread of 2-5 points needs 10-40 for ±2. A fixed number would either waste the night on 4K or stop too early at 1M. A run that would need more than `-maxprocs` says so in the log and in `speed-summary.md` (precise: no).
+- `speed.jsonl` keeps what pooling needs: the size of the first stage and the A/A differences of every process, so the summary pools the rows exactly as the run did, and the driver warns if it does not.
+
+**Two regimes.** By default the processes run one after another, each with the
+machine to itself: the serial regime says how the candidates compare on an idle
+machine. With `-parallel N` they run N at a time, in waves: the parallel
+regime. The processes then share the last-level cache, the memory bandwidth and
+the clock headroom, much as a program shares them with its neighbours in
+production, and the data falls out of the cache at smaller sizes. That is a
+different question, not a faster answer to the same one. Out of the cache it
+is also the way to precision in reasonable time: the scatter between processes
+dominates, and only more processes narrow it, so N at a time buy N times as
+many per hour. A and B still run interleaved within each process, so the
+neighbours widen the noise but favour neither. The two regimes' tables are
+never pooled or compared with each other: the rows carry `parallel`,
+`run.json` and the summary say which regime ran. Keep `-parallel` at or below
+the physical cores (12 on the Ryzen 9 7900) and what fits in memory (see below): two processes on the two threads
+of one core disturb each other far more than neighbours on other cores. Each
+child then runs with `GOMAXPROCS` = CPUs / N, at least 2, so that one child's
+garbage collector cannot take cores from its neighbours' measurements.
+
+The measurement plan follows from that: the **serial** `dev` and `release`
+suites answer "does a small index get worse, does the change pay on an idle
+machine", and the **parallel** suite answers the same for the out-of-cache
+sizes under load, where the serial suite would need days for a precise answer.
+Both are reported side by side, never merged.
 
 Before rtcompare v0.7.0, every comparison from about 64K keys up favoured
 candidate B, the other candidate, by 5-20%: rtcompare validated B last, and B
 started the measurement with the cache full of its own data
 ([rtcompare#111](https://github.com/TomTonic/rtcompare/issues/111)). Results
 measured before 2026-09-28 carry that bias against `ordered` at large sizes.
+
+Since rtcompare v0.8.0 (2026-09-30) the numbers are not comparable with
+earlier ones: `NewDPRNG` draws other sequences, so every synthetic key set and
+every sample of the real corpora differs; `Compare` takes its difference from
+the ratios of pairs of neighbouring batches, which cancels disturbance that hits
+both candidates; the pooled interval is Stein's, and its noise floor is the
+systematic bias of the A/A runs; and `churn` and `build` delete and put back
+long-lived values too. Only comparisons within one run, and runs made with the
+same version of the driver, can be read against each other.
 
 **Memory** is not an rtcompare comparison. GC cost depends on the whole live
 heap, so each candidate is measured alone in its own process, together with a
@@ -196,15 +229,40 @@ order each, and the tables show medians.
 go run ./cmd/bench                                  # the dev suite, for frequent runs while trying a change
 go run ./cmd/bench -suite release                   # the complete suite, before a release
 go run ./cmd/bench -keys str,street -sizes 16384    # a quicker subset
-go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 2 -maxprocs 2 -memn 16384 -memrounds 1
+go run ./cmd/bench -out /tmp/smoke -repeats 21 -validation 2 -minprocs 4 -maxprocs 4 -memn 16384 -memrounds 1
 go run ./cmd/summarize results/speed.jsonl          # pool the raw results again
 ```
 
-The two suites:
-- **`dev`** (the default) leaves out 1M keys and measures 4K, 16K and 256K instead: small indexes are the common case and must never get worse, and the trend up to 256K shows where larger ones are headed. It trades precision for time: 3-5 processes per scenario, 2 A/A runs and 41 samples per rtcompare comparison, about 1.5 hours on a Ryzen 9 7900.
-- **`release`** adds 1M keys and measures at full precision: 5-20 processes, rtcompare's defaults.
+The three suites:
+- **`dev`** (the default) leaves out 1M keys and measures 4K, 16K and 256K instead: small indexes are the common case and must never get worse, and the trend up to 256K shows where larger ones are headed. It trades precision for time: a first stage of 4 processes, at most 8, 2 A/A runs and 41 samples per rtcompare comparison, about 1.5 hours on a Ryzen 9 7900.
+- **`release`** adds 1M keys and measures at full precision, one process after another: a first stage of 6 processes, at most 40, rtcompare's defaults.
+- **`parallel`** measures the out-of-cache sizes, 256K and 1M keys, in the parallel regime: 8 processes at a time, a first stage of one wave, at most 10 waves (80 processes), rtcompare's defaults, no memory measurements. See "Memory and machines" below for what 8 processes need.
 
-Flags given on the command line override the suite's presets.
+Flags given on the command line override the suite's presets. `-maxprocs 0`
+takes rtcompare's default.
+
+### Memory and machines
+
+Every process builds all candidates of its scenario and, for `churn`, the
+workload's structures next to them, so a process at 1M keys is large:
+a process of `url` keys with several values each, 1M keys, needs 4.4 GB
+with `uint64` values and 5.1 GB with string values against a baseline, and up
+to 8 GB with all four candidates of the multi profile (measured as the
+largest resident set of a wave of four processes, `-ops valuesFor,churn`).
+Most of it is the garbage collector's headroom over two live structures and
+the streams. Eight processes at 1M keys therefore need 35-41 GB, twelve 53-61
+GB, which leaves too little of 64 GB. WSL2 offers only half of the machine's
+memory by default (30 GB here, see `memory=` in `.wslconfig`), enough for four
+processes at 1M keys; `-parallel 8` at 256K keys needs 11 GB. The driver logs
+the free memory and the share per process when a parallel run starts.
+
+Windows can also run the driver natively, which takes the WSL2 virtual
+machine out of memory-bound comparisons and gives all of the machine's memory
+to the run: build it with `GOOS=windows go build -o bench.exe
+./cmd/bench` (add `-tags baseline,strvals` as needed) and start it from
+PowerShell; the driver, its `awake` package and rtcompare's clock all support
+Windows. Results from another operating system or machine are recorded in
+`run.json` (`os`, `cpu`) and are not comparable with these either.
 
 The driver starts its own binary for every process and writes to `results/`:
 - `speed.jsonl` and `mem.jsonl`: one line per comparison per process;
