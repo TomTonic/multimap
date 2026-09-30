@@ -48,13 +48,13 @@ func Has(bm *[4]uint64, b byte) bool {
 // Set sets bit b.
 func Set(bm *[4]uint64, b byte) { bm[(b>>6)&3] |= uint64(1) << (b & 63) }
 
-// PrefixLen is the number of path bytes an inner node stores.
+// PrefixLen is the number of path bytes an inner node keeps in its header.
 const PrefixLen = 12
 
 // MatchPrefix reports whether key[depth:] can pass a node whose compressed path
 // has length plen and whose first min(plen, PrefixLen) bytes are stored in
-// prefix. Bytes beyond those are not checked here (optimistic path
-// compression); the full-key comparison at the leaf catches a mismatch there.
+// prefix. Bytes beyond those are not checked here; the caller compares them
+// with the rest of the path, which its node keeps elsewhere.
 // plen must be > 0.
 func MatchPrefix(prefix *[PrefixLen]byte, plen int, key []byte, depth int) bool {
 	rest := len(key) - depth

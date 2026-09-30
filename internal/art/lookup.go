@@ -1,7 +1,6 @@
 package art
 
 import (
-	"bytes"
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
@@ -29,16 +28,11 @@ func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 func (t *Tree) find(key []byte) *leafHead {
 	n := t.root
 	depth := 0
-	skipped := false // whether path bytes beyond the twelfth went unchecked
 	for n != nil {
 		if isLeaf(n.kind) {
-			// Every key below a path starts with it, so once the whole path
-			// to the leaf is checked, only the rest of the key needs comparing.
-			from := depth
-			if skipped {
-				from = 0
-			}
-			if l := asLeaf(n); bytes.Equal(l.key()[from:], key[from:]) {
+			// The nodes have checked the key up to depth; the leaf holds the
+			// rest.
+			if l := asLeaf(n); l.matches(key) {
 				return l
 			}
 			return nil
@@ -46,12 +40,8 @@ func (t *Tree) find(key []byte) *leafHead {
 		if n.plen != 0 {
 			pl := int(n.plen)
 			if !swar.Match8(&n.prefix, pl, key, depth) {
-				pl = n.pathLen(depth)
-				if !swar.MatchPrefix(&n.prefix, pl, key, depth) {
+				if pl = longMatch(n, key, depth); pl < 0 {
 					return nil
-				}
-				if pl > swar.PrefixLen {
-					skipped = true
 				}
 			}
 			depth += pl
@@ -110,7 +100,7 @@ func (t *Tree) findSlot(key []byte) **header {
 	loc, depth := &t.root, 0
 	for !isLeaf((*loc).kind) {
 		n := *loc
-		depth += n.pathLen(depth)
+		depth += n.pathLen()
 		if depth == len(key) {
 			loc = termSlot(n)
 			continue
@@ -158,54 +148,15 @@ func findLoc(n *header, b byte) **header {
 	return &asN12(n).child[i]
 }
 
-// minLeaf returns the leaf with the smallest key below n.
-func minLeaf(n *header) *leafHead {
-	for !isLeaf(n.kind) {
-		if t := termOf(n); t != nil {
-			return t // a prefix of every other key below n
-		}
-		if n.kind == kN256 {
-			n = asN256(n).child[firstChild(asN256(n), 0)]
-			continue
-		}
-		n = slots(n)[0]
+// longMatch returns the length of n's path if key[depth:] starts with it, and
+// -1 otherwise. It is kept out of find, whose loop stays small for the common
+// paths of at most eight bytes.
+//
+//go:noinline
+func longMatch(n *header, key []byte, depth int) int {
+	pl := n.pathLen()
+	if !pathMatches(n, pl, key, depth) {
+		return -1
 	}
-	return asLeaf(n)
-}
-
-// maxLeaf returns the leaf with the largest key below n.
-func maxLeaf(n *header) *leafHead {
-	for !isLeaf(n.kind) {
-		if n.kind == kN256 {
-			x := asN256(n)
-			k := 255
-			for x.child[k] == nil {
-				k--
-			}
-			n = x.child[k]
-			continue
-		}
-		n = slots(n)[n.count-1]
-	}
-	return asLeaf(n)
-}
-
-// firstChild returns the smallest byte from b on that has a child in x; x
-// must have one.
-func firstChild(x *node256, b int) int {
-	for x.child[b] == nil {
-		b++
-	}
-	return b
-}
-
-// fullPrefix returns the complete compressed path of n, whose first byte is
-// at key depth depth. Paths longer than the 12 bytes stored inline are read
-// from a leaf below n; buf backs the result otherwise.
-func fullPrefix(n *header, depth int, buf *[swar.PrefixLen]byte) []byte {
-	if n.plen <= swar.PrefixLen {
-		*buf = n.prefix
-		return buf[:n.plen]
-	}
-	return minLeaf(n).key()[depth : depth+n.pathLen(depth)]
+	return pl
 }

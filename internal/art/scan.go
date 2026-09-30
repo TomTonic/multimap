@@ -18,9 +18,22 @@ type Bounds struct {
 
 // scan calls fn for every leaf within b, in ascending key order, until fn
 // returns false. leafTail is the offset of the last byte of a leaf, which
-// the scan touches ahead (see touchChildren).
-func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
-	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, fn)
+// the scan touches ahead (see touchChildren). If kb is not nil, kb.key holds
+// the key of the leaf fn is called for.
+func (t *Tree) scan(b *Bounds, leafTail uintptr, kb *keyBuf, fn func(*leafHead) bool) {
+	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, kb, fn)
+}
+
+// keyBuf assembles the keys of a scan that reports them: a leaf holds only
+// the end of its key, the rest is the path to it.
+type keyBuf struct {
+	path []byte // the path of the current descent
+	key  []byte // the key of the leaf reached last
+}
+
+// reach sets kb.key to the key of leaf l, whose path is in kb.path.
+func (kb *keyBuf) reach(l *leafHead) {
+	kb.key = append(append(kb.key[:0], kb.path[:l.base()]...), l.stored()...)
 }
 
 // scanRange visits the leaves of the subtree n within b in order and returns
@@ -30,21 +43,19 @@ func (t *Tree) scan(b *Bounds, leafTail uintptr, fn func(*leafHead) bool) {
 // are checked structurally: a node's path and child bytes are compared with a
 // bound only while on its path, so a subtree strictly inside the range is
 // visited without reading a single key.
-func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, fn func(*leafHead) bool) bool {
+func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, kb *keyBuf, fn func(*leafHead) bool) bool {
 	if n == nil {
 		return true
 	}
 	if isLeaf(n.kind) {
-		return scanLeaf(asLeaf(n), b, lo, hi, fn)
+		return scanLeaf(asLeaf(n), b, depth, lo, hi, kb, fn)
 	}
-	pl := n.pathLen(depth)
+	pl := n.pathLen()
 	if (lo || hi) && pl > 0 {
-		var buf [swar.PrefixLen]byte
-		pk := fullPrefix(n, depth, &buf)
 		if lo {
 			rest := b.From[depth:]
-			if m := swar.Lcp(pk, rest); m < len(pk) {
-				if m < len(rest) && pk[m] < rest[m] {
+			if m, c := pathLcp(n, pl, rest); m < pl {
+				if m < len(rest) && c < rest[m] {
 					return true // the whole subtree lies below From
 				}
 				lo = false // the whole subtree lies above From
@@ -52,13 +63,16 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 		}
 		if hi {
 			rest := b.To[depth:]
-			if m := swar.Lcp(pk, rest); m < len(pk) {
-				if m == len(rest) || pk[m] > rest[m] {
+			if m, c := pathLcp(n, pl, rest); m < pl {
+				if m == len(rest) || c > rest[m] {
 					return false // the whole subtree lies above To: done
 				}
 				hi = false // the whole subtree lies below To
 			}
 		}
+	}
+	if kb != nil {
+		kb.path = appendPath(kb.path[:depth], n)
 	}
 	depth += pl
 	// The term leaf's key is the path to n. On From's path it is below From
@@ -70,6 +84,9 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 		lo = false
 	}
 	if t := termOf(n); t != nil && !lo && (!termIsFrom || b.FromIncl) && (!termIsTo || b.ToIncl) {
+		if kb != nil {
+			kb.reach(t)
+		}
 		if !fn(t) {
 			return false
 		}
@@ -85,31 +102,40 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, f
 		hiB = b.To[depth]
 	}
 	touchChildren(n, loB, hiB, leafTail)
-	if !scanChildren(n, b, depth, lo, hi, loB, hiB, leafTail, fn) {
+	if !scanChildren(n, b, depth, lo, hi, loB, hiB, leafTail, kb, fn) {
 		return false
 	}
 	return !hi // on To's path, everything after the child for hiB is above To
 }
 
-func scanLeaf(l *leafHead, b *Bounds, lo, hi bool, fn func(*leafHead) bool) bool {
+// scanLeaf calls fn for leaf l at depth if it lies within b. On a bound's
+// path the key agrees with the bound up to depth, so comparing the rest
+// decides.
+func scanLeaf(l *leafHead, b *Bounds, depth int, lo, hi bool, kb *keyBuf, fn func(*leafHead) bool) bool {
 	if lo {
-		if c := bytes.Compare(l.key(), b.From); c < 0 || (c == 0 && !b.FromIncl) {
+		if c := bytes.Compare(l.from(depth), b.From[depth:]); c < 0 || (c == 0 && !b.FromIncl) {
 			return true
 		}
 	}
 	if hi {
-		if c := bytes.Compare(l.key(), b.To); c > 0 || (c == 0 && !b.ToIncl) {
+		if c := bytes.Compare(l.from(depth), b.To[depth:]); c > 0 || (c == 0 && !b.ToIncl) {
 			return false
 		}
+	}
+	if kb != nil {
+		kb.reach(l)
 	}
 	return fn(l)
 }
 
 // scanChildren visits the children with byte in [loB, hiB] in order. Only the
 // child for loB stays on From's path, only the one for hiB on To's.
-func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, fn func(*leafHead) bool) bool {
+func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, kb *keyBuf, fn func(*leafHead) bool) bool {
 	visit := func(c *header, k byte) bool {
-		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, fn)
+		if kb != nil {
+			kb.path = append(kb.path[:depth], k)
+		}
+		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, kb, fn)
 	}
 	switch n.kind {
 	case kN26, kN58:

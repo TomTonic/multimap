@@ -11,12 +11,14 @@
 //     26- and 58-way nodes find a child by the rank of its byte in a 256-bit
 //     bitmap (branch-free); the 256-way node indexes directly.
 //   - The node header is 16 bytes: kind, child count, path length and the
-//     first 12 bytes of the compressed path. Longer paths are skipped
-//     optimistically and verified against the full key, which every leaf
-//     holds (lazy expansion: a subtree with one key is just its leaf).
-//   - Every leaf starts with a 4-byte head and holds its key inline right
-//     after it; only a key of more than 254 bytes is a separate string.
-//     Comparing a key at the leaf therefore costs no second pointer chase.
+//     first 12 bytes of the compressed path. The rest of a longer path
+//     follows the node in the same object (path.go), so every key byte on
+//     the way down is checked in the nodes (pessimistic path compression).
+//   - A leaf holds only the part of its key below the node it was created
+//     under (lazy expansion: a subtree with one key is just its leaf), inline
+//     right after a 6-byte head; only a remainder of more than 254 bytes
+//     makes the leaf hold its whole key as a separate string. The shared
+//     parts of the keys are stored once, in the nodes.
 //   - For small pointer-free values (flat.go) the values follow the key in
 //     the same object, which grows through Go size classes from 32 to 512
 //     bytes as values arrive. Such a leaf holds no pointer, so the garbage
@@ -75,30 +77,42 @@ const (
 	shrink256 = 48
 )
 
-// maxInline is the longest key a set leaf holds inline, in an array of 16,
-// 32, 48 or 64 bytes, whichever is the smallest that fits. A longer key is
-// held as a string, which costs a separate allocation and a pointer chase on
-// every comparison. Flat leaves hold keys of up to maxFlatKey bytes inline.
-const maxInline = 64
+// maxInline is the longest key remainder a leaf holds inline: in a set leaf
+// in an array of 16 to 256 bytes, whichever is the smallest that fits, in a
+// flat leaf right before its values. A longer one makes the leaf hold its
+// whole key as a string, which costs a separate allocation and a pointer
+// chase on every comparison.
+const maxInline = longKey - 1
+
+// maxKeyLen is the longest key a leaf holds a remainder of; leafHead.kl must
+// hold its length. A longer key is held whole, as a string.
+const maxKeyLen = 1<<16 - 1
 
 // header is the common start of all inner nodes (16 B).
 type header struct {
 	kind   kind
 	count  uint8                // byte children; a 256-way node keeps its count in node256.total
 	plen   uint16               // length of the compressed path, or longPath
-	prefix [swar.PrefixLen]byte // first min(plen, 12) bytes of the compressed path
+	prefix [swar.PrefixLen]byte // first min(plen, 12) bytes of the compressed path; the rest is in the tail
 }
 
-// longPath in header.plen stands for a path of that many bytes or more; its
-// length is then read from the leaves (see pathLen).
+// longPath in header.plen stands for a path of that many bytes or more, whose
+// tail is a string: its length is then 12 plus the string's (see pathLen).
 const longPath = 1<<16 - 1
 
-// leafHead is the start of every leaf (4 B). An inline key follows at keyOff;
-// a string key at strOff.
+// leafHead is the start of every leaf (6 B). The key remainder follows at
+// keyOff; a whole key held as a string sits at strOff.
+//
+// A leaf holds its key from its base on, the depth it was created at: the
+// bytes before are the path to it, stored in the nodes above. The leaf may
+// move deeper later, when a node is split in above it, and still holds the
+// bytes from its base, which are then also on its path; it moves up only
+// with a new base (see rekeyFunc).
 type leafHead struct {
 	kind kind   // kSet, or kSet+c for a flat leaf of class c
-	klen uint8  // length of an inline key, or longKey for a string key
+	klen uint8  // length of the inline key remainder, or longKey for a whole key held as a string
 	n    uint16 // flat leaves: number of values
+	kl   uint16 // length of the whole key, if the remainder is inline
 }
 
 // isLeaf reports whether an object of kind k is a leaf.
@@ -108,7 +122,7 @@ func isLeaf(k kind) bool { return k <= kLastLeaf }
 // leaf.
 func (l *leafHead) cls() uint8 { return uint8(l.kind - kSet) }
 
-// longKey in leafHead.klen marks a key held as a string.
+// longKey in leafHead.klen marks a whole key held as a string.
 const longKey = 255
 
 // keyOff is the offset of an inline key in every leaf: right after the
@@ -118,24 +132,28 @@ const (
 	strOff = 8
 )
 
-// keyArea is the storage of a leaf's key: an inline array of one of the
-// size classes, or a string for keys longer than maxInline.
+// keyArea is the storage of a set leaf's key: an inline array of one of the
+// size classes for the remainder, or a string for the whole key.
 type keyArea interface {
-	[16]byte | [32]byte | [48]byte | [64]byte | string
+	[16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte | string
 }
 
 // leaf is a set leaf: a leafHead followed by its key and the values of its
-// key. For T = uint64 it is 64, 80, 96 or 112 B with an inline key, all Go
-// size classes, and 64 B plus the string with a longer key.
+// key. For T = uint64 it is 64 B with a remainder of up to 16 bytes.
 type leaf[T comparable, K keyArea] struct {
 	leafHead
 	k    K
 	vals vset.Set[T]
 }
 
-// newLeafFunc creates a leaf for key and returns its head. Map[T] supplies it
-// so that the tree code does not need to know T.
-type newLeafFunc func(key []byte) *leafHead
+// newLeafFunc creates a leaf for key with base base (see leafHead) and returns
+// its head. Map[T] supplies it so that the tree code does not need to know T.
+type newLeafFunc func(key []byte, base int) *leafHead
+
+// rekeyFunc moves leaf l to a smaller base: it returns a leaf with the same
+// values that holds key from base on. The tree calls it when a node above l
+// goes away and l takes its place. Map[T] supplies it.
+type rekeyFunc func(l *leafHead, key []byte, base int) *leafHead
 
 // Every node kind but the 256-way one keeps its term leaf, if any, in its
 // last child slot, which is free whenever there is a term (see termOf).
@@ -186,9 +204,9 @@ func asN58(h *header) *node58     { return (*node58)(unsafe.Pointer(h)) }
 func asN256(h *header) *node256   { return (*node256)(unsafe.Pointer(h)) }
 func leafHdr(l *leafHead) *header { return (*header)(unsafe.Pointer(l)) }
 
-// key returns the leaf's key. The slice aliases the leaf and must not be
-// modified.
-func (l *leafHead) key() []byte {
+// stored returns the key bytes the leaf holds: its key from its base on, or
+// its whole key. The slice aliases the leaf and must not be modified.
+func (l *leafHead) stored() []byte {
 	if l.klen != longKey {
 		return unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), l.klen)
 	}
@@ -196,27 +214,33 @@ func (l *leafHead) key() []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// setPrefix stores a compressed path of plen bytes, of which p holds at least
-// the first min(plen, 12).
-func (h *header) setPrefix(p []byte, plen int) {
-	h.plen = uint16(min(plen, longPath))
-	h.prefix = [swar.PrefixLen]byte{}
-	copy(h.prefix[:], p[:min(plen, swar.PrefixLen)])
-}
-
-// pathLen returns the length of n's compressed path, which starts at key depth
-// depth. A path of longPath bytes or more is as long as the keys below n
-// agree from depth on: n branches, so its smallest and largest key differ
-// right after the path.
-func (n *header) pathLen(depth int) int {
-	if n.plen != longPath {
-		return int(n.plen)
+// keyLen returns the length of the leaf's whole key.
+func (l *leafHead) keyLen() int {
+	if l.klen != longKey {
+		return int(l.kl)
 	}
-	return longPathLen(n, depth)
+	return len(*(*string)(unsafe.Add(unsafe.Pointer(l), strOff)))
 }
 
-func longPathLen(n *header, depth int) int {
-	return swar.Lcp(minLeaf(n).key()[depth:], maxLeaf(n).key()[depth:])
+// base returns the depth the leaf holds its key from.
+func (l *leafHead) base() int { return l.keyLen() - len(l.stored()) }
+
+// from returns the leaf's key from depth on; depth must not be below its base.
+func (l *leafHead) from(depth int) []byte {
+	s := l.stored()
+	return s[depth-(l.keyLen()-len(s)):]
+}
+
+// matches reports whether l is the leaf of key. l holds the key from its base
+// on, which a key of the leaf's length has at the same distance from its end,
+// so no depth is needed; the bytes from the base down to l are checked twice.
+// Kept small enough to inline into find.
+func (l *leafHead) matches(key []byte) bool {
+	if l.klen == longKey {
+		return string(key) == *(*string)(unsafe.Add(unsafe.Pointer(l), strOff))
+	}
+	k := int(l.klen)
+	return len(key) == int(l.kl) && string(key[len(key)-k:]) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), k)
 }
 
 // slots returns all child slots of n, including the one its term takes.

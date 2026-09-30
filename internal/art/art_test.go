@@ -375,34 +375,40 @@ func leafLayout[T comparable, K keyArea]() (size, kOff, vOff uintptr) {
 
 // TestLeafLayout makes sure that every key of multimap.Ordered keeps its bytes
 // and its values, whatever its length and whatever the value type. It covers
-// the set leaves of the ART behind Ordered, which hold a key inline in the
-// smallest of four size classes, or as a string beyond 64 bytes, and which the
-// untyped tree code reads through fixed offsets. For each class boundary it
-// checks that the leaf returns an independent copy of its key, that its values
-// lie where the compiler put them, that the byte the range scan touches ahead
-// lies inside even the smallest leaf, and that leaves with uint64 values fill
-// Go size classes exactly.
+// the set leaves of the ART behind Ordered, which hold a key's remainder
+// inline in the smallest of eight size classes, or the whole key as a string
+// beyond 254 bytes, and which the untyped tree code reads through fixed
+// offsets. For each class boundary it checks that the leaf holds an
+// independent copy of its key and the key's length, that its values lie
+// where the compiler put them, and that the byte the range scan touches
+// ahead lies inside even the smallest leaf.
 func TestLeafLayout(t *testing.T) {
 	type class struct{ size, kOff, vOff uintptr }
-	classes := func(get [5]func() (uintptr, uintptr, uintptr)) (out [5]class) {
-		for i, f := range get {
-			out[i].size, out[i].kOff, out[i].vOff = f()
+	layouts := func(get ...func() (uintptr, uintptr, uintptr)) (out []class) {
+		for _, f := range get {
+			var c class
+			c.size, c.kOff, c.vOff = f()
+			out = append(out, c)
 		}
 		return out
 	}
-	u64 := classes([5]func() (uintptr, uintptr, uintptr){
-		leafLayout[uint64, [16]byte], leafLayout[uint64, [32]byte], leafLayout[uint64, [48]byte],
-		leafLayout[uint64, [64]byte], leafLayout[uint64, string]})
-	str := classes([5]func() (uintptr, uintptr, uintptr){
-		leafLayout[string, [16]byte], leafLayout[string, [32]byte], leafLayout[string, [48]byte],
-		leafLayout[string, [64]byte], leafLayout[string, string]})
+	u64 := layouts(leafLayout[uint64, [16]byte], leafLayout[uint64, [32]byte], leafLayout[uint64, [48]byte],
+		leafLayout[uint64, [64]byte], leafLayout[uint64, [96]byte], leafLayout[uint64, [128]byte],
+		leafLayout[uint64, [192]byte], leafLayout[uint64, [256]byte], leafLayout[uint64, string])
+	str := layouts(leafLayout[string, [16]byte], leafLayout[string, [32]byte], leafLayout[string, [48]byte],
+		leafLayout[string, [64]byte], leafLayout[string, [96]byte], leafLayout[string, [128]byte],
+		leafLayout[string, [192]byte], leafLayout[string, [256]byte], leafLayout[string, string])
 
-	if got := [5]uintptr{u64[0].size, u64[1].size, u64[2].size, u64[3].size, u64[4].size}; got != [5]uintptr{64, 80, 96, 112, 64} {
-		t.Errorf("leaf sizes for uint64 values = %v, want Go size classes [64 80 96 112 64]", got)
+	if u64[0].size != 64 || u64[len(u64)-1].size != 64 {
+		t.Errorf("smallest leaves for uint64 values are %d and %d bytes, want one cache line", u64[0].size, u64[len(u64)-1].size)
 	}
-	for _, cs := range [][5]class{u64, str} {
+	for _, cs := range [][]class{u64, str} {
 		for i, c := range cs {
-			if want := [5]uintptr{keyOff, keyOff, keyOff, keyOff, strOff}[i]; c.kOff != want {
+			want := keyOff
+			if i == len(cs)-1 {
+				want = strOff
+			}
+			if c.kOff != want {
 				t.Errorf("class %d: key at offset %d, want %d", i, c.kOff, want)
 			}
 		}
@@ -423,16 +429,17 @@ func TestLeafLayout(t *testing.T) {
 		class int
 	}{
 		{"empty key is inline", 0, 0},
-		{"1 byte is inline in 16", 1, 0},
 		{"16 bytes are inline in 16", 16, 0},
 		{"17 bytes are inline in 32", 17, 1},
-		{"32 bytes are inline in 32", 32, 1},
 		{"33 bytes are inline in 48", 33, 2},
-		{"48 bytes are inline in 48", 48, 2},
 		{"49 bytes are inline in 64", 49, 3},
-		{"64 bytes are inline in 64", 64, 3},
-		{"65 bytes are a string", 65, 4},
-		{"300 bytes are a string", 300, 4},
+		{"65 bytes are inline in 96", 65, 4},
+		{"97 bytes are inline in 128", 97, 5},
+		{"129 bytes are inline in 192", 129, 6},
+		{"193 bytes are inline in 256", 193, 7},
+		{"254 bytes are inline in 256", maxInline, 7},
+		{"255 bytes are a string", maxInline + 1, 8},
+		{"300 bytes are a string", 300, 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			key := make([]byte, tc.n)
@@ -441,16 +448,16 @@ func TestLeafLayout(t *testing.T) {
 			}
 			want := bytes.Clone(key)
 
-			l := newSetLeaf[uint64](key)
-			ls := newSetLeaf[string](key)
+			l := newSetLeaf[uint64](key, 0)
+			ls := newSetLeaf[string](key, 0)
 			clear(key) // the leaves must hold copies
 			wantLen := uint8(tc.n)
 			if tc.n > maxInline {
 				wantLen = longKey
 			}
 			for _, x := range []*leafHead{l, ls} {
-				if x.kind != kSet || x.klen != wantLen || !bytes.Equal(x.key(), want) {
-					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a set leaf of %d bytes %v", x.kind, x.klen, x.key(), tc.n, want)
+				if x.kind != kSet || x.klen != wantLen || x.keyLen() != tc.n || x.base() != 0 || !bytes.Equal(x.stored(), want) {
+					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a set leaf of %d bytes %v", x.kind, x.klen, x.stored(), tc.n, want)
 				}
 			}
 			gotU := uintptr(unsafe.Pointer(vals[uint64](l))) - uintptr(unsafe.Pointer(l))
@@ -461,7 +468,7 @@ func TestLeafLayout(t *testing.T) {
 			}
 			vals[uint64](l).Add(42)
 			vals[string](ls).Add("v")
-			if !vals[uint64](l).Contains(42) || !vals[string](ls).Contains("v") || !bytes.Equal(l.key(), want) {
+			if !vals[uint64](l).Contains(42) || !vals[string](ls).Contains("v") || !bytes.Equal(l.stored(), want) {
 				t.Fatalf("adding values changed the key or lost the values")
 			}
 		})
@@ -472,7 +479,9 @@ func TestLeafLayout(t *testing.T) {
 // cache-line sized objects the tree is designed around: every node kind of
 // the adaptive radix tree fills a Go size class of 64, 128, 256 or 512 bytes
 // (the 256-way node excepted), behind a 16-byte header shared by all kinds,
-// and the kind byte sits where leaves keep theirs.
+// the kind byte sits where leaves keep theirs, and the tail of a long path
+// starts right after the fixed part of every kind, where the untyped tree
+// code reads it.
 func TestNodeLayout(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -487,6 +496,12 @@ func TestNodeLayout(t *testing.T) {
 		{"256-way node", unsafe.Sizeof(node256{}), 2080},
 		{"kind at the start of a node", unsafe.Offsetof(header{}.kind), 0},
 		{"kind at the start of a leaf", unsafe.Offsetof(leafHead{}.kind), 0},
+		{"leaf head", unsafe.Sizeof(leafHead{}), 6},
+		{"tail of a 5-way node", unsafe.Offsetof(tailed[node5, [16]byte]{}.t), fixedSize[kN5]},
+		{"string tail of a 12-way node", unsafe.Offsetof(tailed[node12, string]{}.t), fixedSize[kN12]},
+		{"tail of a 26-way node", unsafe.Offsetof(tailed[node26, [48]byte]{}.t), fixedSize[kN26]},
+		{"tail of a 58-way node", unsafe.Offsetof(tailed[node58, [112]byte]{}.t), fixedSize[kN58]},
+		{"string tail of a 256-way node", unsafe.Offsetof(tailed[node256, string]{}.t), fixedSize[kN256]},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s: %d bytes, want %d", tc.name, tc.got, tc.want)
@@ -504,19 +519,27 @@ func checkInvariants(t *testing.T, tr *Tree) {
 		}
 		return
 	}
-	if n := checkNode(t, tr.root, 0); n != tr.size {
+	if n := checkNode(t, tr.root, nil); n != tr.size {
 		t.Fatalf("tree holds %d leaves, size says %d", n, tr.size)
 	}
 }
 
-// checkNode checks the subtree n whose path starts at key depth depth and
-// returns its number of leaves.
-func checkNode(t *testing.T, n *header, depth int) int {
+// checkLeaf fails unless leaf l, reached through path, holds its key from a
+// base within path on, and the bytes it holds of path agree with it.
+func checkLeaf(t *testing.T, l *leafHead, path []byte) {
+	t.Helper()
+	b := l.base()
+	if b < 0 || b > len(path) || l.keyLen() < len(path) || !bytes.Equal(l.stored()[:len(path)-b], path[b:]) {
+		t.Fatalf("leaf holding %q from %d does not continue its path %q", l.stored(), b, path)
+	}
+}
+
+// checkNode checks the subtree n reached through path, the key bytes above
+// it, and returns its number of leaves.
+func checkNode(t *testing.T, n *header, path []byte) int {
 	t.Helper()
 	if isLeaf(n.kind) {
-		if len(asLeaf(n).key()) < depth {
-			t.Fatalf("leaf %q is shorter than its depth %d", asLeaf(n).key(), depth)
-		}
+		checkLeaf(t, asLeaf(n), path)
 		return 1
 	}
 	limits := map[kind][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
@@ -544,22 +567,21 @@ func checkNode(t *testing.T, n *header, depth int) int {
 			}
 		}
 	}
-	pl := n.pathLen(depth)
+	pl := n.pathLen()
 	if want := uint16(min(pl, longPath)); n.plen != want {
 		t.Fatalf("plen %d for a path of %d bytes, want %d", n.plen, pl, want)
 	}
-	end := depth + pl
-	m := min(pl, len(n.prefix))
-	checkKey := func(k []byte) {
-		if len(k) < end || !bytes.Equal(k[depth:depth+m], n.prefix[:m]) {
-			t.Fatalf("key %q does not match the node path at depth %d (plen %d)", k, depth, pl)
+	for i := min(pl, len(n.prefix)); i < len(n.prefix); i++ {
+		if n.prefix[i] != 0 {
+			t.Fatalf("path byte %d beyond a path of %d bytes is not zero", i, pl)
 		}
 	}
+	end := appendPath(slices.Clip(path), n)
 	leaves := 0
 	if term != nil {
-		checkKey(term.key())
-		if len(term.key()) != end {
-			t.Fatalf("term key %q does not end at depth %d", term.key(), end)
+		checkLeaf(t, term, end)
+		if term.keyLen() != len(end) {
+			t.Fatalf("term key of %d bytes does not end at depth %d", term.keyLen(), len(end))
 		}
 		leaves++
 	}
@@ -570,14 +592,7 @@ func checkNode(t *testing.T, n *header, depth int) int {
 		}
 		bytesOf = int(b)
 		children++
-		walkLeaves(c, func(l *leafHead) {
-			k := l.key()
-			checkKey(k)
-			if len(k) <= end || k[end] != b {
-				t.Fatalf("key %q sits under child byte %d at depth %d", k, b, end)
-			}
-		})
-		leaves += checkNode(t, c, end+1)
+		leaves += checkNode(t, c, append(slices.Clip(end), b))
 	})
 	if children != count {
 		t.Fatalf("count %d but %d children", count, children)
@@ -608,17 +623,6 @@ func eachChild(n *header, fn func(byte, *header)) {
 			fn(k, child[i])
 		}
 	}
-}
-
-func walkLeaves(n *header, fn func(*leafHead)) {
-	if isLeaf(n.kind) {
-		fn(asLeaf(n))
-		return
-	}
-	if t := termOf(n); t != nil {
-		fn(t)
-	}
-	eachChild(n, func(_ byte, c *header) { walkLeaves(c, fn) })
 }
 
 func b2i(b bool) int {
@@ -716,4 +720,62 @@ func FuzzOperations(f *testing.F) {
 		compare(t, &m, ref, rand.New(rand.NewPCG(1, 1)))
 		checkInvariants(t, &m.t)
 	})
+}
+
+// TestLongPaths makes sure that multimap.Ordered keeps keys that share long
+// common parts, such as URLs of one site or files of one directory, while
+// other keys split those parts and merge them again and the number of keys
+// below them grows and shrinks. It covers the path tails of the ART nodes
+// (path.go): for paths at every tail class boundary and every node kind, a
+// key that leaves the path in its middle moves the rest of the path into a
+// node of another tail class, removing that key merges the path back, and
+// growing and shrinking the node carries its tail through every kind. After
+// every step the map must agree with a reference and satisfy its invariants.
+func TestLongPaths(t *testing.T) {
+	for _, pl := range []int{12, 13, 28, 29, 60, 61, 124, 125, 300} {
+		for _, fan := range []int{2, 6, 13, 27, 59} {
+			t.Run(fmt.Sprintf("path of %d bytes, %d children", pl, fan), func(t *testing.T) {
+				common := make([]byte, pl)
+				for i := range common {
+					common[i] = byte(i%251 + 1)
+				}
+				key := func(b int) []byte { return append(append(slices.Clip(common), byte(b)), "tail"...) }
+				var m Map[uint64]
+				ref := reference{}
+				step := func(add bool, k []byte) {
+					if add {
+						m.Add(k, 1)
+						ref.add(k, 1)
+					} else {
+						m.RemoveKey(k)
+						delete(ref, string(k))
+					}
+					checkInvariants(t, &m.t)
+					for k := range ref {
+						if !m.Has([]byte(k)) {
+							t.Fatalf("lost key %q", k)
+						}
+					}
+				}
+				phase := func() { compare(t, &m, ref, rand.New(rand.NewPCG(uint64(pl), uint64(fan)))) }
+				for b := range fan {
+					step(true, key(b))
+				}
+				phase()
+				split := append(slices.Clip(common[:pl/2]), 0xff)
+				step(true, split)
+				phase()
+				step(false, split)
+				phase()
+				for b := fan; b < 60; b++ {
+					step(true, key(b))
+				}
+				phase()
+				for b := 59; b >= 0; b-- {
+					step(false, key(b))
+				}
+				phase()
+			})
+		}
+	}
 }

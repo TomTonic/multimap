@@ -18,7 +18,7 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 	for {
 		n := *loc
 		if n == nil {
-			*loc = leafHdr(nl(key))
+			*loc = leafHdr(nl(key, depth))
 			t.size++
 			return loc
 		}
@@ -26,22 +26,19 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 			return t.splitLeaf(loc, asLeaf(n), key, depth, nl)
 		}
 		if n.plen > 0 {
-			// MatchPrefix settles paths of up to 12 bytes; a longer path, or
-			// one that does not match, needs the position of the mismatch.
 			pl := int(n.plen)
-			if !swar.Match8(&n.prefix, pl, key, depth) && (pl > swar.PrefixLen || !swar.MatchPrefix(&n.prefix, pl, key, depth)) {
-				var buf [swar.PrefixLen]byte
-				pk := fullPrefix(n, depth, &buf)
-				if mis := swar.Lcp(pk, key[depth:]); mis < len(pk) {
-					return t.splitPrefix(loc, n, pk, mis, key, depth, nl)
+			if !swar.Match8(&n.prefix, pl, key, depth) {
+				pl = n.pathLen()
+				if !pathMatches(n, pl, key, depth) {
+					mis, _ := pathLcp(n, pl, key[depth:])
+					return t.splitPrefix(loc, n, mis, key, depth, nl)
 				}
-				pl = len(pk)
 			}
 			depth += pl
 		}
 		if depth == len(key) {
 			if termOf(n) == nil {
-				*loc = setTerm(n, nl(key))
+				*loc = setTerm(n, nl(key, depth))
 				t.size++
 			}
 			return termSlot(*loc)
@@ -50,7 +47,7 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 		c := findLoc(n, b)
 		if c == nil {
 			var slot **header
-			*loc, slot = addChild(n, b, leafHdr(nl(key)))
+			*loc, slot = addChild(n, b, leafHdr(nl(key, depth+1)))
 			t.size++
 			return slot
 		}
@@ -58,50 +55,48 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 	}
 }
 
-// splitLeaf handles an insert that reaches leaf l: either it is the key's
-// leaf, or both keys go below a new node holding their common path.
+// splitLeaf handles an insert that reaches leaf l at depth: either it is the
+// key's leaf, or both keys go below a new node holding their common path. l
+// keeps its base and moves below the new node.
 func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, nl newLeafFunc) **header {
-	lk := l.key()
-	if bytes.Equal(lk, key) {
+	ls, rest := l.from(depth), key[depth:]
+	if len(key) == l.keyLen() && bytes.Equal(ls, rest) {
 		return loc
 	}
-	p := swar.Lcp(lk[depth:], key[depth:])
-	nn := &node5{}
-	nn.kind = kN5
-	nn.setPrefix(key[depth:], p)
-	nl2 := nl(key)
-	h, _ := attach(&nn.header, lk, depth+p, l)
-	h, slot := attach(h, key, depth+p, nl2)
+	p := swar.Lcp(ls, rest)
+	nn := newNode(kN5, p)
+	storePath(nn, rest[:p])
+	h, _ := attachAt(nn, ls[p:], l)
+	h, slot := attachAt(h, rest[p:], nl(key, depth+p+min(1, len(rest)-p)))
 	*loc = h
 	t.size++
 	return slot
 }
 
-// splitPrefix handles an insert whose key leaves n's compressed path pk after
+// splitPrefix handles an insert whose key leaves n's compressed path after
 // mis bytes: a new node takes the common part, with n and the new leaf below.
-func (t *Tree) splitPrefix(loc **header, n *header, pk []byte, mis int, key []byte, depth int, nl newLeafFunc) **header {
-	nn := &node5{}
-	nn.kind = kN5
-	nn.setPrefix(pk[:mis], mis)
-	old := pk[mis]
-	n.setPrefix(pk[mis+1:], len(pk)-mis-1) // pk is a copy or a leaf key: safe to read while n changes
-	l := nl(key)
-	h, _ := addChild(&nn.header, old, n)
-	h, slot := attach(h, key, depth+mis, l)
+func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth int, nl newLeafFunc) **header {
+	pk := appendPath(nil, n) // a copy: n's path changes below
+	nn := newNode(kN5, mis)
+	storePath(nn, pk[:mis])
+	h, _ := addChild(nn, pk[mis], withPath(n, pk[mis+1:]))
+	rest := key[depth+mis:]
+	h, slot := attachAt(h, rest, nl(key, depth+mis+min(1, len(rest))))
 	*loc = h
 	t.size++
 	return slot
 }
 
-// attach hangs leaf l, whose key is k, below node h at key depth d: as h's
-// term if k ends there, as a child otherwise. It returns h or its grown
-// replacement, and the slot that holds l.
-func attach(h *header, k []byte, d int, l *leafHead) (*header, **header) {
-	if d == len(k) {
+// attachAt hangs leaf l below node h, where rest is l's key from h's child
+// byte on: as h's term if rest is empty, as the child under rest[0]
+// otherwise. It returns h or its grown replacement, and the slot that holds
+// l.
+func attachAt(h *header, rest []byte, l *leafHead) (*header, **header) {
+	if len(rest) == 0 {
 		h = setTerm(h, l)
 		return h, termSlot(h)
 	}
-	return addChild(h, k[d], leafHdr(l))
+	return addChild(h, rest[0], leafHdr(l))
 }
 
 // setTerm makes l the term leaf of n, which has none yet, growing n into the
@@ -143,36 +138,37 @@ func addChild(n *header, b byte, c *header) (*header, **header) {
 	return n, slot
 }
 
-// grow copies the full node n, children and term, into the next larger kind.
+// grow copies the full node n, path, children and term, into the next larger
+// kind.
 func grow(n *header) *header {
 	term := termOf(n)
 	var y *header
 	switch n.kind {
 	case kN5:
 		x := asN5(n)
-		z := &node12{header: x.header}
+		y = newLike(n, kN12)
+		z := asN12(y)
 		copy(z.keys[:], x.keys[:x.count])
 		copy(z.child[:], x.child[:x.count])
-		y = &z.header
-		y.kind = kN12
 	case kN12:
 		x := asN12(n)
-		z := &node26{header: x.header}
+		y = newLike(n, kN26)
+		z := asN26(y)
 		copy(z.child[:], x.child[:x.count])
 		for _, k := range x.keys[:x.count] {
 			swar.Set(&z.bitmap, k)
 		}
-		y = &z.header
-		y.kind = kN26
 	case kN26:
 		x := asN26(n)
-		z := &node58{header: x.header, bitmap: x.bitmap}
+		y = newLike(n, kN58)
+		z := asN58(y)
+		z.bitmap = x.bitmap
 		copy(z.child[:], x.child[:x.count])
-		y = &z.header
-		y.kind = kN58
 	default:
 		x := asN58(n)
-		z := &node256{header: x.header, total: uint16(x.count)}
+		y = newLike(n, kN256)
+		z := asN256(y)
+		z.total = uint16(x.count)
 		i := 0
 		for k := range 256 {
 			if swar.Has(&x.bitmap, byte(k)) {
@@ -180,8 +176,7 @@ func grow(n *header) *header {
 				i++
 			}
 		}
-		y = &z.header
-		y.kind, y.count = kN256, 255
+		y.count = 255
 	}
 	setTermSlot(y, term)
 	return y

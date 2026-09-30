@@ -7,8 +7,8 @@ import (
 )
 
 // Map is a multimap from byte-string keys to sets of T on top of Tree. Every
-// leaf holds its key's values: a flat leaf right after the key (see flat.go),
-// a set leaf in a vset.Set. Reading them costs no pointer chase beyond the
+// leaf holds its key's values: a flat leaf right after the key remainder
+// (see flat.go), a set leaf in a vset.Set. Reading them costs no pointer chase beyond the
 // leaf until a key holds more values than a flat leaf of 512 bytes. The zero
 // value is an empty map.
 type Map[T comparable] struct {
@@ -16,30 +16,47 @@ type Map[T comparable] struct {
 	flat int8 // 1: T takes flat leaves, -1: set leaves only, 0: not decided yet
 }
 
-// newSetLeaf allocates a set leaf holding a copy of key, in the smallest size
-// class that fits it. It captures nothing, so passing it as a newLeafFunc
-// allocates no closure.
-func newSetLeaf[T comparable](key []byte) *leafHead {
-	switch n := len(key); {
-	case n <= 16:
-		return newInline[T, [16]byte](key)
-	case n <= 32:
-		return newInline[T, [32]byte](key)
-	case n <= 48:
-		return newInline[T, [48]byte](key)
-	case n <= maxInline:
-		return newInline[T, [64]byte](key)
+// newSetLeaf allocates a set leaf that holds key from base on, in the
+// smallest size class that fits it, or the whole key as a string when the
+// rest is too long to hold inline. It captures nothing, so passing it as a
+// newLeafFunc allocates no closure.
+func newSetLeaf[T comparable](key []byte, base int) *leafHead {
+	if len(key) > maxKeyLen || len(key)-base > maxInline {
+		l := &leaf[T, string]{k: string(key)}
+		l.kind, l.klen = kSet, longKey
+		return &l.leafHead
 	}
-	l := &leaf[T, string]{k: string(key)}
-	l.kind, l.klen = kSet, longKey
-	return &l.leafHead
+	return newSetLeafOf[T](key[base:], len(key))
 }
 
-// newInline allocates a set leaf that holds key inline in an array of type K.
-func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte](key []byte) *leafHead {
+// newSetLeafOf allocates a set leaf holding the key remainder s, at most
+// maxInline bytes, of a key of kl bytes.
+func newSetLeafOf[T comparable](s []byte, kl int) *leafHead {
+	switch n := len(s); {
+	case n <= 16:
+		return newInline[T, [16]byte](s, kl)
+	case n <= 32:
+		return newInline[T, [32]byte](s, kl)
+	case n <= 48:
+		return newInline[T, [48]byte](s, kl)
+	case n <= 64:
+		return newInline[T, [64]byte](s, kl)
+	case n <= 96:
+		return newInline[T, [96]byte](s, kl)
+	case n <= 128:
+		return newInline[T, [128]byte](s, kl)
+	case n <= 192:
+		return newInline[T, [192]byte](s, kl)
+	}
+	return newInline[T, [256]byte](s, kl)
+}
+
+// newInline allocates a set leaf that holds the key remainder s inline in an
+// array of type K.
+func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte](s []byte, kl int) *leafHead {
 	l := &leaf[T, K]{}
-	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), key)
-	l.kind, l.klen = kSet, uint8(len(key))
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), s)
+	l.kind, l.klen, l.kl = kSet, uint8(len(s)), uint16(kl)
 	return &l.leafHead
 }
 
@@ -50,6 +67,10 @@ var (
 	setOff32  = unsafe.Offsetof(leaf[struct{}, [32]byte]{}.vals)
 	setOff48  = unsafe.Offsetof(leaf[struct{}, [48]byte]{}.vals)
 	setOff64  = unsafe.Offsetof(leaf[struct{}, [64]byte]{}.vals)
+	setOff96  = unsafe.Offsetof(leaf[struct{}, [96]byte]{}.vals)
+	setOff128 = unsafe.Offsetof(leaf[struct{}, [128]byte]{}.vals)
+	setOff192 = unsafe.Offsetof(leaf[struct{}, [192]byte]{}.vals)
+	setOff256 = unsafe.Offsetof(leaf[struct{}, [256]byte]{}.vals)
 	setOffStr = unsafe.Offsetof(leaf[struct{}, string]{}.vals)
 )
 
@@ -63,10 +84,29 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 		off = setOff32
 	case k <= 48:
 		off = setOff48
-	case k <= maxInline:
+	case k <= 64:
 		off = setOff64
+	case k <= 96:
+		off = setOff96
+	case k <= 128:
+		off = setOff128
+	case k <= 192:
+		off = setOff192
+	case k <= maxInline:
+		off = setOff256
 	}
 	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), off))
+}
+
+// rekey returns a leaf with l's values that holds key from base on (see
+// rekeyFunc). It captures nothing, so passing it allocates no closure.
+func rekey[T comparable](l *leafHead, key []byte, base int) *leafHead {
+	if l.kind != kSet {
+		return reflat[T](l, key, base)
+	}
+	nl := newSetLeaf[T](key, base)
+	*vals[T](nl) = *vals[T](l)
+	return nl
 }
 
 // decide settles once per map whether T takes flat leaves (see flatType).
@@ -119,7 +159,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	if l.kind != kSet {
 		switch c, empty := flatRemove(l, v); {
 		case empty:
-			m.t.remove(key)
+			m.t.remove(key, rekey[T])
 		case c != 0:
 			*m.t.findSlot(key) = leafHdr(resize[T](l, c))
 		}
@@ -129,7 +169,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	switch {
 	case !s.Remove(v):
 	case s.Len() == 0:
-		m.t.remove(key)
+		m.t.remove(key, rekey[T])
 	case m.flat > 0:
 		if c := unspillClass[T](l); c != 0 {
 			*m.t.findSlot(key) = leafHdr(unspill[T](l, c))
@@ -138,7 +178,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 }
 
 // RemoveKey removes key and all its values. An absent key is ignored.
-func (m *Map[T]) RemoveKey(key []byte) { m.t.remove(key) }
+func (m *Map[T]) RemoveKey(key []byte) { m.t.remove(key, rekey[T]) }
 
 // Has reports whether key holds any values.
 func (m *Map[T]) Has(key []byte) bool { return m.t.find(key) != nil }
@@ -177,14 +217,16 @@ func (m *Map[T]) leafTail() uintptr {
 }
 
 // Range calls fn for every key within b, in ascending key order, until fn
-// returns false. The key belongs to the map: fn must not modify or retain
-// it, and must not modify the map.
+// returns false. The key is assembled for fn, from the path to its leaf and
+// the rest the leaf holds: fn must not modify or retain it, and must not
+// modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
-	m.t.scan(b, m.leafTail(), func(l *leafHead) bool { return fn(l.key()) })
+	var kb keyBuf
+	m.t.scan(b, m.leafTail(), &kb, func(*leafHead) bool { return fn(kb.key) })
 }
 
 // RangeValues calls yield for every value of every key within b, key by key
 // in ascending key order, until yield returns false.
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
-	m.t.scan(b, m.leafTail(), func(l *leafHead) bool { return eachValue(l, yield) })
+	m.t.scan(b, m.leafTail(), nil, func(l *leafHead) bool { return eachValue(l, yield) })
 }

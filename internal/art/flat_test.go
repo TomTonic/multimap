@@ -12,20 +12,22 @@ import (
 // TestFlatLeaves makes sure that a key of multimap.Ordered keeps exactly its
 // values while their number grows from one to hundreds and shrinks back,
 // whatever the key's length. It covers the flat leaves of the ART behind
-// Ordered, which hold small pointer-free values right after the key and move
-// through size classes as values arrive: after every step the key must hold
-// exactly the values added and not removed, a flat leaf must sit in a class
-// that fits its values, a key with more values than the largest class holds
-// must have spilled into a set leaf, and it must turn flat again once half
-// of the largest class would do. The values must also survive a garbage
-// collection, since the leaves are memory the collector never scans.
+// Ordered, which hold small pointer-free values right after the key's
+// remainder and move through size classes as values arrive: after every step
+// the key must hold exactly the values added and not removed, a flat leaf
+// must sit in a class that fits its values, a key with more values than the
+// largest class holds must have spilled into a set leaf, and it must turn
+// flat again once half of the largest class would do. The values must also
+// survive a garbage collection, since the leaves are memory the collector
+// never scans.
 func TestFlatLeaves(t *testing.T) {
-	for _, klen := range []int{0, 8, 26, 36, 66, 200, maxFlatKey, maxFlatKey + 1, 300} {
+	for _, klen := range []int{0, 8, 26, 36, 66, 200, maxInline + 1, maxInline + 2, 300} {
 		t.Run(fmt.Sprintf("key of %d bytes", klen), func(t *testing.T) {
 			key := bytes.Repeat([]byte{'k'}, klen)
 			var m Map[uint64]
-			m.Add([]byte("neighbour"), 1) // the key's leaf lives below a node
-			maxCap := flatCap[uint64](uint8(len(flatSizes)-1), klen)
+			m.Add([]byte("neighbour"), 1) // the key's leaf lives below a node, which holds its first byte
+			rem := max(klen-1, 0)         // what the leaf holds
+			maxCap := flatCap[uint64](uint8(len(flatSizes)-1), rem)
 			var want []uint64
 			check := func() {
 				t.Helper()
@@ -40,12 +42,12 @@ func TestFlatLeaves(t *testing.T) {
 				}
 				l := m.t.find(key)
 				switch {
-				case klen > maxFlatKey:
+				case rem > maxInline:
 					if l.cls() != 0 {
 						t.Fatalf("a key of %d bytes got a flat leaf", klen)
 					}
 				case l.cls() != 0:
-					if int(l.n) != len(want) || len(want) > flatCap[uint64](l.cls(), klen) {
+					if int(l.n) != len(want) || len(want) > flatCap[uint64](l.cls(), rem) {
 						t.Fatalf("flat leaf of class %d holds %d values, want %d", l.cls(), l.n, len(want))
 					}
 				case len(want) <= maxCap/2:
@@ -57,7 +59,7 @@ func TestFlatLeaves(t *testing.T) {
 				m.Add(key, v) // a duplicate changes nothing
 				want = append(want, v)
 				check()
-				if l := m.t.find(key); klen <= maxFlatKey && len(want) > maxCap && l.cls() != 0 {
+				if l := m.t.find(key); rem <= maxInline && len(want) > maxCap && l.cls() != 0 {
 					t.Fatalf("%d values in a flat leaf, the largest holds %d", len(want), maxCap)
 				}
 			}
@@ -215,5 +217,43 @@ func TestPointerFree(t *testing.T) {
 		if got := pointerFree(tc.typ); got != tc.want {
 			t.Errorf("pointerFree(%v) = %v, want %v", tc.typ, got, tc.want)
 		}
+	}
+}
+
+// TestLeafMovesUp makes sure that a key of multimap.Ordered keeps all its
+// values when the keys it shared a long common part with go away. In the ART
+// behind Ordered a leaf holds only the part of its key below its node; when
+// that node goes, the leaf takes its place and must hold more of its key
+// (rekey). A flat leaf then moves into a class that holds the longer key and
+// its values, or, if no flat leaf does, into a set leaf.
+func TestLeafMovesUp(t *testing.T) {
+	common := bytes.Repeat([]byte("c"), 200)
+	for _, n := range []int{1, 5, 62} {
+		t.Run(fmt.Sprintf("%d values", n), func(t *testing.T) {
+			var m Map[uint64]
+			k1, k2, k3 := append(slices.Clip(common), '1'), append(slices.Clip(common), '2'), append(slices.Clip(common), '3')
+			m.Add(k2, 7) // k2 and k3 make the node holding the common part
+			m.Add(k3, 7)
+			var want []uint64
+			for v := range uint64(n) {
+				m.Add(k1, v)
+				want = append(want, v)
+			}
+			if l := m.t.find(k1); len(l.stored()) != 0 {
+				t.Fatalf("leaf below the common part holds %q, want nothing", l.stored())
+			}
+			m.RemoveKey(k2)
+			m.RemoveKey(k3)
+			checkInvariants(t, &m.t)
+			l := m.t.find(k1)
+			got := valuesOf(&m, k1)
+			slices.Sort(got)
+			if !slices.Equal(got, want) || l.base() != 0 || !bytes.Equal(l.stored(), k1) {
+				t.Fatalf("after moving up the leaf holds %d bytes from %d and values %v, want the whole key and %v", len(l.stored()), l.base(), got, want)
+			}
+			if flat := flatClassFor[uint64](k1, 0, n) != 0; flat != (l.kind != kSet) {
+				t.Fatalf("leaf of kind %d, want a flat leaf: %v", l.kind, flat)
+			}
+		})
 	}
 }

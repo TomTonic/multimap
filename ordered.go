@@ -135,7 +135,8 @@ func (m *Ordered[T]) AllKeys() []Key {
 }
 
 // AllKeysSeq iterates over all keys in ascending order. The yielded Keys are
-// views into the multimap and must not be modified or retained.
+// assembled for the iteration and valid only until the next one: they must
+// not be modified or retained; clone a Key to keep it.
 func (m *Ordered[T]) AllKeysSeq() iter.Seq[Key] {
 	return func(yield func(Key) bool) {
 		m.m.Range(&art.Bounds{}, func(k []byte) bool { return yield(k) })

@@ -8,7 +8,7 @@ import (
 
 // A flat leaf holds a key and its values in one object without pointers:
 //
-//	leafHead (4 B) | key (klen bytes) | padding to T's alignment | values [n]T
+//	leafHead (6 B) | key remainder (klen bytes) | padding to T's alignment | values [n]T
 //
 // The object is one of the Go size classes in flatSizes, allocated as an
 // array of uint64 so that the garbage collector never scans it. A new key
@@ -34,10 +34,6 @@ var flatSizes = [...]uintptr{0, 32, 48, 64, 96, 128, 192, 256, 384, 512}
 // minGrown is the smallest class a flat leaf grows into or shrinks back to:
 // 64 bytes, one cache line.
 const minGrown = 3
-
-// maxFlatKey is the longest key a flat leaf holds: klen must stay below
-// longKey.
-const maxFlatKey = longKey - 1
 
 // maxFlatValue is the largest T that takes flat leaves; larger values would
 // leave too few per class.
@@ -126,27 +122,55 @@ func allocFlat(cls uint8) *leafHead {
 	return l
 }
 
-// newFlatLeaf allocates a flat leaf holding a copy of key, in the smallest
-// class that holds one value; a key that no flat leaf holds gets a set leaf.
-// It captures nothing, so passing it as a newLeafFunc allocates no closure.
-func newFlatLeaf[T comparable](key []byte) *leafHead {
-	var c uint8
-	if len(key) <= maxFlatKey {
-		c = flatClass[T](len(key), 1)
-	}
+// newFlatLeaf allocates a flat leaf that holds key from base on, in the
+// smallest class that holds one value; a key that no flat leaf holds gets a
+// set leaf. It captures nothing, so passing it as a newLeafFunc allocates no
+// closure.
+func newFlatLeaf[T comparable](key []byte, base int) *leafHead {
+	c := flatClassFor[T](key, base, 1)
 	if c == 0 {
-		return newSetLeaf[T](key)
+		return newSetLeaf[T](key, base)
 	}
-	return flatWithKey(c, key)
+	return flatWithKey(c, key[base:], len(key))
 }
 
-// flatWithKey allocates a flat leaf of class c holding a copy of key and no
-// values.
-func flatWithKey(c uint8, key []byte) *leafHead {
+// flatClassFor returns the smallest class of a flat leaf that holds key from
+// base on and n values, or 0 if none does.
+func flatClassFor[T comparable](key []byte, base, n int) uint8 {
+	if len(key) > maxKeyLen || len(key)-base > maxInline {
+		return 0
+	}
+	return flatClass[T](len(key)-base, n)
+}
+
+// flatWithKey allocates a flat leaf of class c holding a copy of the key
+// remainder s of a key of kl bytes, and no values.
+func flatWithKey(c uint8, s []byte, kl int) *leafHead {
 	l := allocFlat(c)
-	l.klen = uint8(len(key))
-	copy(unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), len(key)), key)
+	l.klen, l.kl = uint8(len(s)), uint16(kl)
+	copy(unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), len(s)), s)
 	return l
+}
+
+// reflat copies flat leaf l into a leaf that holds key from base on (see
+// rekeyFunc): a flat leaf at least l's class if one holds the values, a set
+// leaf otherwise.
+func reflat[T comparable](l *leafHead, key []byte, base int) *leafHead {
+	vs := flatVals[T](l)
+	c := flatClassFor[T](key, base, len(vs))
+	if c == 0 {
+		nl := newSetLeaf[T](key, base)
+		s := vals[T](nl)
+		for _, v := range vs {
+			s.Add(v)
+		}
+		return nl
+	}
+	nl := flatWithKey(max(c, l.cls()), key[base:], len(key))
+	for _, v := range vs {
+		appendFlat(nl, v)
+	}
+	return nl
 }
 
 // flatVals returns the values of flat leaf l. The slice aliases the leaf.
@@ -218,7 +242,7 @@ func resize[T comparable](l *leafHead, c uint8) *leafHead {
 // spill turns flat leaf l, which is full in the largest class, into a set
 // leaf holding its values and v.
 func spill[T comparable](l *leafHead, v T) *leafHead {
-	sl := newSetLeaf[T](l.key())
+	sl := newSetLeafOf[T](l.stored(), l.keyLen())
 	s := vals[T](sl)
 	for _, x := range flatVals[T](l) {
 		s.Add(x)
@@ -230,16 +254,16 @@ func spill[T comparable](l *leafHead, v T) *leafHead {
 // unspillClass returns the class that set leaf l should turn into once its
 // values fill at most half of the largest class, or 0 if l stays a set leaf.
 func unspillClass[T comparable](l *leafHead) uint8 {
-	k := l.key()
-	if len(k) > maxFlatKey {
+	s := l.stored()
+	if len(s) > maxInline || l.keyLen() > maxKeyLen {
 		return 0
 	}
-	return flatClass[T](len(k), 2*vals[T](l).Len())
+	return flatClass[T](len(s), 2*vals[T](l).Len())
 }
 
 // unspill copies set leaf l into a flat leaf of class c.
 func unspill[T comparable](l *leafHead, c uint8) *leafHead {
-	nl := flatWithKey(c, l.key())
+	nl := flatWithKey(c, l.stored(), l.keyLen())
 	vals[T](l).Each(func(v T) bool { appendFlat(nl, v); return true })
 	return nl
 }

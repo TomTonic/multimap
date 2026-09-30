@@ -1,14 +1,13 @@
 package art
 
 import (
-	"bytes"
-
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// remove deletes the leaf of key and returns it, or nil if key is absent.
-func (t *Tree) remove(key []byte) *leafHead {
-	l := del(&t.root, key, 0)
+// remove deletes the leaf of key and returns it, or nil if key is absent. rk
+// moves a leaf that takes the place of a node above it (see collapse).
+func (t *Tree) remove(key []byte, rk rekeyFunc) *leafHead {
+	l := del(&t.root, key, 0, rk)
 	if l != nil {
 		t.size--
 	}
@@ -20,27 +19,28 @@ func (t *Tree) remove(key []byte) *leafHead {
 // shrinks to the smallest kind that fits and collapses when it no longer
 // branches, so the tree after a delete has the shape it would have had if the
 // key had never been inserted.
-func del(loc **header, key []byte, depth int) *leafHead {
+func del(loc **header, key []byte, depth int, rk rekeyFunc) *leafHead {
 	n := *loc
 	if n == nil {
 		return nil
 	}
 	if isLeaf(n.kind) {
 		l := asLeaf(n)
-		if !bytes.Equal(l.key(), key) {
+		if !l.matches(key) {
 			return nil
 		}
 		*loc = nil
 		return l
 	}
-	pl := n.pathLen(depth)
-	if pl != 0 && !swar.Match8(&n.prefix, pl, key, depth) && !swar.MatchPrefix(&n.prefix, pl, key, depth) {
+	pl := n.pathLen()
+	if pl != 0 && !pathMatches(n, pl, key, depth) {
 		return nil
 	}
 	d := depth + pl
 	var l *leafHead
 	if d == len(key) {
-		if l = termOf(n); l == nil || !bytes.Equal(l.key(), key) {
+		// The term's key is the path to n, which key matched: it is key.
+		if l = termOf(n); l == nil {
 			return nil
 		}
 		setTermSlot(n, nil)
@@ -50,47 +50,52 @@ func del(loc **header, key []byte, depth int) *leafHead {
 		if c == nil {
 			return nil
 		}
-		if l = del(c, key, d+1); l == nil {
+		if l = del(c, key, d+1, rk); l == nil {
 			return nil
 		}
 		if *c == nil {
 			n = removeChild(n, b)
 		}
 	}
-	*loc = collapse(n, pl, d+1)
+	*loc = collapse(n, key, depth, d, rk)
 	return l
 }
 
-// collapse replaces an inner node that no longer branches: without children
-// it becomes its term leaf, and with a single child and no term it merges
-// into that child, whose compressed path grows by n's path of pl bytes plus
-// the child's byte. The child's path starts at key depth cd. It returns what
-// should stand in n's place.
-func collapse(n *header, pl, cd int) *header {
+// collapse replaces an inner node n at depth, whose path ends at d, that no
+// longer branches: without children it becomes its term leaf, and with a
+// single child and no term it merges into that child, whose compressed path
+// grows by n's path plus the child's byte. key is the key just deleted below
+// n, which agrees with every key below n up to d. It returns what should
+// stand in n's place.
+func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 	switch {
 	case n.count == 0:
-		// The node held only its term leaf, which holds its full key (lazy
-		// expansion). A node without a term never gets here: it collapsed
-		// when it fell to one child.
-		return leafHdr(termOf(n))
+		// The node held only its term leaf. A node without a term never gets
+		// here: it collapsed when it fell to one child.
+		return leafHdr(lift(termOf(n), key[:d], depth, rk))
 	case n.count > 1 || termOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
 	if isLeaf(c.kind) {
-		return c
+		l := asLeaf(c)
+		if l.base() <= depth {
+			return c
+		}
+		k := append(append(append(make([]byte, 0, l.keyLen()), key[:d]...), b), l.from(d+1)...)
+		return leafHdr(rk(l, k, depth))
 	}
-	cl := c.pathLen(cd)
-	var buf [swar.PrefixLen]byte
-	m := copy(buf[:], n.prefix[:min(pl, swar.PrefixLen)])
-	if m < swar.PrefixLen {
-		buf[m] = b
-		m++
-		copy(buf[m:], c.prefix[:min(cl, swar.PrefixLen)])
+	p := append(appendPath(nil, n), b)
+	return withPath(c, appendPath(p, c))
+}
+
+// lift returns leaf l, whose key is k, ready to stand at depth: l itself if it
+// holds its key from there on, a new leaf from rk otherwise.
+func lift(l *leafHead, k []byte, depth int, rk rekeyFunc) *leafHead {
+	if l.base() <= depth {
+		return l
 	}
-	c.prefix = buf
-	c.plen = uint16(min(pl+1+cl, longPath))
-	return c
+	return rk(l, k, depth)
 }
 
 // onlyChild returns the single child of n. Only a 5-way node can fall to one
@@ -115,25 +120,26 @@ func removeChild(n *header, b byte) *header {
 		switch {
 		case n.kind == kN58 && n.count <= shrink58:
 			x := asN58(n)
-			y := &node26{header: x.header, bitmap: x.bitmap}
-			y.kind = kN26
-			copy(y.child[:], x.child[:x.count])
-			setTermSlot(&y.header, termOf(n))
-			return &y.header
+			y := newLike(n, kN26)
+			z := asN26(y)
+			z.bitmap = x.bitmap
+			copy(z.child[:], x.child[:x.count])
+			setTermSlot(y, termOf(n))
+			return y
 		case n.kind == kN26 && n.count <= shrink26:
 			x := asN26(n)
-			y := &node12{header: x.header}
-			y.kind = kN12
-			copy(y.child[:], x.child[:x.count])
+			y := newLike(n, kN12)
+			z := asN12(y)
+			copy(z.child[:], x.child[:x.count])
 			i := 0
 			for k := range 256 {
 				if swar.Has(&x.bitmap, byte(k)) {
-					y.keys[i] = byte(k)
+					z.keys[i] = byte(k)
 					i++
 				}
 			}
-			setTermSlot(&y.header, termOf(n))
-			return &y.header
+			setTermSlot(y, termOf(n))
+			return y
 		}
 		return n
 	case kN256:
@@ -156,12 +162,12 @@ func removeChild(n *header, b byte) *header {
 	child[last] = nil
 	n.count--
 	if n.kind == kN12 && n.count <= shrink12 {
-		y := &node5{header: *n}
-		y.kind = kN5
-		copy(y.keys[:], keys[:last])
-		copy(y.child[:], child[:last])
-		setTermSlot(&y.header, termOf(n))
-		return &y.header
+		y := newLike(n, kN5)
+		z := asN5(y)
+		copy(z.keys[:], keys[:last])
+		copy(z.child[:], child[:last])
+		setTermSlot(y, termOf(n))
+		return y
 	}
 	return n
 }
@@ -169,16 +175,17 @@ func removeChild(n *header, b byte) *header {
 // n256To58 copies a 256-way node that has fallen to shrink256 byte children
 // into a 58-way node.
 func n256To58(x *node256) *header {
-	y := &node58{header: x.header}
-	y.kind, y.count = kN58, uint8(x.total)
+	y := newLike(&x.header, kN58)
+	z := asN58(y)
+	y.count = uint8(x.total)
 	i := 0
 	for k, c := range x.child[:256] {
 		if c != nil {
-			swar.Set(&y.bitmap, byte(k))
-			y.child[i] = c
+			swar.Set(&z.bitmap, byte(k))
+			z.child[i] = c
 			i++
 		}
 	}
-	setTermSlot(&y.header, termOf(&x.header))
-	return &y.header
+	setTermSlot(y, termOf(&x.header))
+	return y
 }
