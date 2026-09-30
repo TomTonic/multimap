@@ -85,15 +85,23 @@ the `uint64` build compiles its timed loops exactly as before.
 AMD Ryzen 9 7900 (12 cores, 24 threads), Linux 6.18 under WSL2 on Windows,
 Go 1.27.1, rtcompare v0.7.0, 2026-09-28: the dev suite with 5-6 processes per
 scenario, all four sizes and memory at 1M keys (`-suite dev -sizes
-4096,16384,262144,1048576 -maxprocs 6 -memn 1048576 -memrounds 3`). Every
+4096,16384,262144,1048576 -maxprocs 6 -memn 1048576 -memrounds 3`). The
+`url` rows come from a run with the same flags on 2026-09-29
+(`-keys url`, [`results/run-url.log`](results/run-url.log)), after `url`
+changed to real Tranco hosts. Every
 factor is how many operations the first candidate completes in the time the
-second needs for one: above 1 it is faster. 356 of the 400 comparisons have
-an interval across processes within ±2 percentage points or ±10% of the
-difference. The other 44, mostly `churn` from 256K keys up, spread 2-9
-points between processes and would have needed more than 6 processes; none
-of them changes which candidate is faster, except where the interval
-includes 1. Those in the tables below are marked `*`, with their 95%
-intervals below the table. The full tables are
+second needs for one: above 1 it is faster.
+
+352 of the 400 comparisons reached an interval across processes within ±2
+percentage points or ±10% of the difference within 6 processes. The other
+48, mostly `churn` from 256K keys up, were measured again on 2026-09-29,
+each scenario with only those comparisons and up to 30 processes, and the 6
+still open with up to 100 more (`results/logs/stab-*`). Their rows pool all
+processes of these runs and replace the first ones. 398 comparisons are now
+precise. The other 2 spread 14 points between processes: `btree-map` range
+queries with u64 keys at 1M (38 processes, see below) and `btree-map` churn
+with url keys at 256K (130 processes, 1.07× [1.05×, 1.10×]). They are marked
+`*` in the tables below, with their 95% intervals below the table. The full tables are
 [`results/speed-summary.md`](results/speed-summary.md) and
 [`results/mem-summary.md`](results/mem-summary.md).
 
@@ -102,12 +110,10 @@ keys, slower with string keys, far faster for range queries.
 
 | operation | u64 4K | u64 1M | str 4K | str 1M |
 |---|---:|---:|---:|---:|
-| `valuesFor` | 1.04× | 1.03×* | 0.67× | 0.50× |
-| `churn` | 1.07× | 0.96×* | 0.69× | 0.73× |
+| `valuesFor` | 1.04× | 1.01× | 0.67× | 0.50× |
+| `churn` | 1.07× | 0.96× | 0.69× | 0.73× |
 | `build` | 1.09× | | 0.72× | |
 | `valuesBetween` | 18.9× | | 15.3× | |
-
-\* u64 1M: `valuesFor` [0.99×, 1.07×], `churn` [0.92×, 0.99×].
 
 **`ordered` against the hand-written candidates:** always faster than
 `btree-sets`, faster than `map-sets` except for changes with string keys.
@@ -120,10 +126,8 @@ keys, slower with string keys, far faster for range queries.
 | `build` | `btree-sets` | 3.10× | | 2.23× | |
 | `valuesFor` | `map-sets` | 2.54× | 2.29× | 1.53× | 1.09× |
 | `valuesBetween` | `map-sets` | 20.4× | | 16.0× | |
-| `churn` | `map-sets` | 1.24× | 1.08×* | 0.78×* | 0.76×* |
+| `churn` | `map-sets` | 1.24× | 1.09× | 0.76× | 0.81× |
 | `build` | `map-sets` | 1.19× | | 0.81× | |
-
-\* `churn`: u64 1M [1.02×, 1.16×], str 4K [0.76×, 0.80×], str 1M [0.73×, 0.79×].
 
 **`ordered` against `btree-map`, one value per key:** faster for point
 operations and changes, slower for range queries.
@@ -131,11 +135,12 @@ operations and changes, slower for range queries.
 | operation | u64 4K | u64 1M | str 4K | str 1M |
 |---|---:|---:|---:|---:|
 | `valuesFor` | 5.76× | 2.99× | 2.67× | 1.80× |
-| `valuesBetween` | 0.47× | 0.69×* | 0.32× | 0.54× |
+| `valuesBetween` | 0.47× | 0.68×* | 0.32× | 0.54× |
 | `churn` | 2.83× | 2.23× | 1.62× | 1.75× |
 | `build` | 2.29× | | 1.56× | |
 
-\* `valuesBetween` u64 1M: [0.62×, 0.79×]; its processes spread 16 points.
+\* `valuesBetween` u64 1M: [0.66×, 0.70×] over 38 processes of two runs, which
+gave 0.69× and 0.65× on their own; its processes spread 14 points.
 
 **Memory at 1M keys** (bytes per key; scannable: the part of the heap the GC
 must scan for pointers, as `runtime/metrics` counts it, which can exceed the
@@ -155,7 +160,7 @@ What follows for a choice:
 - **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` (0.96-1.09×) and adds range queries.
 - **String keys:** `hashed` is 1.4-2.0× as fast for point operations. Take `ordered` when you need range queries or ordered iteration: a range query on `hashed` scans every key and costs 15× as much already at 4K keys.
 - **Against writing it yourself:** both use about half the memory of a map or B-tree of Go sets, and `ordered` is 2.1-4.6× faster than the B-tree.
-- **One value per key:** `ordered` is 1.6-5.8× faster than `btree-map` for lookups and changes, but `btree-map` answers range queries 1.4-3.1× faster, needs half the memory and a third of the GC time. The B-tree keeps each key and value in one flat array per node; `ordered` has a leaf object per key with a pointer to its key.
+- **One value per key:** `ordered` is 1.6-5.8× faster than `btree-map` for lookups and changes, but `btree-map` answers range queries 1.5-3.1× faster, needs half the memory and a third of the GC time. The B-tree keeps each key and value in one flat array per node; `ordered` has a leaf object per key with a pointer to its key.
 - **Memory after deletions:** `ordered` shrinks with its keys; the maps keep their tables.
 - **GC:** with string keys `ordered` costs about 1.3× the GC time per cycle of `hashed`, with integer keys about the same; both cost less than the hand-written candidates. Its leaves and nodes are many small objects with pointers.
 

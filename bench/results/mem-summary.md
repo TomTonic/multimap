@@ -16,10 +16,10 @@
 | multi | email | 1048576 | hashed | 3 | 197 | 101 | +234 ms | 121 |
 | multi | email | 1048576 | btree-sets | 3 | 364 | 74 | +363 ms | 178 |
 | multi | email | 1048576 | map-sets | 3 | 380 | 87 | +334 ms | 213 |
-| multi | url | 1048576 | ordered | 3 | 229 | 118 | +370 ms | 111 |
-| multi | url | 1048576 | hashed | 3 | 242 | 101 | +233 ms | 143 |
-| multi | url | 1048576 | btree-sets | 3 | 408 | 73 | +369 ms | 200 |
-| multi | url | 1048576 | map-sets | 3 | 425 | 85 | +341 ms | 235 |
+| multi | url | 1048576 | ordered | 3 | 229 | 127 | +409 ms | 111 |
+| multi | url | 1048576 | hashed | 3 | 239 | 101 | +244 ms | 142 |
+| multi | url | 1048576 | btree-sets | 3 | 405 | 74 | +369 ms | 199 |
+| multi | url | 1048576 | map-sets | 3 | 422 | 88 | +347 ms | 233 |
 | multi | path | 300000 | ordered | 3 | 232 | 127 | +90 ms | 113 |
 | multi | path | 300000 | hashed | 3 | 234 | 96 | +59 ms | 136 |
 | multi | path | 300000 | btree-sets | 3 | 406 | 82 | +79 ms | 200 |
@@ -36,8 +36,8 @@
 | unique | uuid | 1048576 | btree-map | 3 | 77 | 37 | +77 ms | 35 |
 | unique | email | 1048576 | ordered | 3 | 100 | 108 | +243 ms | 47 |
 | unique | email | 1048576 | btree-map | 3 | 57 | 37 | +73 ms | 25 |
-| unique | url | 1048576 | ordered | 3 | 154 | 117 | +325 ms | 74 |
-| unique | url | 1048576 | btree-map | 3 | 102 | 37 | +78 ms | 48 |
+| unique | url | 1048576 | ordered | 3 | 153 | 125 | +362 ms | 74 |
+| unique | url | 1048576 | btree-map | 3 | 99 | 38 | +79 ms | 46 |
 | unique | path | 300000 | ordered | 3 | 157 | 126 | +80 ms | 76 |
 | unique | path | 300000 | btree-map | 3 | 101 | 36 | +22 ms | 47 |
 | unique | street | 212449 | ordered | 3 | 96 | 104 | +43 ms | 45 |
