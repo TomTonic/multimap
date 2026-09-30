@@ -28,6 +28,11 @@ const (
 	tailStr
 )
 
+// pathBuf is the size of the stack buffers that hold a copy of a path while the
+// tree code changes the node it came from: it takes the paths of the first two
+// tail classes without an allocation, and longer ones grow it onto the heap.
+const pathBuf = swar.PrefixLen + 48
+
 // tailClass returns the tail class of a node with a path of plen bytes.
 func tailClass(plen int) int {
 	switch t := plen - swar.PrefixLen; {

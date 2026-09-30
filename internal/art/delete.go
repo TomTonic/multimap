@@ -84,7 +84,8 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 		}
 		return leafHdr(rk(l, key[:d], int(b), depth))
 	}
-	p := append(appendPath(nil, n), b)
+	var buf [pathBuf]byte // on the stack for the common short paths
+	p := append(appendPath(buf[:0], n), b)
 	return withPath(c, appendPath(p, c))
 }
 

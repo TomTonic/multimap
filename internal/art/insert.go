@@ -76,7 +76,8 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, nl ne
 // splitPrefix handles an insert whose key leaves n's compressed path after
 // mis bytes: a new node takes the common part, with n and the new leaf below.
 func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth int, nl newLeafFunc) **header {
-	pk := appendPath(nil, n) // a copy: n's path changes below
+	var buf [pathBuf]byte
+	pk := appendPath(buf[:0], n) // a copy: n's path changes below
 	nn := newNode(kN5, mis)
 	storePath(nn, pk[:mis])
 	h, _ := addChild(nn, pk[mis], withPath(n, pk[mis+1:]))
