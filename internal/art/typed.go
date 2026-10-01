@@ -30,6 +30,12 @@ import (
 // leafHead.cls(); class 0 marks a set leaf.
 var typedCaps = [...]int{0, 1, 2, 3, 4, 6, 8, 12, 16}
 
+// minGrownTyped is the smallest class a typed leaf grows into or shrinks back
+// to, four values: a key with a second value is likely to get a few more, and
+// each move to a bigger class allocates an object the garbage collector must
+// scan, which costs more than the room that is left over.
+const minGrownTyped = 4
+
 // maxTypedKey is the longest key remainder a typed leaf holds, and
 // maxTypedValue the largest T that takes typed leaves.
 const (
@@ -168,6 +174,7 @@ func typedAdd[T comparable](l *leafHead, v T) *leafHead {
 	if c == 0 {
 		c = uint8(len(typedCaps) - 1) // the largest class
 	}
+	c = max(c, minGrownTyped)
 	if typedCaps[c] <= n {
 		return typedSpill(l, v)
 	}
@@ -200,8 +207,8 @@ func typedRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 	if l.n == 0 {
 		return 0, true
 	}
-	if c := typedClassFor(2 * int(l.n)); c != 0 && c < l.cls() {
-		return c, false
+	if c := typedClassFor(2 * int(l.n)); c != 0 && max(c, minGrownTyped) < l.cls() {
+		return max(c, minGrownTyped), false
 	}
 	return 0, false
 }

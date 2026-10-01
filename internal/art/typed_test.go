@@ -218,3 +218,33 @@ func TestTypedLeafOffsets(t *testing.T) {
 	k, v, s = typedOffsets[[58]byte]()
 	check("58", 58, k, v, s)
 }
+
+// TestTypedLeafHovers makes sure a key that goes back and forth between one
+// and a few values does not move its leaf every time. It covers the smallest
+// class a typed leaf grows into or shrinks back to: once a key has a second
+// value its leaf holds four, and it keeps that leaf while its values come and
+// go within them.
+func TestTypedLeafHovers(t *testing.T) {
+	var m Map[string]
+	key := []byte("key")
+	m.Add(key, "a")
+	if c := m.t.find(key).cls(); typedCaps[c] != 1 {
+		t.Fatalf("a key with one value has a leaf of room for %d", typedCaps[c])
+	}
+	m.Add(key, "b")
+	l := m.t.find(key)
+	if typedCaps[l.cls()] != typedCaps[minGrownTyped] {
+		t.Fatalf("a key with two values has a leaf of room for %d, want %d", typedCaps[l.cls()], typedCaps[minGrownTyped])
+	}
+	for range 10 {
+		m.Add(key, "c")
+		m.Add(key, "d")
+		m.Remove(key, "b")
+		m.Remove(key, "c")
+		m.Remove(key, "d")
+		m.Add(key, "b")
+		if m.t.find(key) != l {
+			t.Fatal("a key that hovers within four values moved its leaf")
+		}
+	}
+}
