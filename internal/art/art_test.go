@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"slices"
 	"sort"
@@ -127,21 +128,28 @@ func (r reference) sortedKeys() []string {
 // exactly like a trivially correct reference, through phases of growth and
 // of heavy deletion, and that after every phase the tree has the shape its
 // invariants demand (see checkInvariants). It runs every corpus with flat
-// leaves, which small pointer-free values get, and with set leaves, which
-// all other values get.
+// leaves, which small pointer-free values get, with typed leaves, which small
+// values with a pointer get, and with set leaves, which all other values get.
 func TestAgainstReference(t *testing.T) {
-	for _, mode := range []int8{1, -1} {
+	str := func(v uint64) string { return fmt.Sprint("value ", v) }
+	for _, mode := range []int8{1, 2, -1, -2} {
 		for name, keys := range keySets() {
-			t.Run(fmt.Sprintf("%s/flat=%d", name, mode), func(t *testing.T) {
-				againstReference(t, keys, mode)
+			t.Run(fmt.Sprintf("%s/leaves=%d", name, mode), func(t *testing.T) {
+				switch mode {
+				case 1, -1:
+					againstReference(t, keys, &Map[uint64]{flat: mode}, id)
+				case 2:
+					againstReference(t, keys, &Map[string]{flat: 2}, str)
+				default:
+					againstReference(t, keys, &Map[string]{flat: -1}, str)
+				}
 			})
 		}
 	}
 }
 
-func againstReference(t *testing.T, keys [][]byte, mode int8) {
+func againstReference[T comparable](t *testing.T, keys [][]byte, m *Map[T], mk func(uint64) T) {
 	r := rand.New(rand.NewPCG(7, 8))
-	m := Map[uint64]{flat: mode}
 	ref := reference{}
 	for phase := range 6 {
 		removing := phase%2 == 1
@@ -152,7 +160,7 @@ func againstReference(t *testing.T, keys [][]byte, mode int8) {
 				delete(ref, string(k))
 			case removing && op < 7:
 				v := uint64(r.IntN(8))
-				m.Remove(k, v)
+				m.Remove(k, mk(v))
 				ref.remove(k, v)
 			case !removing || op < 8:
 				for range 1 + r.IntN(4) {
@@ -160,17 +168,17 @@ func againstReference(t *testing.T, keys [][]byte, mode int8) {
 					if r.IntN(30) == 0 {
 						v = uint64(r.IntN(200)) // grow flat leaves, spill sets into array and hash
 					}
-					m.Add(k, v)
+					m.Add(k, mk(v))
 					ref.add(k, v)
 				}
 			}
 		}
-		compare(t, &m, ref, r)
+		compare(t, m, ref, mk, r)
 		checkInvariants(t, &m.t)
 	}
 }
 
-func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
+func compare[T comparable](t *testing.T, m *Map[T], ref reference, mk func(uint64) T, r *rand.Rand) {
 	t.Helper()
 	if m.Len() != len(ref) {
 		t.Fatalf("Len = %d, want %d", m.Len(), len(ref))
@@ -181,8 +189,8 @@ func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
 			t.Fatalf("key %q holds %d values, want %d", k, len(got), len(want))
 		}
 		for _, v := range got {
-			if !want[v] {
-				t.Fatalf("key %q holds %d unexpectedly", k, v)
+			if !hasValue(want, v, mk) {
+				t.Fatalf("key %q holds %v unexpectedly", k, v)
 			}
 		}
 	}
@@ -200,15 +208,28 @@ func compare(t *testing.T, m *Map[uint64], ref reference, r *rand.Rand) {
 	}
 	for i := range 300 {
 		b := randomBounds(r, sorted, i)
-		checkRange(t, m, ref, sorted, b)
+		checkRange(t, m, ref, mk, sorted, b)
 	}
-	checkRange(t, m, ref, sorted, &Bounds{}) // everything
+	checkRange(t, m, ref, mk, sorted, &Bounds{}) // everything
+}
+
+// id maps a reference value to itself, for maps of uint64.
+func id(v uint64) uint64 { return v }
+
+// hasValue reports whether the reference set want holds a value that mk maps to v.
+func hasValue[T comparable](want map[uint64]bool, v T, mk func(uint64) T) bool {
+	for w := range want {
+		if mk(w) == v {
+			return true
+		}
+	}
+	return false
 }
 
 // valuesOf returns the values of key in m, in the map's order.
-func valuesOf(m *Map[uint64], key []byte) []uint64 {
-	var out []uint64
-	m.Each(key, func(v uint64) bool { out = append(out, v); return true })
+func valuesOf[T comparable](m *Map[T], key []byte) []T {
+	var out []T
+	m.Each(key, func(v T) bool { out = append(out, v); return true })
 	return out
 }
 
@@ -270,7 +291,7 @@ func inRange(k string, b *Bounds) bool {
 	return true
 }
 
-func checkRange(t *testing.T, m *Map[uint64], ref reference, sorted []string, b *Bounds) {
+func checkRange[T comparable](t *testing.T, m *Map[T], ref reference, mk func(uint64) T, sorted []string, b *Bounds) {
 	t.Helper()
 	var want []string
 	for _, k := range sorted {
@@ -294,19 +315,23 @@ func checkRange(t *testing.T, m *Map[uint64], ref reference, sorted []string, b 
 	}
 	// RangeValues yields the values of exactly these keys (Range above
 	// checked their order and counts)
-	var wantN, wantSum, gotN, gotSum uint64
+	wantN, gotN := map[T]int{}, map[T]int{}
 	for _, k := range want {
 		for v := range ref[k] {
-			wantN, wantSum = wantN+1, wantSum+v
+			wantN[mk(v)]++
 		}
 	}
-	m.RangeValues(b, func(v uint64) bool { gotN, gotSum = gotN+1, gotSum+v; return true })
-	if gotN != wantN || gotSum != wantSum {
-		t.Fatalf("RangeValues(%+v) yielded %d values summing to %d, want %d summing to %d", *b, gotN, gotSum, wantN, wantSum)
+	m.RangeValues(b, func(v T) bool { gotN[v]++; return true })
+	if !maps.Equal(gotN, wantN) {
+		t.Fatalf("RangeValues(%+v) yielded %v, want %v", *b, gotN, wantN)
 	}
 	n = 0
-	m.RangeValues(b, func(uint64) bool { n++; return n < 3 })
-	if n != min(3, int(wantN)) {
+	m.RangeValues(b, func(T) bool { n++; return n < 3 })
+	total := 0
+	for _, c := range wantN {
+		total += c
+	}
+	if n != min(3, total) {
 		t.Fatalf("RangeValues did not stop when asked: %d calls", n)
 	}
 }
@@ -683,15 +708,22 @@ func TestShrinkAndCollapse(t *testing.T) {
 // FuzzOperations drives the tree with arbitrary operation sequences over
 // short keys from a tiny alphabet (which maximises shared paths, splits and
 // merges), checking every result against the reference and the structural
-// invariants at the end. The first byte chooses flat or set leaves.
+// invariants at the end. The same operations run on a map of uint64, whose
+// first byte's lowest bit chooses flat or set leaves, and on a map of strings,
+// whose second bit chooses typed or set leaves.
 func FuzzOperations(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		m := Map[uint64]{flat: 1}
+		s := Map[string]{flat: 2} // the same operations on typed leaves
 		if len(ops) > 0 && ops[0]&1 == 1 {
 			m.flat = -1
 		}
+		if len(ops) > 0 && ops[0]&2 == 2 {
+			s.flat = -1
+		}
+		str := func(v uint64) string { return fmt.Sprint("value ", v) }
 		ref := reference{}
 		for len(ops) >= 2 {
 			op, n := ops[0], int(ops[1]%6)
@@ -708,17 +740,22 @@ func FuzzOperations(f *testing.F) {
 			switch op % 4 {
 			case 0, 1:
 				m.Add(k, v)
+				s.Add(k, str(v))
 				ref.add(k, v)
 			case 2:
 				m.Remove(k, v)
+				s.Remove(k, str(v))
 				ref.remove(k, v)
 			default:
 				m.RemoveKey(k)
+				s.RemoveKey(k)
 				delete(ref, string(k))
 			}
 		}
-		compare(t, &m, ref, rand.New(rand.NewPCG(1, 1)))
+		compare(t, &m, ref, id, rand.New(rand.NewPCG(1, 1)))
 		checkInvariants(t, &m.t)
+		compare(t, &s, ref, str, rand.New(rand.NewPCG(1, 1)))
+		checkInvariants(t, &s.t)
 	})
 }
 
@@ -757,7 +794,7 @@ func TestLongPaths(t *testing.T) {
 						}
 					}
 				}
-				phase := func() { compare(t, &m, ref, rand.New(rand.NewPCG(uint64(pl), uint64(fan)))) }
+				phase := func() { compare(t, &m, ref, id, rand.New(rand.NewPCG(uint64(pl), uint64(fan)))) }
 				for b := range fan {
 					step(true, key(b))
 				}

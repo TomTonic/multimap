@@ -22,8 +22,11 @@
 //   - For small pointer-free values (flat.go) the values follow the key in
 //     the same object, which grows through Go size classes from 32 to 512
 //     bytes as values arrive. Such a leaf holds no pointer, so the garbage
-//     collector never scans it. Beyond 512 bytes, and for other values, a
-//     leaf holds a vset.Set after its key (set leaves).
+//     collector never scans it. Small values with a pointer, such as strings,
+//     live in typed leaves (typed.go) the same way: the object is allocated
+//     with its real type, one of eight value capacities up to 16 values and
+//     one of eight key areas up to 58 bytes. Beyond that, and for other
+//     values, a leaf holds a vset.Set after its key (set leaves).
 //   - A key that ends at an inner node (a prefix of other keys) is that
 //     node's term leaf. It takes the node's last child slot, which the byte
 //     children reach only when there is no term: few keys are prefixes of
@@ -49,7 +52,7 @@ import (
 type kind uint8
 
 const (
-	kSet kind = iota + 1 // set leaf; kSet+c is a flat leaf of class c (see flatSizes)
+	kSet kind = iota + 1 // set leaf; kSet+c is a flat leaf of class c (see flatSizes), or in a map of values with a pointer a typed leaf of class c (see typedCaps)
 	_
 	_
 	_
@@ -109,9 +112,9 @@ const longPath = 1<<16 - 1
 // bytes from its base, which are then also on its path; it moves up only
 // with a new base (see rekeyFunc).
 type leafHead struct {
-	kind kind   // kSet, or kSet+c for a flat leaf of class c
+	kind kind   // kSet, or kSet+c for a flat or typed leaf of class c
 	klen uint8  // length of the inline key remainder, or longKey for a whole key held as a string
-	n    uint16 // flat leaves: number of values
+	n    uint16 // flat and typed leaves: number of values
 	kl   uint16 // length of the whole key, if the remainder is inline
 }
 

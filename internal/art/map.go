@@ -13,7 +13,7 @@ import (
 // value is an empty map.
 type Map[T comparable] struct {
 	t    Tree
-	flat int8 // 1: T takes flat leaves, -1: set leaves only, 0: not decided yet
+	flat int8 // 1: T takes flat leaves, 2: typed leaves, -1: set leaves only, 0: not decided yet
 }
 
 // newSetLeaf allocates a set leaf that holds key from base on, in the
@@ -145,11 +145,16 @@ func setPrepend(l *leafHead, pre []byte, b, depth int) bool {
 	return true
 }
 
-// decide settles once per map whether T takes flat leaves (see flatType).
+// decide settles once per map whether T takes flat leaves (see flatType) or
+// typed leaves (see typedType).
 func (m *Map[T]) decide() {
-	m.flat = -1
-	if flatType[T]() {
+	switch {
+	case flatType[T]():
 		m.flat = 1
+	case typedType[T]():
+		m.flat = 2
+	default:
+		m.flat = -1
 	}
 }
 
@@ -168,17 +173,25 @@ func (m *Map[T]) Add(key []byte, v T) {
 	// Chosen here rather than returned from a helper: a function value that
 	// does not escape stays on the stack, one that is returned is allocated.
 	var nl newLeafFunc = newSetLeaf[T]
-	if m.flat > 0 {
+	switch m.flat {
+	case 1:
 		nl = newFlatLeaf[T]
+	case 2:
+		nl = newTypedLeaf[T]
 	}
 	loc := m.t.upsert(key, nl)
 	l := asLeaf(*loc)
-	if l.kind == kSet {
+	switch {
+	case l.kind == kSet:
 		vals[T](l).Add(v)
-		return
-	}
-	if nl := flatAdd(l, v); nl != nil {
-		*loc = leafHdr(nl)
+	case m.flat == 2:
+		if nl := typedAdd(l, v); nl != nil {
+			*loc = leafHdr(nl)
+		}
+	default:
+		if nl := flatAdd(l, v); nl != nil {
+			*loc = leafHdr(nl)
+		}
 	}
 }
 
@@ -192,10 +205,20 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	if l == nil {
 		return
 	}
+	// Chosen here, as in Add: a function value that does not escape stays on
+	// the stack.
+	var rk rekeyFunc = rekey[T]
+	if m.flat == 2 {
+		rk = rekeyTyped[T]
+	}
 	if l.kind != kSet {
+		if m.flat == 2 {
+			m.removeTyped(l, key, v, rk)
+			return
+		}
 		switch c, empty := flatRemove(l, v); {
 		case empty:
-			m.t.remove(key, rekey[T])
+			m.t.remove(key, rk)
 		case c != 0:
 			*m.t.findSlot(key) = leafHdr(resize[T](l, c))
 		}
@@ -205,16 +228,36 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	switch {
 	case !s.Remove(v):
 	case s.Len() == 0:
-		m.t.remove(key, rekey[T])
-	case m.flat > 0:
+		m.t.remove(key, rk)
+	case m.flat == 1:
 		if c := unspillClass[T](l); c != 0 {
 			*m.t.findSlot(key) = leafHdr(unspill[T](l, c))
+		}
+	case m.flat == 2:
+		if c := unspillTypedClass[T](l); c != 0 {
+			*m.t.findSlot(key) = leafHdr(unspillTyped[T](l, c))
 		}
 	}
 }
 
+// removeTyped removes v from the typed leaf l of key; rk is the map's rekeyFunc.
+func (m *Map[T]) removeTyped(l *leafHead, key []byte, v T, rk rekeyFunc) {
+	switch c, empty := typedRemove(l, v); {
+	case empty:
+		m.t.remove(key, rk)
+	case c != 0:
+		*m.t.findSlot(key) = leafHdr(resizeTyped[T](l, c))
+	}
+}
+
 // RemoveKey removes key and all its values. An absent key is ignored.
-func (m *Map[T]) RemoveKey(key []byte) { m.t.remove(key, rekey[T]) }
+func (m *Map[T]) RemoveKey(key []byte) {
+	var rk rekeyFunc = rekey[T]
+	if m.flat == 2 {
+		rk = rekeyTyped[T]
+	}
+	m.t.remove(key, rk)
+}
 
 // Has reports whether key holds any values.
 func (m *Map[T]) Has(key []byte) bool { return m.t.find(key) != nil }
@@ -246,8 +289,12 @@ func eachValue[T comparable](l *leafHead, yield func(T) bool) bool {
 // at least that large, and a constant offset keeps the load independent of
 // the leaf's head.
 func (m *Map[T]) leafTail() uintptr {
-	if m.flat > 0 {
+	var z T
+	switch m.flat {
+	case 1:
 		return flatSizes[1] - 1
+	case 2:
+		return typedOff(0) + unsafe.Sizeof(z) - 1
 	}
 	return unsafe.Sizeof(leaf[T, [16]byte]{}) - 1
 }

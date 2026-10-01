@@ -124,31 +124,41 @@ func TestFlatLeafHysteresis(t *testing.T) {
 
 // TestFlatValueTypes makes sure that multimap.Ordered keeps values of every
 // type correctly, whether its ART stores them in flat leaves (small values
-// without pointers, of any alignment) or in set leaves (everything else).
+// without pointers, of any alignment), in typed leaves (small values with a
+// pointer) or in set leaves (everything else).
 func TestFlatValueTypes(t *testing.T) {
 	type small struct {
 		a uint32
 		b uint16
 	}
+	type named struct {
+		s string
+		n int
+	}
+	ptrs := make([]int, 300)
 	for _, tc := range []struct {
 		name string
-		flat bool
+		mode int8 // 1: flat leaves, 2: typed leaves, -1: set leaves only
 		run  func(t *testing.T) int8
 	}{
-		{"uint64", true, roundTrip(func(i int) uint64 { return uint64(i) * 0x9E3779B97F4A7C15 })},
-		{"int8", true, roundTrip(func(i int) int8 { return int8(i) })},
-		{"uint32", true, roundTrip(func(i int) uint32 { return uint32(i) })},
-		{"float64", true, roundTrip(func(i int) float64 { return float64(i) / 3 })},
-		{"complex128", true, roundTrip(func(i int) complex128 { return complex(float64(i), 1) })},
-		{"[2]uint64", true, roundTrip(func(i int) [2]uint64 { return [2]uint64{uint64(i), ^uint64(i)} })},
-		{"struct of uint32 and uint16", true, roundTrip(func(i int) small { return small{uint32(i), uint16(i)} })},
-		{"[3]uint64 is too large", false, roundTrip(func(i int) [3]uint64 { return [3]uint64{uint64(i)} })},
-		{"string has a pointer", false, roundTrip(func(i int) string { return fmt.Sprint(i) })},
-		{"struct{} is empty", false, roundTrip(func(int) struct{} { return struct{}{} })},
+		{"uint64", 1, roundTrip(func(i int) uint64 { return uint64(i) * 0x9E3779B97F4A7C15 })},
+		{"int8", 1, roundTrip(func(i int) int8 { return int8(i) })},
+		{"uint32", 1, roundTrip(func(i int) uint32 { return uint32(i) })},
+		{"float64", 1, roundTrip(func(i int) float64 { return float64(i) / 3 })},
+		{"complex128", 1, roundTrip(func(i int) complex128 { return complex(float64(i), 1) })},
+		{"[2]uint64", 1, roundTrip(func(i int) [2]uint64 { return [2]uint64{uint64(i), ^uint64(i)} })},
+		{"struct of uint32 and uint16", 1, roundTrip(func(i int) small { return small{uint32(i), uint16(i)} })},
+		{"[3]uint64 is too large", -1, roundTrip(func(i int) [3]uint64 { return [3]uint64{uint64(i)} })},
+		{"string has a pointer", 2, roundTrip(func(i int) string { return fmt.Sprint(i) })},
+		{"pointer", 2, roundTrip(func(i int) *int { return &ptrs[i%300] })},
+		{"interface", 2, roundTrip(func(i int) any { return i })},
+		{"struct of a string and a number", 2, roundTrip(func(i int) named { return named{fmt.Sprint(i), i} })},
+		{"[5]string is too large", -1, roundTrip(func(i int) [5]string { return [5]string{fmt.Sprint(i)} })},
+		{"struct{} is empty", -1, roundTrip(func(int) struct{} { return struct{}{} })},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.run(t) > 0; got != tc.flat {
-				t.Fatalf("flat leaves = %v, want %v", got, tc.flat)
+			if got := tc.run(t); got != tc.mode {
+				t.Fatalf("leaf mode = %d, want %d", got, tc.mode)
 			}
 		})
 	}
