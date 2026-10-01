@@ -31,6 +31,16 @@
 //     node's term leaf. It takes the node's last child slot, which the byte
 //     children reach only when there is no term: few keys are prefixes of
 //     others, so no node pays a field for them.
+//   - In a map whose values are small and pointer-free (at most 8 bytes), keys
+//     with exactly one value need no leaf at all: they live in pages (page.go,
+//     pagek.go), sorted arrays of up to 31 keys with their values that
+//     hold whole keys. Range nodes (rnode.go) give the pages below them ranges
+//     of key bytes instead of one child per byte, which keeps them full however
+//     many keys there are, and let a range scan walk contiguous memory. A key
+//     that gets a second value leaves its page for a leaf, and where such keys
+//     crowd a range node, its subtree is rebuilt from inner nodes and leaves
+//     (rebuild.go). Only keys in such a tree's pages and range nodes pay for
+//     that; every other map has none of them.
 //
 // The tree code is not generic. It works on leafHead, the key part every leaf
 // starts with, so no generic dictionary calls sit on the traversal path; only
@@ -62,12 +72,25 @@ const (
 	_
 	_
 	kLastLeaf // flat leaf of the largest class
+	kPage     // U8-1 page, see page.go
+	kPageK    // K page, see pagek.go
 	kN5
 	kN12
 	kN26
 	kN58
 	kN256
+	kR8 // range nodes, see rnode.go
+	kR24
+	kR56
+	kR256
 )
+
+// kLastPage is the last kind that ends a descent: leaves and pages come first,
+// so that one comparison detects them.
+const kLastPage = kPageK
+
+// kindMask maps a kind to an index of the tables below, which hold every kind.
+const kindMask = 31
 
 // Shrink thresholds: a node turns into the next smaller kind once it holds
 // this many byte children or fewer. They lie below the next smaller capacity
@@ -120,6 +143,12 @@ type leafHead struct {
 
 // isLeaf reports whether an object of kind k is a leaf.
 func isLeaf(k kind) bool { return k <= kLastLeaf }
+
+// isPage reports whether an object of kind k is a page of either type.
+func isPage(k kind) bool { return k > kLastLeaf && k <= kLastPage }
+
+// isRange reports whether an object of kind k is a range node.
+func isRange(k kind) bool { return k >= kR8 }
 
 // cls returns the size class of a flat leaf (see flatSizes), or 0 for a set
 // leaf.
@@ -287,13 +316,17 @@ func slots(n *header) []*header {
 // of the last one, where the term sits. The 256-way node's header count
 // (255) never equals its slotCap (0): its term slot is its own.
 var (
-	slotCap = [16]uint8{kN5: 5, kN12: 12, kN26: 26, kN58: 58}
-	termOff = [16]uintptr{
+	slotCap = [32]uint8{kN5: 5, kN12: 12, kN26: 26, kN58: 58}
+	termOff = [32]uintptr{
 		kN5:   unsafe.Offsetof(node5{}.child) + 4*ptrSize,
 		kN12:  unsafe.Offsetof(node12{}.child) + 11*ptrSize,
 		kN26:  unsafe.Offsetof(node26{}.child) + 25*ptrSize,
 		kN58:  unsafe.Offsetof(node58{}.child) + 57*ptrSize,
 		kN256: unsafe.Offsetof(node256{}.child) + 256*ptrSize,
+		kR8:   rChildOff + 8*ptrSize,
+		kR24:  rChildOff + 24*ptrSize,
+		kR56:  rChildOff + 56*ptrSize,
+		kR256: rChildOff + 256*ptrSize,
 	}
 )
 
@@ -302,7 +335,7 @@ const ptrSize = unsafe.Sizeof(uintptr(0))
 // termOf returns the leaf of the key that ends exactly at n, or nil. It sits
 // in n's last slot, unless the byte children fill every slot.
 func termOf(n *header) *leafHead {
-	k := n.kind & 15
+	k := n.kind & kindMask
 	if n.count == slotCap[k] {
 		return nil
 	}
@@ -312,7 +345,7 @@ func termOf(n *header) *leafHead {
 // termSlot returns the address of n's term slot, which holds its term leaf
 // whenever it has one.
 func termSlot(n *header) **header {
-	return (**header)(unsafe.Add(unsafe.Pointer(n), termOff[n.kind&15]))
+	return (**header)(unsafe.Add(unsafe.Pointer(n), termOff[n.kind&kindMask]))
 }
 
 // setTermSlot stores l, or nil to remove the term, in n's term slot; n must
@@ -321,7 +354,7 @@ func setTermSlot(n *header, l *leafHead) { *termSlot(n) = leafHdr(l) }
 
 // full reports whether n has no room for another byte child or a term.
 func full(n *header) bool {
-	if n.kind == kN256 {
+	if n.kind == kN256 || isRange(n.kind) {
 		return false
 	}
 	s := slots(n)

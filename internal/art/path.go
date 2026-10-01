@@ -50,16 +50,20 @@ func tailClass(plen int) int {
 
 // fixedSize is the size of each node kind without its tail, which is where
 // the tail starts.
-var fixedSize = [16]uintptr{
+var fixedSize = [32]uintptr{
 	kN5:   unsafe.Sizeof(node5{}),
 	kN12:  unsafe.Sizeof(node12{}),
 	kN26:  unsafe.Sizeof(node26{}),
 	kN58:  unsafe.Sizeof(node58{}),
 	kN256: unsafe.Sizeof(node256{}),
+	kR8:   unsafe.Sizeof(rnode8{}),
+	kR24:  unsafe.Sizeof(rnode24{}),
+	kR56:  unsafe.Sizeof(rnode56{}),
+	kR256: unsafe.Sizeof(rnode256{}),
 }
 
 type nodeKinds interface {
-	node5 | node12 | node26 | node58 | node256
+	node5 | node12 | node26 | node58 | node256 | rnode8 | rnode24 | rnode56 | rnode256
 }
 
 type tailKinds interface {
@@ -103,8 +107,20 @@ func newNode(k kind, plen int) *header {
 		h = allocOf[node26](tc)
 	case kN58:
 		h = allocOf[node58](tc)
-	default:
+	case kN256:
 		h = allocOf[node256](tc)
+		h.count = 255
+	case kR8:
+		h = allocOf[rnode8](tc)
+		h.count = 255
+	case kR24:
+		h = allocOf[rnode24](tc)
+		h.count = 255
+	case kR56:
+		h = allocOf[rnode56](tc)
+		h.count = 255
+	default:
+		h = allocOf[rnode256](tc)
 		h.count = 255
 	}
 	h.kind = k
@@ -130,7 +146,7 @@ func newLike(n *header, k kind) *header {
 
 // tailPtr returns the address of n's tail.
 func tailPtr(n *header) unsafe.Pointer {
-	return unsafe.Add(unsafe.Pointer(n), fixedSize[n.kind&15])
+	return unsafe.Add(unsafe.Pointer(n), fixedSize[n.kind&kindMask])
 }
 
 // pathLen returns the length of n's compressed path.
@@ -201,8 +217,16 @@ func copyFixed(dst, src *header) {
 		*asN26(dst) = *asN26(src)
 	case kN58:
 		*asN58(dst) = *asN58(src)
-	default:
+	case kN256:
 		*asN256(dst) = *asN256(src)
+	case kR8:
+		*asR8(dst) = *asR8(src)
+	case kR24:
+		*asR24(dst) = *asR24(src)
+	case kR56:
+		*asR56(dst) = *asR56(src)
+	default:
+		*asR256(dst) = *asR256(src)
 	}
 }
 

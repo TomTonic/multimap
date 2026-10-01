@@ -146,16 +146,48 @@ func setPrepend(l *leafHead, pre []byte, b, depth int) bool {
 }
 
 // decide settles once per map whether T takes flat leaves (see flatType) or
-// typed leaves (see typedType).
+// typed leaves (see typedType), and tells the tree whether it may hold pages.
 func (m *Map[T]) decide() {
 	switch {
 	case flatType[T]():
 		m.flat = 1
+		if pageType[T]() {
+			m.t.small = true
+			m.t.mk = leafWith[T]
+		}
 	case typedType[T]():
 		m.flat = 2
 	default:
 		m.flat = -1
 	}
+}
+
+// pageType reports whether T takes pages, which hold values as words: a flat
+// type of at most 8 bytes.
+func pageType[T comparable]() bool {
+	var z T
+	return unsafe.Sizeof(z) <= 8
+}
+
+// leafWith allocates a flat leaf that holds key from base on and the value that
+// raw holds, a page's word, as its only value. It is the Tree's mk.
+func leafWith[T comparable](key []byte, base int, raw uint64) *leafHead {
+	l := newFlatLeaf[T](key, base)
+	v := *(*T)(unsafe.Pointer(&raw))
+	if l.kind == kSet {
+		vals[T](l).Add(v)
+	} else {
+		appendFlat(l, v)
+	}
+	return l
+}
+
+// pageVal returns the raw value of key i of page p, a word that holds a T.
+func pageVal(p *pageHead, i int) *uint64 {
+	if p.kind == kPageK {
+		return &p.kVals()[i]
+	}
+	return &p.vals()[i]
 }
 
 // Len returns the number of keys.
@@ -179,8 +211,32 @@ func (m *Map[T]) Add(key []byte, v T) {
 	case 2:
 		nl = newTypedLeaf[T]
 	}
-	loc := m.t.upsert(key, nl)
-	l := asLeaf(*loc)
+	var raw uint64
+	if m.t.small {
+		*(*T)(unsafe.Pointer(&raw)) = v
+	}
+	sp := m.t.upsert(key, raw, nl)
+	n := *sp.loc
+	switch {
+	case isLeaf(n.kind):
+		m.addToLeaf(sp.loc, asLeaf(n), v)
+	case sp.created:
+		// A page took the key and its value.
+	default:
+		// The key has one value in a page; a second one gives it a leaf.
+		old := pageVal(asPage(n), sp.i)
+		if *(*T)(unsafe.Pointer(old)) == v {
+			return
+		}
+		l := m.t.mk(key, sp.depth, *old)
+		slot := leafHdr(l)
+		m.addToLeaf(&slot, l, v)
+		m.t.promote(sp, asLeaf(slot), key)
+	}
+}
+
+// addToLeaf adds v to the values of leaf l, which sits in slot loc.
+func (m *Map[T]) addToLeaf(loc **header, l *leafHead, v T) {
 	switch {
 	case l.kind == kSet:
 		vals[T](l).Add(v)
@@ -201,8 +257,8 @@ func (m *Map[T]) Add(key []byte, v T) {
 // It finds the leaf as a lookup does and looks for the leaf's slot only when
 // the leaf has to move into a smaller one.
 func (m *Map[T]) Remove(key []byte, v T) {
-	l := m.t.find(key)
-	if l == nil {
+	n, i := m.t.find(key)
+	if n == nil {
 		return
 	}
 	// Chosen here, as in Add: a function value that does not escape stays on
@@ -211,6 +267,13 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	if m.flat == 2 {
 		rk = rekeyTyped[T]
 	}
+	if isPage(n.kind) {
+		if *(*T)(unsafe.Pointer(pageVal(asPage(n), i))) == v {
+			m.t.remove(key, rk)
+		}
+		return
+	}
+	l := asLeaf(n)
 	if l.kind != kSet {
 		if m.flat == 2 {
 			m.removeTyped(l, key, v, rk)
@@ -260,13 +323,21 @@ func (m *Map[T]) RemoveKey(key []byte) {
 }
 
 // Has reports whether key holds any values.
-func (m *Map[T]) Has(key []byte) bool { return m.t.find(key) != nil }
+func (m *Map[T]) Has(key []byte) bool {
+	n, _ := m.t.find(key)
+	return n != nil
+}
 
 // Each calls yield for every value of key, in unspecified order, until it
 // returns false. yield must not modify the map.
 func (m *Map[T]) Each(key []byte, yield func(T) bool) {
-	if l := m.t.find(key); l != nil {
-		eachValue(l, yield)
+	n, i := m.t.find(key)
+	switch {
+	case n == nil:
+	case isPage(n.kind):
+		yield(*(*T)(unsafe.Pointer(pageVal(asPage(n), i))))
+	default:
+		eachValue(asLeaf(n), yield)
 	}
 }
 
@@ -301,15 +372,42 @@ func (m *Map[T]) leafTail() uintptr {
 
 // Range calls fn for every key within b, in ascending key order, until fn
 // returns false. The key is assembled for fn, from the path to its leaf and
-// the rest the leaf holds: fn must not modify or retain it, and must not
-// modify the map.
+// the rest the leaf holds, or from its page: fn must not modify or retain it,
+// and must not modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 	var kb keyBuf
-	m.t.scan(b, m.leafTail(), &kb, func(*leafHead) bool { return fn(kb.key) })
+	var pk pageKey
+	m.t.scan(b, m.leafTail(), &kb, func(n *header, i, j int) bool {
+		if isLeaf(n.kind) {
+			return fn(kb.key)
+		}
+		p := asPage(n)
+		for k := i; k < j; k++ {
+			if !fn(p.key(k, &pk)) {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 // RangeValues calls yield for every value of every key within b, key by key
 // in ascending key order, until yield returns false.
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
-	m.t.scan(b, m.leafTail(), nil, func(l *leafHead) bool { return eachValue(l, yield) })
+	m.t.scan(b, m.leafTail(), nil, func(n *header, i, j int) bool {
+		if isLeaf(n.kind) {
+			return eachValue(asLeaf(n), yield)
+		}
+		p := asPage(n)
+		raw := p.vals()
+		if p.kind == kPageK {
+			raw = p.kVals()
+		}
+		for k := i; k < j; k++ {
+			if !yield(*(*T)(unsafe.Pointer(&raw[k]))) {
+				return false
+			}
+		}
+		return true
+	})
 }

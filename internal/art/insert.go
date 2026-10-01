@@ -2,28 +2,48 @@ package art
 
 import (
 	"bytes"
+	"slices"
 
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// upsert returns the slot that holds the leaf of key, creating the leaf with
-// nl when it is missing. The caller may replace the leaf in that slot, as a
-// flat leaf does when it grows.
+// spot is where upsert left a key: in a leaf, in the slot at loc; or at
+// position i of the page that the slot at loc points to, whose path starts at
+// depth. A page below a range node is child pi of the node at *par.
+type spot struct {
+	loc     **header
+	i       int
+	depth   int
+	par     **header
+	pi      int
+	created bool // the key is new; in a page it already holds the value
+}
+
+// upsert returns where key is, creating it when it is missing: in a page with
+// the raw value v when the key fits one (see pageable) and does not go below
+// an inner node (see settle.go), else as a leaf made by nl, which the caller
+// fills. The caller may replace a leaf in its slot, as a flat leaf does when it
+// grows.
 //
 // It descends like find, checking compressed paths and searching nodes the
 // same fast way, and keeps the slot it came through. A missing key is then
 // added right where the descent stopped, without a second traversal.
-func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
+func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) spot {
 	loc, depth := &t.root, 0
+	var par **header // the range node *loc is a child of, or nil
+	pi := 0
+	inner := false // *loc is below an inner node, where no pages go
 	for {
 		n := *loc
 		if n == nil {
-			*loc = leafHdr(nl(key, depth))
-			t.size++
-			return loc
+			*loc = t.newChild(key, v, nl, depth)
+			return t.created(loc)
 		}
-		if isLeaf(n.kind) {
-			return t.splitLeaf(loc, asLeaf(n), key, depth, nl)
+		if n.kind <= kLastPage {
+			if n.kind > kLastLeaf {
+				return t.upsertPage(loc, par, pi, key, depth, v, nl)
+			}
+			return t.splitLeaf(loc, asLeaf(n), key, depth, v, nl, inner)
 		}
 		if n.plen > 0 {
 			pl := int(n.plen)
@@ -31,7 +51,7 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 				pl = n.pathLen()
 				if !pathMatches(n, pl, key, depth) {
 					mis, _ := pathLcp(n, pl, key[depth:])
-					return t.splitPrefix(loc, n, mis, key, depth, nl)
+					return t.splitPrefix(loc, n, mis, key, depth, v, nl)
 				}
 			}
 			depth += pl
@@ -41,43 +61,277 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc) **header {
 				*loc = setTerm(n, nl(key, depth))
 				t.size++
 			}
-			return termSlot(*loc)
+			return spot{loc: termSlot(*loc)}
 		}
 		b := key[depth]
+		if isRange(n.kind) {
+			x := asR(n)
+			i := x.index(b)
+			c := &x.children()[i]
+			if cb, ok := firstByte(*c, depth); ok && cb != b {
+				// The child's keys all have byte cb: the key gets a range of
+				// its own, next to it.
+				nc := t.newChild(key, v, nl, depth)
+				rs := []rng{{0, *c}, {b, nc}}
+				if b < cb {
+					rs = []rng{{0, nc}, {cb, *c}}
+				}
+				*loc = rSplice(n, i, rs)
+				y := asR(*loc)
+				return t.created(&y.children()[y.index(b)])
+			}
+			par, pi, loc = loc, i, c
+			continue
+		}
+		par, inner = nil, true
 		c := findLoc(n, b)
 		if c == nil {
 			var slot **header
 			*loc, slot = addChild(n, b, leafHdr(nl(key, depth+1)))
 			t.size++
-			return slot
+			return spot{loc: slot}
 		}
 		loc, depth = c, depth+1
 	}
 }
 
+// pageable reports whether key may go into a page.
+func (t *Tree) pageable(key []byte) bool { return t.small && len(key) <= maxPageKey }
+
+// firstByte returns byte depth of every key below c, a child of a range
+// node, if they all share it: the byte of a leaf, or the first path byte of a
+// node. A page's keys may differ there.
+func firstByte(c *header, depth int) (byte, bool) {
+	switch {
+	case isLeaf(c.kind):
+		return asLeaf(c).from(depth)[0], true
+	case isPage(c.kind) || c.plen == 0:
+		return 0, false
+	}
+	return c.prefix[0], true
+}
+
+// newChild returns a new page holding key with the raw value v when the key
+// fits a page, else a new leaf made by nl, for a child at depth.
+func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc, depth int) *header {
+	switch {
+	case !t.pageable(key):
+		return leafHdr(nl(key, depth))
+	case len(key) <= 8:
+		p := newPage(0)
+		p.count, p.klen = 1, uint8(len(key))
+		p.heads()[0], p.vals()[0] = keyWord(key), v
+		return pageHdr(p)
+	}
+	return pageHdr(kPack([]item{{key: key, val: v}}))
+}
+
+// created counts the new key held by the child in slot loc, made by newChild.
+func (t *Tree) created(loc **header) spot {
+	t.size++
+	return spot{loc: loc, created: true}
+}
+
+// upsertPage handles a key whose descent reaches the page at *loc: the key is
+// there, or goes in, or the subtree is rebuilt with it (see build) because
+// the page is full or the key does not fit it.
+func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v uint64, nl newLeafFunc) spot {
+	p := asPage(*loc)
+	full := false // the key fits the page but for its room
+	if p.kind == kPageK {
+		i, found, match := p.kFind(key, depth)
+		switch {
+		case found:
+			return spot{loc: loc, i: i, depth: depth, par: par, pi: pi}
+		case match && t.pageable(key) && (p.count < p.kcap || int(p.class) < len(kCaps)-1):
+			if p.count == p.kcap {
+				p = p.kResize(int(p.class) + 1)
+				*loc = pageHdr(p)
+			}
+			p.kInsertAt(i, key, v)
+			t.size++
+			return spot{loc: loc, created: true}
+		}
+		full = match && t.pageable(key)
+	} else if len(key) == int(p.klen) {
+		w := keyWord(key)
+		i, ok := p.search(w)
+		switch {
+		case ok:
+			return spot{loc: loc, i: i, depth: depth, par: par, pi: pi}
+		case int(p.count) < pageCaps[len(pageCaps)-1]:
+			*loc = pageHdr(p.insertAt(i, w, v))
+			t.size++
+			return spot{loc: loc, created: true}
+		}
+		full = true
+	}
+	if full && par != nil && splitFull(loc, par, pi, depth) {
+		r := asR(*par)
+		i := r.index(key[depth])
+		return t.upsertPage(&r.children()[i], par, i, key, depth, v, nl)
+	}
+	it := item{key: key, val: v}
+	if !t.pageable(key) {
+		it = item{key: key, leaf: nl(key, depth)}
+	}
+	items := pageItems(p)
+	i, _ := slices.BinarySearchFunc(items, key, func(x item, k []byte) int { return bytes.Compare(x.key, k) })
+	t.replace(loc, par, pi, slices.Insert(items, i, it), depth)
+	t.size++
+	sp := t.upsert(key, v, nl) // finds the key in the rebuilt subtree
+	sp.created = true
+	return sp
+}
+
+// splitFull splits the full page at *loc, child pi of the range node at
+// *par, whose keys start at depth, at the byte boundary nearest its middle
+// (see ranges): the page keeps the keys before it and a new page takes the
+// others, with a range of its own. Unlike a rebuild, it copies half a page
+// and allocates one, and the keys keep their encoding: a K page's half keeps
+// the shared prefix, which its keys may share beyond. It reports false and
+// changes nothing when all keys share their byte at depth.
+func splitFull(loc, par **header, pi, depth int) bool {
+	p := asPage(*loc)
+	n := int(p.count)
+	at := p.byteAt(depth)
+	if at == nil || at(0) == at(n-1) {
+		return false // all keys share byte depth
+	}
+	m := n / 2
+	b, lo, hi := at(m), m, m
+	for lo > 0 && at(lo-1) == b {
+		lo--
+	}
+	for hi < n && at(hi) == b {
+		hi++
+	}
+	s := lo
+	if lo == 0 || (hi < n && hi-m < m-lo) {
+		s = hi
+	}
+	rb := at(s)
+	left, right := p.cut(s)
+	*par = rSplice(*par, pi, []rng{{0, pageHdr(left)}, {rb, pageHdr(right)}})
+	return true
+}
+
+// byteAt returns a function that returns byte depth of key i of p, below a
+// range node at depth, or nil if all its keys share that byte: a K page
+// whose shared prefix reaches beyond depth.
+func (p *pageHead) byteAt(depth int) func(i int) byte {
+	if p.kind == kPageK {
+		if int(p.base) != depth {
+			return nil
+		}
+		h := p.kHeads()
+		return func(i int) byte { return byte(h[2*i] >> 56) }
+	}
+	h, sh := p.keys(), 56-8*depth
+	return func(i int) byte { return byte(h[i] >> sh) }
+}
+
+// cut returns the page with the keys before s, or its smaller
+// replacement, and a new page with the keys from s on (see split, kSplit).
+func (p *pageHead) cut(s int) (*pageHead, *pageHead) {
+	if p.kind == kPageK {
+		return p.kSplit(s)
+	}
+	return p.split(s)
+}
+
+// replace puts items, the keys of the page at *at, in the page's place: as a
+// subtree (see build), or, for a page below a range node, as ranges that
+// take over the page's range (see ranges).
+func (t *Tree) replace(at, par **header, pi int, items []item, depth int) {
+	if par == nil {
+		*at = t.build(items, depth)
+		return
+	}
+	*par = rSplice(*par, pi, t.ranges(items, depth, nil))
+}
+
+// promote gives the key at sp, which has one value in its page, the leaf
+// l, which holds its key from sp.depth on and its values, and lets the subtree
+// around it fall back to inner nodes if keys with several values crowd it
+// (see settle).
+func (t *Tree) promote(sp spot, l *leafHead, key []byte) {
+	t.place(sp, l, key)
+	t.settle(key)
+}
+
+// place puts the leaf l of key, the key at sp, in the key's place. A page
+// cannot hold the leaf, so it gets a range of its own: the page is cut around
+// the key when the key is alone with its byte below a range node, else the
+// page's keys are rebuilt with the leaf in the key's place (see ranges), which
+// gives it a range or a subtree of its own.
+func (t *Tree) place(sp spot, l *leafHead, key []byte) {
+	p, i, n := asPage(*sp.loc), sp.i, int(asPage(*sp.loc).count)
+	if n == 1 {
+		*sp.loc = leafHdr(l) // the page held only this key
+		return
+	}
+	// Below a range node, a key alone with its byte gets a range of its own
+	// by cutting the page around it.
+	if at := p.byteAt(sp.depth); sp.par != nil && at != nil &&
+		(i == 0 || at(i-1) != at(i)) && (i == n-1 || at(i+1) != at(i)) {
+		b := at(i)
+		var after byte
+		if i < n-1 {
+			after = at(i + 1)
+		}
+		var rs []rng
+		if i > 0 {
+			var left *pageHead
+			left, p = p.cut(i)
+			rs = append(rs, rng{0, pageHdr(left)})
+		}
+		rs = append(rs, rng{b, leafHdr(l)})
+		if i < n-1 {
+			_, right := p.cut(1)
+			rs = append(rs, rng{after, pageHdr(right)})
+		}
+		*sp.par = rSplice(*sp.par, sp.pi, rs)
+		return
+	}
+	items := pageItems(p)
+	items[sp.i] = item{key: key, leaf: l}
+	t.replace(sp.loc, sp.par, sp.pi, items, sp.depth)
+}
+
 // splitLeaf handles an insert that reaches leaf l at depth: either it is the
-// key's leaf, or both keys go below a new node holding their common path. l
-// keeps its base and moves below the new node.
-func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, nl newLeafFunc) **header {
+// key's leaf, or both keys go below a new node holding their common path, a
+// range node in a tree with pages unless l is below an inner node. l keeps its
+// base and moves below the new node.
+func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uint64, nl newLeafFunc, inner bool) spot {
 	ls, rest := l.from(depth), key[depth:]
 	if len(key) == l.keyLen() && bytes.Equal(ls, rest) {
-		return loc
+		return spot{loc: loc}
 	}
 	p := swar.Lcp(ls, rest)
+	if t.small && !inner {
+		d := depth + p
+		return t.fork(loc, leafHdr(l), d == l.keyLen(), key, depth, d, v, nl)
+	}
 	nn := newNode(kN5, p)
 	storePath(nn, rest[:p])
 	h, _ := attachAt(nn, ls[p:], l)
 	h, slot := attachAt(h, rest[p:], nl(key, depth+p+min(1, len(rest)-p)))
 	*loc = h
 	t.size++
-	return slot
+	return spot{loc: slot}
 }
 
 // splitPrefix handles an insert whose key leaves n's compressed path after
-// mis bytes: a new node takes the common part, with n and the new leaf below.
-func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth int, nl newLeafFunc) **header {
+// mis bytes: a new node takes the common part, with n and the new key below,
+// a range node if n is one, else an inner node.
+func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth int, v uint64, nl newLeafFunc) spot {
 	var buf [pathBuf]byte
 	pk := appendPath(buf[:0], n) // a copy: n's path changes below
+	if isRange(n.kind) {
+		// Below a range node, n keeps the byte it branches on in its path.
+		return t.fork(loc, withPath(n, pk[mis:]), false, key, depth, depth+mis, v, nl)
+	}
 	nn := newNode(kN5, mis)
 	storePath(nn, pk[:mis])
 	h, _ := addChild(nn, pk[mis], withPath(n, pk[mis+1:]))
@@ -85,7 +339,33 @@ func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth i
 	h, slot := attachAt(h, rest, nl(key, depth+mis+min(1, len(rest))))
 	*loc = h
 	t.size++
-	return slot
+	return spot{loc: slot}
+}
+
+// fork puts a range node with the path key[depth:d] at *loc, in a tree with
+// pages, that holds old and the new key: old is a leaf whose key ends at d
+// (oend), or its keys continue with one byte at d, as the new key does unless
+// it ends there.
+func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d int, v uint64, nl newLeafFunc) spot {
+	path := key[depth:d]
+	if d == len(key) {
+		*loc = makeR(path, nl(key, d), []rng{{0, old}})
+		t.size++
+		return spot{loc: termSlot(*loc)}
+	}
+	nc := t.newChild(key, v, nl, d)
+	var term *leafHead
+	rs := []rng{{0, nc}}
+	if oend {
+		term = asLeaf(old)
+	} else if ob, _ := firstByte(old, d); key[d] < ob {
+		rs = append(rs, rng{ob, old})
+	} else {
+		rs = []rng{{0, old}, {key[d], nc}}
+	}
+	*loc = makeR(path, term, rs)
+	r := asR(*loc)
+	return t.created(&r.children()[r.index(key[d])])
 }
 
 // attachAt hangs leaf l below node h, where rest is l's key from h's child

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"maps"
+	"math/bits"
 	"math/rand/v2"
 	"slices"
 	"sort"
@@ -132,10 +133,13 @@ func (r reference) sortedKeys() []string {
 // values with a pointer get, and with set leaves, which all other values get.
 func TestAgainstReference(t *testing.T) {
 	str := func(v uint64) string { return fmt.Sprint("value ", v) }
-	for _, mode := range []int8{1, 2, -1, -2} {
+	for _, mode := range []int8{0, 1, 2, -1, -2} {
 		for name, keys := range keySets() {
 			t.Run(fmt.Sprintf("%s/leaves=%d", name, mode), func(t *testing.T) {
 				switch mode {
+				case 0:
+					againstReference(t, keys, &Map[uint64]{}, id) // with pages
+					uniqueAgainstReference(t, keys, &Map[uint64]{}, id)
 				case 1, -1:
 					againstReference(t, keys, &Map[uint64]{flat: mode}, id)
 				case 2:
@@ -170,6 +174,39 @@ func againstReference[T comparable](t *testing.T, keys [][]byte, m *Map[T], mk f
 					}
 					m.Add(k, mk(v))
 					ref.add(k, v)
+				}
+			}
+		}
+		compare(t, m, ref, mk, r)
+		checkInvariants(t, &m.t)
+	}
+}
+
+// uniqueAgainstReference is againstReference for keys that hold one value, as
+// they do in most maps, and a few that get a second one. It runs the pages of
+// a map of T through growing, splitting, promoting a key to a leaf, shrinking
+// and merging, and compares the map with the reference after each phase.
+func uniqueAgainstReference[T comparable](t *testing.T, keys [][]byte, m *Map[T], mk func(uint64) T) {
+	r := rand.New(rand.NewPCG(9, 10))
+	ref := reference{}
+	value := func(k []byte) uint64 { return uint64(len(k)*7+int(slices.Max(append([]byte{0}, k...)))) % 8 }
+	for phase := range 6 {
+		removing := phase%2 == 1
+		for _, k := range keys {
+			switch op := r.IntN(100); {
+			case removing && op < 50:
+				m.RemoveKey(k)
+				delete(ref, string(k))
+			case removing && op < 90:
+				m.Remove(k, mk(value(k)))
+				ref.remove(k, value(k))
+			case !removing || op < 95:
+				m.Add(k, mk(value(k)))
+				ref.add(k, value(k))
+				if r.IntN(40) == 0 {
+					w := 100 + uint64(r.IntN(3)) // a second value gives the key a leaf
+					m.Add(k, mk(w))
+					ref.add(k, w)
 				}
 			}
 		}
@@ -545,7 +582,7 @@ func checkInvariants(t *testing.T, tr *Tree) {
 		return
 	}
 	if n := checkNode(t, tr.root, nil); n != tr.size {
-		t.Fatalf("tree holds %d leaves, size says %d", n, tr.size)
+		t.Fatalf("tree holds %d keys, size says %d", n, tr.size)
 	}
 }
 
@@ -567,8 +604,12 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		checkLeaf(t, asLeaf(n), path)
 		return 1
 	}
+	if isPage(n.kind) {
+		return checkPage(t, asPage(n), path)
+	}
 	limits := map[kind][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
-		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256}}[n.kind]
+		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256},
+		kR8: {1, 8}, kR24: {rShrink[1] + 1, 24}, kR56: {rShrink[2] + 1, 56}, kR256: {rShrink[3] + 1, 256}}[n.kind]
 	count, term := int(n.count), termOf(n)
 	if n.kind == kN256 {
 		if n.count != 255 {
@@ -576,13 +617,20 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		}
 		count = int(asN256(n).total)
 	}
+	if isRange(n.kind) {
+		if n.count != 255 {
+			t.Fatalf("range node with header count %d, want 255", n.count)
+		}
+		count = int(asR(n).n)
+	}
 	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
 		t.Fatalf("kind %d holds %d children, allowed %d..%d", n.kind, count, lo, hi)
 	}
 	if count+b2i(term != nil) < 2 {
 		t.Fatalf("node does not branch (count %d, term %v): it should have collapsed", count, term != nil)
 	}
-	if s := slots(n); n.kind != kN256 {
+	if n.kind != kN256 && !isRange(n.kind) {
+		s := slots(n)
 		if count+b2i(term != nil) > len(s) {
 			t.Fatalf("kind %d holds %d children and a term in %d slots", n.kind, count, len(s))
 		}
@@ -609,6 +657,9 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 			t.Fatalf("term key of %d bytes does not end at depth %d", term.keyLen(), len(end))
 		}
 		leaves++
+	}
+	if isRange(n.kind) {
+		return leaves + checkRangeNode(t, n, end)
 	}
 	children, bytesOf := 0, -1
 	eachChild(n, func(b byte, c *header) {
@@ -650,13 +701,6 @@ func eachChild(n *header, fn func(byte, *header)) {
 	}
 }
 
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
 // kind back down through each smaller kind to nothing, collapsing and
 // re-merging compressed paths (short and longer than 12 bytes) on the way,
@@ -668,6 +712,7 @@ func TestShrinkAndCollapse(t *testing.T) {
 			t.Run(fmt.Sprintf("%q/%d", prefix, fan), func(t *testing.T) {
 				r := rand.New(rand.NewPCG(uint64(fan), 9))
 				var m Map[uint64]
+				leavesOnly(&m)
 				keys := [][]byte{[]byte(prefix)} // the term of the widest node
 				for b := range fan {
 					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
@@ -709,8 +754,8 @@ func TestShrinkAndCollapse(t *testing.T) {
 // short keys from a tiny alphabet (which maximises shared paths, splits and
 // merges), checking every result against the reference and the structural
 // invariants at the end. The same operations run on a map of uint64, whose
-// first byte's lowest bit chooses flat or set leaves, and on a map of strings,
-// whose second bit chooses typed or set leaves.
+// first byte's lowest bit chooses flat or set leaves and third bit pages, and
+// on a map of strings, whose second bit chooses typed or set leaves.
 func FuzzOperations(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
@@ -720,13 +765,16 @@ func FuzzOperations(f *testing.F) {
 		if len(ops) > 0 && ops[0]&1 == 1 {
 			m.flat = -1
 		}
+		if len(ops) > 0 && ops[0]&4 == 4 {
+			m = Map[uint64]{} // with pages
+		}
 		if len(ops) > 0 && ops[0]&2 == 2 {
 			s.flat = -1
 		}
 		str := func(v uint64) string { return fmt.Sprint("value ", v) }
 		ref := reference{}
 		for len(ops) >= 2 {
-			op, n := ops[0], int(ops[1]%6)
+			op, n := ops[0], int(ops[1]%24)
 			ops = ops[2:]
 			if len(ops) < n {
 				break
@@ -778,6 +826,7 @@ func TestLongPaths(t *testing.T) {
 				}
 				key := func(b int) []byte { return append(append(slices.Clip(common), byte(b)), "tail"...) }
 				var m Map[uint64]
+				leavesOnly(&m)
 				ref := reference{}
 				step := func(add bool, k []byte) {
 					if add {
@@ -815,4 +864,81 @@ func TestLongPaths(t *testing.T) {
 			})
 		}
 	}
+}
+
+// findLeaf returns the leaf of key in tr, or nil if the key is absent or lives
+// in a page.
+func findLeaf(tr *Tree, key []byte) *leafHead {
+	n, _ := tr.find(key)
+	if n == nil || !isLeaf(n.kind) {
+		return nil
+	}
+	return asLeaf(n)
+}
+
+// checkPage fails unless the keys of page p are strictly ascending and start
+// with path, the key bytes above the page, and returns their number.
+func checkPage(t *testing.T, p *pageHead, path []byte) int {
+	t.Helper()
+	if p.count == 0 || (p.kind == kPage && int(p.count) > pageCaps[p.class]) || (p.kind == kPageK && int(p.count) > int(p.kcap)) {
+		t.Fatalf("page of kind %d class %d holds %d keys", p.kind, p.class, p.count)
+	}
+	items := pageItems(p)
+	for i, it := range items {
+		if !bytes.HasPrefix(it.key, path) || len(it.key) > maxPageKey {
+			t.Fatalf("page key %q does not continue its path %q", it.key, path)
+		}
+		if i > 0 && bytes.Compare(items[i-1].key, it.key) >= 0 {
+			t.Fatalf("page keys %q and %q are not ascending", items[i-1].key, it.key)
+		}
+	}
+	return len(items)
+}
+
+// checkRangeNode checks the ranges of range node n, whose path ends at end, and
+// returns the number of keys below them: the first range starts at byte 0, the
+// starts and their counts agree, and every key below a range's child has its
+// byte at depth len(end) within the range.
+func checkRangeNode(t *testing.T, n *header, end []byte) int {
+	t.Helper()
+	r := asR(n)
+	rs := r.ranges()
+	if len(rs) != int(r.n) || rs[0].b != 0 {
+		t.Fatalf("range node of %d ranges, first at byte %d", len(rs), rs[0].b)
+	}
+	c := 0
+	for w := range r.before {
+		if int(r.before[w]) != c {
+			t.Fatalf("before[%d] = %d, want %d", w, r.before[w], c)
+		}
+		c += bits.OnesCount64(r.starts[w])
+	}
+	for i := int(r.n); i < rCaps[r.class()]; i++ {
+		if r.children()[i] != nil {
+			t.Fatalf("unused range slot %d is not empty", i)
+		}
+	}
+	keys := 0
+	for i, rg := range rs {
+		keys += checkNode(t, rg.c, end)
+		lo, hi := int(rg.b), 256
+		if i+1 < len(rs) {
+			hi = int(rs[i+1].b)
+		}
+		w := walker{path: slices.Clone(end)}
+		w.walk(rg.c, len(end))
+		for _, it := range w.out {
+			if len(it.key) <= len(end) || int(it.key[len(end)]) < lo || int(it.key[len(end)]) >= hi {
+				t.Fatalf("key %q below range [%d, %d) at depth %d", it.key, lo, hi, len(end))
+			}
+		}
+	}
+	return keys
+}
+
+// leavesOnly makes m hold every key in a leaf, as a map does that has no
+// pages, for the tests of the leaf layouts.
+func leavesOnly[T comparable](m *Map[T]) {
+	m.decide()
+	m.t.small = false
 }

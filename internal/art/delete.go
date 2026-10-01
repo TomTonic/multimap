@@ -4,89 +4,139 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// remove deletes the leaf of key and returns it, or nil if key is absent. rk
-// moves a leaf that takes the place of a node above it (see collapse).
-func (t *Tree) remove(key []byte, rk rekeyFunc) *leafHead {
-	l := del(&t.root, key, 0, rk)
-	if l != nil {
+// remove deletes key and reports whether it was there. rk moves a leaf that
+// takes the place of a node above it (see collapse).
+func (t *Tree) remove(key []byte, rk rekeyFunc) bool {
+	ok := del(&t.root, key, 0, rk)
+	if ok {
 		t.size--
 	}
-	return l
+	return ok
 }
 
-// del deletes the leaf of key from the subtree at *loc, whose compressed path
-// starts at key depth depth. On the way back up, every node on the path
-// shrinks to the smallest kind that fits and collapses when it no longer
-// branches, so the tree after a delete has the shape it would have had if the
-// key had never been inserted.
-func del(loc **header, key []byte, depth int, rk rekeyFunc) *leafHead {
+// del deletes key from the subtree at *loc, whose compressed path starts at
+// key depth depth, and reports whether it was there. On the way back up,
+// every node on the path shrinks to the smallest kind that fits and collapses
+// when it no longer branches, so the tree after a delete has the shape it
+// would have had if the key had never been inserted. Below a range node, a
+// range whose child is gone goes to its neighbour, and a page merges with a
+// neighbouring page once both are thin (see rMerge).
+func del(loc **header, key []byte, depth int, rk rekeyFunc) bool {
 	n := *loc
 	if n == nil {
-		return nil
+		return false
 	}
-	if isLeaf(n.kind) {
-		l := asLeaf(n)
-		if !l.matches(key) {
-			return nil
+	if n.kind <= kLastPage {
+		if isPage(n.kind) {
+			return delFromPage(loc, key, depth)
+		}
+		if !asLeaf(n).matches(key) {
+			return false
 		}
 		*loc = nil
-		return l
+		return true
 	}
 	pl := n.pathLen()
 	if pl != 0 && !pathMatches(n, pl, key, depth) {
-		return nil
+		return false
 	}
 	d := depth + pl
-	var l *leafHead
-	if d == len(key) {
+	switch {
+	case d == len(key):
 		// The term's key is the path to n, which key matched: it is key.
-		if l = termOf(n); l == nil {
-			return nil
+		if termOf(n) == nil {
+			return false
 		}
 		setTermSlot(n, nil)
-	} else {
+	case isRange(n.kind):
+		r := asR(n)
+		i := r.index(key[d])
+		c := &r.children()[i]
+		if !del(c, key, d, rk) {
+			return false
+		}
+		switch {
+		case *c == nil:
+			n = rRemove(n, i)
+		case isPage((*c).kind):
+			n = rMerge(n, i)
+		}
+	default:
 		b := key[d]
 		c := findLoc(n, b)
-		if c == nil {
-			return nil
-		}
-		if l = del(c, key, d+1, rk); l == nil {
-			return nil
+		if c == nil || !del(c, key, d+1, rk) {
+			return false
 		}
 		if *c == nil {
 			n = removeChild(n, b)
 		}
 	}
 	*loc = collapse(n, key, depth, d, rk)
-	return l
+	return true
 }
 
-// collapse replaces an inner node n at depth, whose path ends at d, that no
-// longer branches: without children it becomes its term leaf, and with a
-// single child and no term it merges into that child, whose compressed path
-// grows by n's path plus the child's byte. key is the key just deleted below
-// n, which agrees with every key below n up to d. It returns what should
-// stand in n's place.
+// delFromPage deletes key from the page at *loc, below which the nodes have
+// checked the key up to depth, and reports whether it was there.
+func delFromPage(loc **header, key []byte, depth int) bool {
+	p := asPage(*loc)
+	if p.kind == kPageK {
+		i, ok, _ := p.kFind(key, depth)
+		if ok {
+			*loc = pageHdr(p.kRemoveAt(i))
+		}
+		return ok
+	}
+	if len(key) != int(p.klen) {
+		return false
+	}
+	i, ok := p.search(keyWord(key))
+	if ok {
+		*loc = pageHdr(p.removeAt(i))
+	}
+	return ok
+}
+
+// collapse replaces an inner or range node n at depth, whose path ends at d,
+// that no longer branches: without children it becomes its term leaf, and with
+// a single child and no term it merges into that child, whose compressed path
+// grows by n's path plus the child's byte (which a range node's child already
+// starts with). key is the key just deleted below n, which agrees with every
+// key below n up to d. It returns what should stand in n's place.
 func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
-	switch {
-	case n.count == 0:
+	switch c := childCount(n); {
+	case c == 0:
 		// The node held only its term leaf. A node without a term never gets
 		// here: it collapsed when it fell to one child.
 		return leafHdr(lift(termOf(n), key[:d], depth, rk))
-	case n.count > 1 || termOf(n) != nil:
+	case c > 1 || termOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
-	if isLeaf(c.kind) {
+	if c.kind <= kLastPage {
+		if isPage(c.kind) {
+			return c // pages hold whole keys: they just move up
+		}
 		l := asLeaf(c)
 		if l.base() <= depth {
 			return c
 		}
-		return leafHdr(rk(l, key[:d], int(b), depth))
+		return leafHdr(rk(l, key[:d], b, depth))
 	}
 	var buf [pathBuf]byte // on the stack for the common short paths
-	p := append(appendPath(buf[:0], n), b)
+	p := appendPath(buf[:0], n)
+	if b >= 0 {
+		p = append(p, byte(b))
+	}
 	return withPath(c, appendPath(p, c))
+}
+
+// childCount returns the number of byte children of an inner node, or of ranges
+// of a range node.
+func childCount(n *header) int {
+	if isRange(n.kind) {
+		return int(asR(n).n)
+	}
+	return int(n.count)
 }
 
 // lift returns leaf l, whose key is k, ready to stand at depth: l itself if it
@@ -98,11 +148,16 @@ func lift(l *leafHead, k []byte, depth int, rk rekeyFunc) *leafHead {
 	return rk(l, k, -1, depth)
 }
 
-// onlyChild returns the single child of n. Only a 5-way node can fall to one
-// child: every larger kind shrinks into the next smaller one well before.
-func onlyChild(n *header) (byte, *header) {
+// onlyChild returns the single child of n and the byte it sits under, or -1
+// for a range node's child. Only a 5-way node or a range node of the smallest
+// class can fall to one child: every larger kind shrinks into the next smaller
+// one well before.
+func onlyChild(n *header) (int, *header) {
+	if isRange(n.kind) {
+		return -1, asR(n).children()[0]
+	}
 	x := asN5(n)
-	return x.keys[0], x.child[0]
+	return int(x.keys[0]), x.child[0]
 }
 
 // removeChild deletes the child under byte b, which must be present, and

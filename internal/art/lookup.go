@@ -11,6 +11,12 @@ import (
 type Tree struct {
 	root *header
 	size int
+	// Set by Map[T] before the first write: whether its values may go into
+	// pages (small and pointer-free, see pageType), and how to make the leaf of
+	// a key with one raw value, which a rebuild needs as a term and a key that
+	// gets a second value needs in place of its page entry.
+	small bool
+	mk    func(key []byte, base int, raw uint64) *leafHead
 }
 
 // Len returns the number of keys.
@@ -19,29 +25,33 @@ func (t *Tree) Len() int { return t.size }
 // Clear removes all keys.
 func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 
-// find returns the leaf of key, or nil.
+// find returns where key is: its leaf (with i = 0) or its page and its
+// position there, or nil.
 //
 // This is the hot path of every point operation. It is one loop over the
 // levels with every node search written out, so that the search helpers are
 // inlined and no call is made per level; that is why it is longer than the
 // project's usual function size.
-func (t *Tree) find(key []byte) *leafHead {
+func (t *Tree) find(key []byte) (*header, int) {
 	n := t.root
 	depth := 0
 	for n != nil {
-		if isLeaf(n.kind) {
+		if n.kind <= kLastPage {
+			if n.kind > kLastLeaf {
+				return findInPage(asPage(n), key, depth)
+			}
 			// The nodes have checked the key up to depth; the leaf holds the
 			// rest.
-			if l := asLeaf(n); l.matches(key) {
-				return l
+			if asLeaf(n).matches(key) {
+				return n, 0
 			}
-			return nil
+			return nil, 0
 		}
 		if n.plen != 0 {
 			pl := int(n.plen)
 			if !swar.Match8(&n.prefix, pl, key, depth) {
 				if pl = longMatch(n, key, depth); pl < 0 {
-					return nil
+					return nil, 0
 				}
 			}
 			depth += pl
@@ -49,7 +59,7 @@ func (t *Tree) find(key []byte) *leafHead {
 		if depth == len(key) {
 			t := termOf(n)
 			if t == nil {
-				return nil
+				return nil, 0
 			}
 			n = leafHdr(t)
 			continue
@@ -61,7 +71,7 @@ func (t *Tree) find(key []byte) *leafHead {
 			x := asN5(n)
 			i := swar.Index8(swar.Word(x.keys[:]), b)
 			if i >= int(x.count) {
-				return nil
+				return nil, 0
 			}
 			n = childAt(&x.child[0], i) // i < count <= 5
 		case kN12:
@@ -71,42 +81,67 @@ func (t *Tree) find(key []byte) *leafHead {
 				i = 8 + swar.Index8(swar.Word(x.keys[8:16]), b)
 			}
 			if i >= int(x.count) {
-				return nil
+				return nil, 0
 			}
 			n = childAt(&x.child[0], i) // i < count <= 12
 		case kN26:
 			x := asN26(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
 		case kN58:
 			x := asN58(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
-		default:
+		case kN256:
 			n = asN256(n).child[b]
+		default:
+			// A range node: the child checks byte b itself (see rnode.go).
+			depth--
+			x := asR(n)
+			n = *(**header)(unsafe.Add(unsafe.Pointer(x), rChildOff+ptrSize*uintptr(x.index(b))))
 		}
 	}
-	return nil
+	return nil, 0
+}
+
+// findInPage looks for key in page p, below which the nodes have checked the
+// key up to depth.
+func findInPage(p *pageHead, key []byte, depth int) (*header, int) {
+	if p.kind == kPageK {
+		if i, ok, _ := p.kFind(key, depth); ok {
+			return pageHdr(p), i
+		}
+	} else if len(key) == int(p.klen) {
+		if i, ok := p.search(keyWord(key)); ok {
+			return pageHdr(p), i
+		}
+	}
+	return nil, 0
 }
 
 // findSlot returns the slot that holds the leaf of key, which must be in the
-// tree. Writers use it to replace a leaf they have found. Since the key is
-// present, its paths need no checking: the descent only follows them.
+// tree and have a leaf. Writers use it to replace a leaf they have found.
+// Since the key is present, its paths need no checking: the descent only
+// follows them.
 func (t *Tree) findSlot(key []byte) **header {
 	loc, depth := &t.root, 0
 	for !isLeaf((*loc).kind) {
 		n := *loc
 		depth += n.pathLen()
-		if depth == len(key) {
+		switch {
+		case depth == len(key):
 			loc = termSlot(n)
-			continue
+		case isRange(n.kind):
+			x := asR(n)
+			loc = &x.children()[x.index(key[depth])]
+		default:
+			loc = findLoc(n, key[depth])
+			depth++
 		}
-		loc = findLoc(n, key[depth])
-		depth++
 	}
 	return loc
 }

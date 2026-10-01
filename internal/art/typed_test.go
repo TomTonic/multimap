@@ -65,7 +65,7 @@ func TestTypedLeafLife(t *testing.T) {
 		}
 		if n > 0 {
 			largest := typedCaps[len(typedCaps)-1]
-			l := m.t.find(key)
+			l := findLeaf(&m.t, key)
 			switch typed := l.kind != kSet; {
 			case n > largest && typed:
 				t.Fatalf("%d values in a typed leaf of class %d", n, l.cls())
@@ -103,7 +103,7 @@ func TestTypedLeafForgets(t *testing.T) {
 		m.Add(key, fmt.Sprint("value ", i))
 	}
 	m.Remove(key, "value 1")
-	l := m.t.find(key)
+	l := findLeaf(&m.t, key)
 	slots := unsafe.Slice((*string)(unsafe.Add(unsafe.Pointer(l), typedOff(int(l.klen)))), typedCaps[l.cls()])
 	if l.n != 4 || slots[4] != "" {
 		t.Fatalf("leaf holds %d values and %q after the last one moved, want 4 and nothing", l.n, slots[4])
@@ -228,11 +228,11 @@ func TestTypedLeafHovers(t *testing.T) {
 	var m Map[string]
 	key := []byte("key")
 	m.Add(key, "a")
-	if c := m.t.find(key).cls(); typedCaps[c] != 1 {
+	if c := findLeaf(&m.t, key).cls(); typedCaps[c] != 1 {
 		t.Fatalf("a key with one value has a leaf of room for %d", typedCaps[c])
 	}
 	m.Add(key, "b")
-	l := m.t.find(key)
+	l := findLeaf(&m.t, key)
 	if typedCaps[l.cls()] != typedCaps[minGrownTyped] {
 		t.Fatalf("a key with two values has a leaf of room for %d, want %d", typedCaps[l.cls()], typedCaps[minGrownTyped])
 	}
@@ -243,7 +243,7 @@ func TestTypedLeafHovers(t *testing.T) {
 		m.Remove(key, "c")
 		m.Remove(key, "d")
 		m.Add(key, "b")
-		if m.t.find(key) != l {
+		if findLeaf(&m.t, key) != l {
 			t.Fatal("a key that hovers within four values moved its leaf")
 		}
 	}
