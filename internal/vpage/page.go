@@ -28,15 +28,16 @@
 // page, which a rebuild chooses so that the slots and the heap fill up at about
 // the same time:
 //
-//	header 8 B | directory [cap]uint8 or [cap]uint32 | heads [cap]uint64 | vals [cap]uint64 | free | heap
+//	header 8 B | prefix | directory [cap]uint8 or [cap]uint32 | heads [cap]uint64 | vals [cap]uint64 | free | heap
 //
-// (the arrays start at a multiple of 8). Heads past count hold pad, so that the
+// (the prefix, which all keys of the page share, and the arrays start at a multiple of 8). Heads past count hold pad, so that the
 // ordered search, which inserts, deletes and scans use, can look at every slot
 // without a branch. The directory is read as words, so the page assumes a
 // little endian machine.
 package vpage
 
 import (
+	"encoding/binary"
 	"errors"
 	"math/bits"
 	"unsafe"
@@ -62,12 +63,12 @@ var ErrTooLong = errors.New("vpage: suffix longer than 255 bytes")
 
 // Page is the header of a page; the page itself is the object it starts.
 type Page struct {
-	kind  uint8 // reserved: the tree's kind byte
-	class uint8 // index into sizes
-	count uint8 // keys
-	cap   uint8 // slots in the arrays
-	ulen  uint8 // length of every suffix in the uniform flavor, else 0
-	_     uint8
+	kind  uint8  // reserved: the tree's kind byte
+	class uint8  // index into sizes
+	count uint8  // keys
+	cap   uint8  // slots in the arrays
+	ulen  uint8  // stored length of every suffix in the uniform flavor, else 0
+	plen  uint8  // length of the prefix all keys of the page share, stored once at the end
 	top   uint16 // start of the heap
 }
 
@@ -79,6 +80,9 @@ func (p *Page) Len() int { return int(p.count) }
 
 // Class returns the index of the page's class: 0 for 128 bytes, up to 3 for 1024.
 func (p *Page) Class() int { return int(p.class) }
+
+// PrefixLen returns the length of the prefix the page stores once.
+func (p *Page) PrefixLen() int { return int(p.plen) }
 
 // Uniform reports whether the page is of the uniform flavor.
 func (p *Page) Uniform() bool { return p.ulen != 0 }
@@ -96,37 +100,64 @@ func alloc(c int) *Page {
 	return (*Page)(unsafe.Pointer(new([128]uint64)))
 }
 
+// prefix returns the bytes all keys of the page start with; they follow the
+// header, in the first line, so that a lookup that has read the header has read
+// the prefix as well.
+func (p *Page) prefix() []byte { return p.mem()[hdr : hdr+int(p.plen)] }
+
+// dirAt is where the directory of a page with a prefix of plen bytes starts:
+// after the header and the prefix, at a multiple of 8.
+func dirAt(plen int) int { return hdr + (plen+7)&^7 }
+
+// strip returns suffix s without the page's prefix and 0. A suffix that does
+// not start with the prefix is not in the page: strip returns nil and -1 if it
+// sorts below all keys of the page, +1 if above them.
+func (p *Page) strip(s []byte) ([]byte, int) {
+	n := int(p.plen)
+	if n == 0 {
+		return s, 0
+	}
+	pre := p.prefix()
+	if len(s) >= n && string(s[:n]) == string(pre) {
+		return s[n:], 0
+	}
+	if compare(s[:min(len(s), n)], pre) < 0 {
+		return nil, -1
+	}
+	return nil, 1
+}
+
 func (p *Page) at(off int) unsafe.Pointer { return unsafe.Add(unsafe.Pointer(p), off) }
 
 // mem returns the whole object.
 func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class]) }
 
 // tags returns the directory of a uniform page: the tag of each key.
-func (p *Page) tags() []uint8 { return unsafe.Slice((*uint8)(p.at(hdr)), p.cap) }
+func (p *Page) tags() []uint8 { return unsafe.Slice((*uint8)(p.at(dirAt(int(p.plen)))), p.cap) }
 
 // fat returns the directory of a general page: for each key its tag, in the
 // low byte, the length of its suffix, and the offset of its tail.
-func (p *Page) fat() []uint32 { return unsafe.Slice((*uint32)(p.at(hdr)), p.cap) }
+func (p *Page) fat() []uint32 { return unsafe.Slice((*uint32)(p.at(dirAt(int(p.plen)))), p.cap) }
 
-// base is where the arrays of a page of capacity c start: after the header and
-// the directory, at a multiple of 8.
-func base(c int, uniform bool) int {
+// base is where the arrays of a page of capacity c and a prefix of plen bytes
+// start: after the header, the prefix and the directory, at a multiple of 8.
+func base(c int, uniform bool, plen int) int {
 	if uniform {
-		return (hdr + c + 7) &^ 7
+		return (dirAt(plen) + c + 7) &^ 7
 	}
-	return (hdr + 4*c + 7) &^ 7
+	return (dirAt(plen) + 4*c + 7) &^ 7
 }
 
 // heads and vals return the arrays, as long as the capacity.
 func (p *Page) heads() []uint64 {
-	return unsafe.Slice((*uint64)(p.at(base(int(p.cap), p.ulen != 0))), p.cap)
+	return unsafe.Slice((*uint64)(p.at(base(int(p.cap), p.ulen != 0, int(p.plen)))), p.cap)
 }
 func (p *Page) vals() []uint64 {
-	return unsafe.Slice((*uint64)(p.at(base(int(p.cap), p.ulen != 0)+8*int(p.cap))), p.cap)
+	return unsafe.Slice((*uint64)(p.at(base(int(p.cap), p.ulen != 0, int(p.plen))+8*int(p.cap))), p.cap)
 }
 
 // arraysEnd is the end of the arrays of a page of capacity c.
-func arraysEnd(c int, uniform bool) int { return base(c, uniform) + 16*c }
+func arraysEnd(c int, uniform bool, plen int) int { return base(c, uniform, plen) + 16*c }
 
 // entry makes the directory entry of a general page.
 func entry(t uint8, length int, off int) uint32 {
@@ -134,10 +165,13 @@ func entry(t uint8, length int, off int) uint32 {
 }
 
 // heapFree is the room between the arrays and the heap.
-func (p *Page) heapFree() int { return int(p.top) - arraysEnd(int(p.cap), p.ulen != 0) }
+func (p *Page) heapFree() int { return int(p.top) - arraysEnd(int(p.cap), p.ulen != 0, int(p.plen)) }
 
 // word returns the head word of suffix s: its first 8 bytes, zero padded.
 func word(s []byte) uint64 {
+	if len(s) >= headLen {
+		return binary.BigEndian.Uint64(s)
+	}
 	var w uint64
 	n := min(len(s), headLen)
 	for i := range n {
@@ -233,9 +267,23 @@ func compare(a, b []byte) int {
 }
 
 // find returns the position of suffix s and whether it is there, or the
-// position where it would go. In a uniform page a suffix of another length is
-// never there, but has a position, between the suffixes it shares a head with.
-func (p *Page) find(s []byte, w uint64) (int, bool) {
+// position where it would go, also for a suffix that does not start with the
+// page's prefix.
+func (p *Page) find(s []byte) (int, bool) {
+	rest, rel := p.strip(s)
+	switch rel {
+	case -1:
+		return 0, false
+	case 1:
+		return int(p.count), false
+	}
+	return p.findRest(rest, word(rest))
+}
+
+// findRest is find for a suffix without the prefix, whose head word is w. In a
+// uniform page a suffix of another length is never there, but has a position,
+// between the suffixes it shares a head with.
+func (p *Page) findRest(s []byte, w uint64) (int, bool) {
 	h := p.heads()
 	i := lower(h, w)
 	n := int(p.count)
@@ -253,12 +301,50 @@ func (p *Page) find(s []byte, w uint64) (int, bool) {
 	return i, false
 }
 
-// Get returns the value of suffix s.
+// maxFast is the longest prefix Get handles without a branch on its length.
+const maxFast = 3*headLen - 1
+
+// Get returns the value of suffix s. A page without a prefix, the common case
+// for integers, goes the short way. For a prefix of up to maxFast bytes Get
+// takes the head word of the stripped suffix and compares the prefix by
+// shifting and masking words, without a branch that depends on the length of the
+// page's prefix: such a branch, if the next page makes it go the other way,
+// would flush the lookups the CPU has started on other keys while this page was
+// loading.
 func (p *Page) Get(s []byte) (uint64, bool) {
-	if len(s) > maxSuffix {
+	plen := int(p.plen)
+	if len(s) > maxSuffix || len(s) < plen {
 		return 0, false
 	}
-	if i, ok := p.lookup(s, word(s)); ok {
+	rest, w := s, uint64(0)
+	switch {
+	case plen == 0:
+		w = word(s)
+	case plen > maxFast:
+		var rel int
+		if rest, rel = p.strip(s); rel != 0 {
+			return 0, false
+		}
+		w = word(rest)
+	default:
+		var ws [4]uint64 // the first 32 bytes of s as head words
+		for j := 0; j < 4 && headLen*j < len(s); j++ {
+			ws[j] = word(s[headLen*j:])
+		}
+		var diff uint64
+		for j := range 3 { // the prefix, a word at a time, the bytes past it masked off
+			pw := bits.ReverseBytes64(*(*uint64)(p.at(hdr + headLen*j)))
+			valid := uint(min(max(plen-headLen*j, 0), headLen))
+			diff |= (ws[j] ^ pw) & (^uint64(0) << (64 - 8*valid))
+		}
+		if diff != 0 {
+			return 0, false
+		}
+		k, r := plen/headLen, uint(plen%headLen)*8
+		w = ws[k]<<r | ws[k+1]>>(64-r)
+		rest = s[plen:]
+	}
+	if i, ok := p.lookup(rest, w); ok {
 		return p.vals()[i], true
 	}
 	return 0, false
@@ -276,14 +362,14 @@ const (
 // general page it compares the tags of two entries per word. It then checks the
 // head word, and the length and the tail, of the keys with that tag.
 func (p *Page) lookup(s []byte, w uint64) (int, bool) {
-	n, t := int(p.count), tag(w)
+	n, t, d := int(p.count), tag(w), dirAt(int(p.plen))
 	if p.ulen != 0 {
 		if len(s) != int(p.ulen) {
 			return 0, false
 		}
 		pat := uint64(t) * ones
 		for off := 0; off < n; off += 8 {
-			x := *(*uint64)(p.at(hdr + off)) ^ pat
+			x := *(*uint64)(p.at(d + off)) ^ pat
 			for m := (x - ones) & ^x & highs; m != 0; m &= m - 1 {
 				if i := off + bits.TrailingZeros64(m)>>3; i < n && p.heads()[i] == w {
 					return i, true
@@ -293,7 +379,7 @@ func (p *Page) lookup(s []byte, w uint64) (int, bool) {
 		return 0, false
 	}
 	for off := 0; off < 4*n; off += 8 {
-		x := *(*uint64)(p.at(hdr + off))
+		x := *(*uint64)(p.at(d + off))
 		if i := off / 4; uint8(x) == t && i < n && p.sameGeneral(i, uint32(x), s, w) {
 			return i, true
 		} else if uint8(x>>32) == t && i+1 < n && p.sameGeneral(i+1, uint32(x>>32), s, w) {
@@ -317,17 +403,19 @@ func (p *Page) sameGeneral(i int, e uint32, s []byte, w uint64) bool {
 	return string(p.mem()[off:off+l-headLen]) == string(s[headLen:])
 }
 
-// Key returns the suffix at position i; buf backs it.
+// Key returns the suffix at position i, with the page's prefix; buf backs it.
 func (p *Page) Key(i int, buf *[maxSuffix]byte) []byte {
+	pl := int(p.plen)
+	copy(buf[:], p.prefix())
 	l := p.length(i)
 	w := p.heads()[i]
 	for j := range min(l, headLen) {
-		buf[j] = byte(w >> (56 - 8*j))
+		buf[pl+j] = byte(w >> (56 - 8*j))
 	}
 	if l > headLen {
-		copy(buf[headLen:], p.tail(i))
+		copy(buf[pl+headLen:], p.tail(i))
 	}
-	return buf[:l]
+	return buf[:pl+l]
 }
 
 // Val returns the value at position i.

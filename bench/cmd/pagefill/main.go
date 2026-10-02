@@ -25,10 +25,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/internal/vpage"
@@ -49,18 +52,26 @@ func run(w io.Writer, args []string) error {
 	maxClass := fs.Int("maxclass", 2, "largest page class: 2 is 512 bytes, 3 is 1024")
 	splitFill := fs.Int("splitfill", vpage.SplitFill, "percent a half of a split page may fill")
 	byBytes := fs.Bool("splitbybytes", false, "split where the bytes are halved, not the count")
+	minPrefix := fs.Int("minprefix", vpage.MinPrefix, "shortest prefix a page stores once (above 255: none)")
+	minGain := fs.Int("mingain", vpage.MinGain, "bytes a prefix must save, after what it takes")
+	slack := fs.Int("slack", vpage.PrefixSlack, "bytes a rebuild keeps less than the keys share")
+	timing := fs.Int("timing", 0, "instead of the table, time build and churn (this many operations) with the prefix off and on")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	vpage.MaxClass, vpage.SplitFill, vpage.SplitByBytes = *maxClass, *splitFill, *byBytes
+	vpage.MinPrefix, vpage.MinGain, vpage.PrefixSlack = *minPrefix, *minGain, *slack
 	emit := func(format string, args ...any) error {
 		_, err := fmt.Fprintf(w, format+"\n", args...)
 		return err
 	}
-	if err := emit("chunk %d keys, largest class %d, split fill %d%%, split by bytes %v\n", *chunk, *maxClass, *splitFill, *byBytes); err != nil {
+	if err := emit("chunk %d keys, largest class %d, split fill %d%%, split by bytes %v, min prefix %d, min gain %d, slack %d\n", *chunk, *maxClass, *splitFill, *byBytes, *minPrefix, *minGain, *slack); err != nil {
 		return err
 	}
-	if err := emit("| kind | keys | suffix B | pages | keys/page | fill | uniform | page B/key | router B/key | total B/key | tail B/key | prefix B/key | too long |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"); err != nil {
+	if *timing > 0 {
+		return timings(w, strings.Split(*kindsF, ","), min(*n, 262144), *chunk, *timing)
+	}
+	if err := emit("| kind | keys | suffix B | pages | keys/page | fill | uniform | page B/key | router B/key | total B/key | tail B/key | prefix B/page | too long |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"); err != nil {
 		return err
 	}
 	for _, name := range strings.Split(*kindsF, ",") {
@@ -86,15 +97,6 @@ func lcp(a, b []byte) int {
 	return n
 }
 
-// sharedPrefix returns how many bytes all suffixes of page p share: those of its
-// first and last key.
-func sharedPrefix(p *vpage.Page) int {
-	var first, last [255]byte
-	a := p.Key(0, &first)
-	b := p.Key(p.Len()-1, &last)
-	return lcp(a, b)
-}
-
 // routerBytes is the size of the range node over a chunk of pages.
 func routerBytes(pages int) int {
 	switch {
@@ -108,28 +110,130 @@ func routerBytes(pages int) int {
 	return 2112
 }
 
-func measure(kind keys.Kind, n, chunk int) string {
+// model is the tree around the pages: the chunks of sorted keys, each with the
+// base its keys share and a run of pages below it.
+type model struct {
+	keys   [][]byte // in the random order of the corpus
+	bounds [][]byte // the first key of each chunk
+	bases  []int
+	runs   []vpage.Run
+}
+
+func newModel(kind keys.Kind, n, chunk int) *model {
 	c := keys.Generate(kind, n, 0x5EED)
 	sorted := keys.Sorted(c.Keys).B
-	bounds := make([][]byte, 0, n/chunk+1) // the first key of each chunk
-	bases := make([]int, 0, n/chunk+1)
+	m := &model{keys: c.Keys.B}
 	for i := 0; i < n; i += chunk {
 		end := min(i+chunk, n)
-		base := lcp(sorted[i], sorted[end-1]) // sorted: the first and last share what all share
-		bounds = append(bounds, sorted[i])
-		bases = append(bases, base)
+		m.bounds = append(m.bounds, sorted[i])
+		m.bases = append(m.bases, lcp(sorted[i], sorted[end-1])) // sorted: the first and last share what all share
 	}
-	runs := make([]vpage.Run, len(bounds))
-	var suffixBytes, tooLong int
-	for _, key := range c.Keys.B {
-		ci := sort.Search(len(bounds), func(i int) bool { return string(bounds[i]) > string(key) }) - 1
-		s := key[bases[ci]:]
-		if err := runs[ci].Insert(s, 1); err != nil {
+	m.runs = make([]vpage.Run, len(m.bounds))
+	return m
+}
+
+// chunk returns the chunk key belongs to.
+func (m *model) chunk(key []byte) int {
+	return sort.Search(len(m.bounds), func(i int) bool { return string(m.bounds[i]) > string(key) }) - 1
+}
+
+// insert adds key; it fails for a suffix a page cannot hold.
+func (m *model) insert(key []byte) error {
+	ci := m.chunk(key)
+	return m.runs[ci].Insert(key[m.bases[ci]:], 1)
+}
+
+// remove deletes key and reports whether it was there.
+func (m *model) remove(key []byte) bool {
+	ci := m.chunk(key)
+	return m.runs[ci].Delete(key[m.bases[ci]:])
+}
+
+// fill inserts all keys in random order into empty runs.
+func (m *model) fill() (suffixBytes, tooLong int) {
+	m.runs = make([]vpage.Run, len(m.bounds))
+	for _, key := range m.keys {
+		if err := m.insert(key); err != nil {
 			tooLong++
 			continue
 		}
-		suffixBytes += len(s)
+		suffixBytes += len(key) - m.bases[m.chunk(key)]
 	}
+	return suffixBytes, tooLong
+}
+
+// timings prints, for each kind, what building the pages and then churning
+// them (deleting a random key and putting it back) costs per operation with the
+// prefix off and with it on, and how many pages were built anew. The settings
+// alternate over three rounds and the fastest round counts. For diagnosis, not
+// a claim of speed.
+func timings(w io.Writer, kinds []string, n, chunk, ops int) error {
+	if _, err := fmt.Fprintf(w, "| kind | prefix | build ns/key | churn ns/op | rebuilds/1000 ops | by shrinking | with a new prefix | pages |\n|---|---|--:|--:|--:|--:|--:|--:|\n"); err != nil {
+		return err
+	}
+	on := vpage.MinPrefix
+	for _, name := range kinds {
+		kind := keys.Kind(name)
+		if !slices.Contains(keys.Kinds, kind) {
+			return fmt.Errorf("unknown key kind %q", name)
+		}
+		m := newModel(kind, min(n, keys.Capacity(kind)), chunk)
+		type res struct {
+			build, churn            time.Duration
+			rebuilds, shrinks, newp int
+			pages                   int
+		}
+		best := map[bool]res{}
+		for round := range 3 {
+			for _, prefix := range []bool{false, true} {
+				vpage.MinPrefix = 256
+				if prefix {
+					vpage.MinPrefix = on
+				}
+				runtime.GC()
+				t0 := time.Now()
+				m.fill()
+				build := time.Since(t0)
+				r := rand.New(rand.NewPCG(uint64(round), 9))
+				picks := make([][]byte, ops)
+				for i := range picks {
+					picks[i] = m.keys[r.IntN(len(m.keys))]
+				}
+				before := vpage.Counts
+				t0 = time.Now()
+				for _, k := range picks {
+					if m.remove(k) {
+						_ = m.insert(k)
+					}
+				}
+				churn := time.Since(t0)
+				pages := 0
+				for i := range m.runs {
+					pages += len(m.runs[i].Pages())
+				}
+				cur := res{build, churn, vpage.Counts.Rebuilds - before.Rebuilds, vpage.Counts.Shrinks - before.Shrinks, vpage.Counts.PrefixChanges - before.PrefixChanges, pages}
+				if b, ok := best[prefix]; !ok || cur.build+cur.churn < b.build+b.churn {
+					best[prefix] = cur
+				}
+			}
+		}
+		for _, prefix := range []bool{false, true} {
+			b := best[prefix]
+			if _, err := fmt.Fprintf(w, "| %s | %v | %.0f | %.0f | %.1f | %.1f | %.1f | %d |\n", kind, map[bool]string{false: "off", true: "on"}[prefix],
+				float64(b.build.Nanoseconds())/float64(len(m.keys)), float64(b.churn.Nanoseconds())/float64(ops),
+				1000*float64(b.rebuilds)/float64(ops), 1000*float64(b.shrinks)/float64(ops), 1000*float64(b.newp)/float64(ops), b.pages); err != nil {
+				return err
+			}
+		}
+	}
+	vpage.MinPrefix = on
+	return nil
+}
+
+func measure(kind keys.Kind, n, chunk int) string {
+	m := newModel(kind, n, chunk)
+	suffixBytes, tooLong := m.fill()
+	runs := m.runs
 	var pages, keysIn, size, used, tails, uniform, router, prefix int
 	for i := range runs {
 		ps := runs[i].Pages()
@@ -144,11 +248,11 @@ func measure(kind keys.Kind, n, chunk int) string {
 			if st.Uniform {
 				uniform++
 			}
-			prefix += (st.Keys - 1) * sharedPrefix(p)
+			prefix += p.PrefixLen()
 		}
 	}
 	f := func(x int) float64 { return float64(x) / float64(keysIn) }
 	return fmt.Sprintf("| %s | %d | %.1f | %d | %.1f | %.0f %% | %.0f %% | %.1f | %.1f | %.1f | %.1f | %.1f | %d |",
 		kind, keysIn, f(suffixBytes), pages, f(keysIn)*float64(keysIn)/float64(pages), 100*float64(used)/float64(size),
-		100*float64(uniform)/float64(pages), f(size), f(router), f(size+router), f(tails), f(prefix), tooLong)
+		100*float64(uniform)/float64(pages), f(size), f(router), f(size+router), f(tails), float64(prefix)/float64(pages), tooLong)
 }

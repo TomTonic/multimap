@@ -3,6 +3,8 @@ package vpage
 import (
 	"bytes"
 	"math/rand/v2"
+	"os"
+	"strconv"
 	"testing"
 )
 
@@ -10,6 +12,12 @@ import (
 // diagnosis: they say what a page costs to read and to change, and where its
 // lookup waits for memory. They are not claims of speed; the tree's own
 // benchmarks (cmd/bench, interleaved against a baseline) are.
+
+func init() { // VPAGE_MINPREFIX=256 runs the benchmarks without the page prefix, for comparison
+	if v := os.Getenv("VPAGE_MINPREFIX"); v != "" {
+		MinPrefix, _ = strconv.Atoi(v)
+	}
+}
 
 // workload is keys in pages, and the lookups to run against them.
 type workload struct {
@@ -215,9 +223,14 @@ func getTrace(p *Page, s []byte) (lines map[int]bool, rounds int, v uint64, ok b
 	if u {
 		stride = 1
 	}
-	read(0, hdr+8*((stride*n+7)/8))
+	pl := int(p.plen)
+	read(0, dirAt(pl)+8*((stride*n+7)/8)) // the header, the prefix and the directory
 	rounds = 1
-	if len(s) > maxSuffix || (u && len(s) != int(p.ulen)) {
+	if len(s) > maxSuffix {
+		return lines, rounds, 0, false
+	}
+	s, rel := p.strip(s)
+	if rel != 0 || (u && len(s) != int(p.ulen)) {
 		return lines, rounds, 0, false
 	}
 	w, t := word(s), tag(word(s))
@@ -227,10 +240,10 @@ func getTrace(p *Page, s []byte) (lines map[int]bool, rounds int, v uint64, ok b
 			continue
 		}
 		rounds = 2
-		read(base(c, u)+8*i, 8) // the head
-		if first {              // the value and the tail are read on speculation, while the head is compared
+		read(base(c, u, pl)+8*i, 8) // the head
+		if first {                  // the value and the tail are read on speculation, while the head is compared
 			first = false
-			read(base(c, u)+8*c+8*i, 8)
+			read(base(c, u, pl)+8*c+8*i, 8)
 		}
 		if !u && p.length(i) > headLen {
 			read(int(p.fat()[i]>>16), p.length(i)-headLen)

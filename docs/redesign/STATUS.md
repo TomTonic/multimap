@@ -1,33 +1,37 @@
 # Status
 
-## 2026-10-02 evening: step 1 done, waiting for gate 1
+## 2026-10-02 evening: step 1 done, page prefix built, waiting for the go for step 2
 
 The page prototype (`internal/vpage`, 100% coverage, fuzzed, race and lint clean) and its
 experiments are built and described in [step1-results.md](step1-results.md). It has a directory
 (the user's idea of a FAT) in the first line or two of the page: a tag byte per key, in general
 pages also the suffix length and the tail's offset. Every lookup takes **two dependent rounds**
-(directory; then head, value and tail together), against 3 to 4 before, and cold lookups in the
-microbenchmark got 23-44% faster (`u64` 157 ns, `uuid` 246, `path` 259; hot 9-14 ns).
+(directory; then head, value and tail together), against 3 to 4 before. In the microbenchmark
+(Ryzen, diagnosis only) cold lookups take `u64` 148 ns, `uuid` 212, `path` 247 (hot 6-12 ns).
 
-Memory against the leaves of `node-pages`: `street` -39..-46%, `str` -15..-24%, `email` -17..-22%,
-`uuid` -2%, `url` -3..-4%, but `path` +2..+6% and `u64` +2..+11% (the directory costs a byte a
-key). A page prefix (not built) would make `path` and `url` -7..-10%.
+**User's decisions (2026-10-02):** the rule R5 is restated as "at most two rounds of cache-line loads"
+(STRATEGY.md, with a precise definition of a round); the page prefix may be tried, with the worry that
+it costs too much in `churn`; commit and push at every valuable point without asking.
 
-Gate 1 as first written (memory not above leaves for any kind; at most two lines after the head)
-was not met for `path` and `u64`, and literally not for the lines of general pages (3 to 4 after
-the first), though they are read in one round.
+**The page prefix** (the bytes all keys of a page share, once, in the first line; chosen by a
+rebuild if it saves 16 bytes or more) is built. Against the leaves of `node-pages` the pages now
+need: `street` -42..-48%, `str` -23..-36%, `email` -17..-23%, `path` -11..-19%, `url` -8..-12%,
+`uuid` -2%, but `u64` +2..+11% (a byte a key for the directory). **Churn** in the page model with and
+without the prefix: -6% to +8%, build -3% to +7%, noise about 5%; the prefix changes in at most 12 of
+1000 operations. **Lookup:** a page without prefix is as fast as before (faster: a one-load head
+word), a page with one costs +2.7 ns hot (`path` 11.9 to 14.6), nothing cold, and absent keys get
+16% faster. The first versions of the prefix cost more (30-40% cold for `u64`, 5-20% in churn); the
+reasons and the repairs are in step1-results.md ("The page prefix").
 
-**User's decision (2026-10-02):** the rule is restated as "at most two rounds of cache-line loads"
-(R5 in STRATEGY.md, with a precise definition of a round). Continue with the page prefix, but its
-cost in `churn` is the user's worry and decides whether it stays (see below). `u64`'s 6-10% more
-memory is the price of 44% faster cold lookups. Commit and push at every valuable point: allowed
-without asking.
+Gate 1 as first written was not met for `u64` (memory) and, literally, for the lines of general
+pages; as restated (rounds) and with the prefix it is met for every kind except `u64`'s memory,
+which is the price of 40% faster cold lookups. **My recommendation:** go to step 2.
 
-**Next:** (1) page prefix in the prototype, measured for memory and for mutate cost (insert/delete
-and split/merge), kept only if `churn` does not pay for it; (2) step 2 gets a lookup gate, in
-plain words: after wiring the pages into the tree, point lookups of string keys at 16K-64K keys
-must reach at least 0.85 of `node-layout` (the microbenchmark has no tree above the pages, so it
-can promise nothing about that); if they do not, pages are used only for short suffixes.
+**Step 2 gets a lookup gate** (in plain words): the microbenchmark has no tree above the pages
+and loops over pages that are all in order, so it can promise nothing about a lookup in the tree.
+After the pages are wired in, point lookups of string keys at 16K-64K keys, measured against
+`node-layout` interleaved as always, must reach at least 0.85, else pages are used only for short
+suffixes. (0.85 is the credo's limit for any cell.)
 
 ## 2026-10-02 13:06: A/A job a1, gate 0 met
 

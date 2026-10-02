@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // TestRun makes sure that the page fill experiment reports a row for every key
@@ -44,9 +46,34 @@ func TestHelpers(t *testing.T) {
 	if got := lcp([]byte("ab"), []byte("abxy")); got != 2 {
 		t.Errorf("lcp of a prefix = %d, want 2", got)
 	}
+	// a suffix longer than a page holds is counted, not inserted
+	m := &model{keys: [][]byte{make([]byte, 300), []byte("ab")}, bounds: [][]byte{{}}, bases: []int{0}}
+	if bytes, tooLong := m.fill(); bytes != 2 || tooLong != 1 {
+		t.Errorf("fill = %d bytes, %d too long; want 2 and 1", bytes, tooLong)
+	}
 	for pages, want := range map[int]int{1: 128, 8: 128, 9: 256, 24: 256, 25: 512, 56: 512, 57: 2112} {
 		if got := routerBytes(pages); got != want {
 			t.Errorf("routerBytes(%d) = %d, want %d", pages, got, want)
 		}
+	}
+}
+
+// TestTimings makes sure that the churn experiment of the page prefix reports,
+// for each key kind, a row with the prefix off and one with it on, and counts
+// the pages built anew. It belongs to the page prototype (docs/redesign, PLAN
+// step 1), whose page prefix must not make `churn` dearer; the timings are for
+// diagnosis only, so the test checks the shape of the report, not the numbers.
+func TestTimings(t *testing.T) {
+	defer func(a, b, c int) { vpage.MinPrefix, vpage.MinGain, vpage.PrefixSlack = a, b, c }(vpage.MinPrefix, vpage.MinGain, vpage.PrefixSlack)
+	var out bytes.Buffer
+	if err := run(&out, []string{"-keys", "path", "-n", "20000", "-timing", "2000"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(rows) != 6 || !strings.HasPrefix(rows[4], "| path | off |") || !strings.HasPrefix(rows[5], "| path | on |") {
+		t.Fatalf("rows:\n%s", out.String())
+	}
+	if err := run(&out, []string{"-keys", "nope", "-timing", "10"}); err == nil {
+		t.Error("an unknown key kind was accepted by the timing run")
 	}
 }

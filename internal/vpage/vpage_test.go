@@ -37,6 +37,9 @@ var shapes = map[string]func(r *rand.Rand) []byte{
 		}
 		return append(b, rbytes(r, r.IntN(12), 26)...)
 	},
+	"deep": func(r *rand.Rand) []byte {
+		return append([]byte("/a/very/deep/directory/of/some/repository/"), rbytes(r, 1+r.IntN(6), 3)...)
+	},
 	"long":  func(r *rand.Rand) []byte { return rbytes(r, 200+r.IntN(56), 2) },
 	"zeros": func(r *rand.Rand) []byte { return make([]byte, r.IntN(12)) },
 	"any":   func(r *rand.Rand) []byte { return rbytes(r, r.IntN(maxSuffix+1), 256) },
@@ -52,13 +55,14 @@ func rbytes(r *rand.Rand, n, alphabet int) []byte {
 }
 
 // check fails the test if page p breaks an invariant of its layout: the keys
-// in order, the head words, tags and lengths matching the keys, the tails in the
-// heap and apart from each other, the unused heads padded.
+// in order, the head words, tags and lengths matching the keys without the
+// prefix, the tails in the heap and apart from each other, the unused heads
+// padded.
 func check(t *testing.T, p *Page) {
 	t.Helper()
-	n, c := int(p.count), int(p.cap)
-	if n == 0 || n > c || arraysEnd(c, p.ulen != 0) > int(p.top) || int(p.top) > p.Size() {
-		t.Fatalf("count %d, cap %d, arrays end %d, heap %d of %d", n, c, arraysEnd(c, p.ulen != 0), p.top, p.Size())
+	n, c, end := int(p.count), int(p.cap), p.Size()
+	if n == 0 || n > c || arraysEnd(c, p.ulen != 0, int(p.plen)) > int(p.top) || int(p.top) > end {
+		t.Fatalf("count %d, cap %d, arrays end %d, heap %d of %d", n, c, arraysEnd(c, p.ulen != 0, int(p.plen)), p.top, end)
 	}
 	for i := n; i < c; i++ {
 		if p.heads()[i] != pad {
@@ -70,7 +74,11 @@ func check(t *testing.T, p *Page) {
 	type span struct{ from, to int }
 	var spans []span
 	for i := range n {
-		k := p.Key(i, &buf)
+		full := p.Key(i, &buf)
+		if !bytes.HasPrefix(full, p.prefix()) {
+			t.Fatalf("key %d does not start with the prefix", i)
+		}
+		k := full[p.plen:]
 		if p.ulen != 0 && len(k) != int(p.ulen) {
 			t.Fatalf("key %d has %d bytes in a uniform page of %d", i, len(k), p.ulen)
 		}
@@ -78,14 +86,14 @@ func check(t *testing.T, p *Page) {
 		if p.heads()[i] != word(k) || got != tag(word(k)) {
 			t.Fatalf("key %d: head %x, word %x, tag %x, want %x", i, p.heads()[i], word(k), got, tag(word(k)))
 		}
-		if i > 0 && bytes.Compare(prevKey, k) >= 0 {
-			t.Fatalf("keys %d and %d are out of order: %x %x", i-1, i, prevKey, k)
+		if i > 0 && bytes.Compare(prevKey, full) >= 0 {
+			t.Fatalf("keys %d and %d are out of order: %x %x", i-1, i, prevKey, full)
 		}
-		prevKey = append(prev[:0], k...)
+		prevKey = append(prev[:0], full...)
 		if p.ulen == 0 && len(k) > headLen {
 			off := int(p.fat()[i] >> 16)
-			if off < int(p.top) || off+len(k)-headLen > p.Size() {
-				t.Fatalf("tail %d at %d..%d is outside the heap %d..%d", i, off, off+len(k)-headLen, p.top, p.Size())
+			if off < int(p.top) || off+len(k)-headLen > end {
+				t.Fatalf("tail %d at %d..%d is outside the heap %d..%d", i, off, off+len(k)-headLen, p.top, end)
 			}
 			spans = append(spans, span{off, off + len(k) - headLen})
 		}
@@ -216,7 +224,7 @@ func TestPageGrowth(t *testing.T) {
 	}{
 		{"uniform integers fill 29 slots of 512 bytes", func(i int) []byte { return []byte{0, 0, 0, 0, 0, 0, byte(i >> 8), byte(i)} }, 29, true, 2},
 		{"short keys of several lengths", func(i int) []byte { return bytes.Repeat([]byte{byte(i)}, 1+i%7) }, 20, false, 2},
-		{"suffixes with tails use the heap", func(i int) []byte { return []byte(fmt.Sprintf("a-suffix-with-a-tail-%03d", i)) }, 12, false, 2},
+		{"suffixes with tails use the heap", func(i int) []byte { return []byte(fmt.Sprintf("%03d-a-suffix-with-a-tail", i)) }, 12, false, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := New(0, 0)
@@ -489,7 +497,7 @@ func TestLayout(t *testing.T) {
 		}
 		for _, ulen := range []int{0, 1, 8} {
 			p := New(c, ulen)
-			if end := arraysEnd(int(p.cap), ulen != 0); end > int(p.top) || int(p.top) != size {
+			if end := arraysEnd(int(p.cap), ulen != 0, 0); end > int(p.top) || int(p.top) != size {
 				t.Errorf("class %d, ulen %d: arrays end at %d, heap at %d of %d", c, ulen, end, p.top, size)
 			}
 		}
@@ -499,16 +507,16 @@ func TestLayout(t *testing.T) {
 				if need(pl) > size {
 					continue
 				}
-				q := newPage(c, pl)
-				if int(q.cap) < n || arraysEnd(int(q.cap), false)+tails > size {
-					t.Fatalf("class %d, %d keys, %d bytes of tails: cap %d, arrays end %d", c, n, tails, q.cap, arraysEnd(int(q.cap), false))
+				q := newPage(c, pl, nil)
+				if int(q.cap) < n || arraysEnd(int(q.cap), false, 0)+tails > size {
+					t.Fatalf("class %d, %d keys, %d bytes of tails: cap %d, arrays end %d", c, n, tails, q.cap, arraysEnd(int(q.cap), false, 0))
 				}
 			}
 		}
 	}
 	for c := 1; c < 40; c++ {
-		if base(c, true)%8 != 0 || base(c, false)%8 != 0 || base(c, true) < hdr+c || base(c, false) < hdr+4*c {
-			t.Errorf("the arrays of capacity %d start at %d (uniform) and %d: not a multiple of 8, or inside the directory", c, base(c, true), base(c, false))
+		if base(c, true, 0)%8 != 0 || base(c, false, 0)%8 != 0 || base(c, true, 0) < hdr+c || base(c, false, 0) < hdr+4*c {
+			t.Errorf("the arrays of capacity %d start at %d (uniform) and %d: not a multiple of 8, or inside the directory", c, base(c, true, 0), base(c, false, 0))
 		}
 	}
 }
@@ -555,15 +563,91 @@ func TestStats(t *testing.T) {
 	for i := range 10 {
 		u, _, _ = u.Insert([]byte{0, 0, 0, 0, 0, 0, 0, byte(i)}, 1)
 	}
-	if got, want := u.Stats(), (Stats{Keys: 10, Size: 256, Used: arraysEnd(10, true), Uniform: true}); got != want {
+	// the keys share 7 bytes, but short suffixes have no tails to shorten: no prefix
+	if got, want := u.Stats(), (Stats{Keys: 10, Size: 256, Used: arraysEnd(10, true, 0), Uniform: true}); got != want {
 		t.Errorf("uniform page: %+v, want %+v", got, want)
+	}
+	// long keys with a long common prefix: a rebuild (as every growth of the page is) finds it
+	p := New(0, 0)
+	for i := range 10 {
+		p, _, _ = p.Insert([]byte(fmt.Sprintf("a/long/prefix/of/the/keys/%02d", i)), 1)
+	}
+	if p.PrefixLen() != 27 || p.Stats().Prefix != 27 {
+		t.Errorf("the page has a prefix of %d bytes, a rebuild would find %d, want 27", p.PrefixLen(), p.Stats().Prefix)
+	}
+	if l, r, _ := p.Split(); l.PrefixLen() != 27 || r.PrefixLen() != 27 || Merge(l, r).PrefixLen() != 27 {
+		t.Errorf("the halves and their merge have prefixes of %d, %d and %d bytes, want 27", l.PrefixLen(), r.PrefixLen(), Merge(l, r).PrefixLen())
 	}
 	g := New(1, 0)
 	for _, k := range []string{"short", "a-key-of-twenty-chars", "another-key-of-more-than-twenty"} {
 		g, _, _ = g.Insert([]byte(k), 1)
 	}
 	tails := (21 - headLen) + (31 - headLen)
-	if got, want := g.Stats(), (Stats{Keys: 3, Size: 256, Used: arraysEnd(3, false) + tails, Tails: tails}); got != want {
+	if got, want := g.Stats(), (Stats{Keys: 3, Size: 256, Used: arraysEnd(3, false, 0) + tails, Tails: tails}); got != want {
 		t.Errorf("general page: %+v, want %+v", got, want)
+	}
+}
+
+// TestSharedBy makes sure that a page finds the bytes its keys share, which it
+// can then store once. It belongs to the page prototype of the redesign
+// (docs/redesign, step 1), whose pages shorten the tails of long keys by a
+// prefix: a prefix that is too long would corrupt keys, one that is too short
+// wastes memory. The test builds pages of every shape of key and compares what
+// the page computes from its head words and tails, for the keys of a range of
+// positions with and without one more suffix, with the common prefix of the
+// keys written out in full.
+func TestSharedBy(t *testing.T) {
+	defer func(a, b int) { MinPrefix, MinGain = a, b }(MinPrefix, MinGain)
+	MinPrefix, MinGain = 1, 0
+	for name, gen := range shapes {
+		t.Run(name, func(t *testing.T) {
+			r := rand.New(rand.NewPCG(3, 4))
+			if name == "long" { // keys of 200 bytes and more leave room for one in a page
+				gen = func(r *rand.Rand) []byte { return rbytes(r, 100+r.IntN(20), 2) }
+			}
+			p := New(2, 0)
+			for range 50 { // fill a page, until it is full: a page of long keys holds two
+				q, res, _ := p.Insert(gen(r), 1)
+				if res == Full {
+					break
+				}
+				p = q
+			}
+			if p.Len() < 2 {
+				t.Fatalf("the page holds %d keys, want at least 2", p.Len())
+			}
+			var buf [maxSuffix]byte
+			full := func(i int) []byte { return bytes.Clone(p.Key(i, &buf)) }
+			for from := range p.Len() {
+				for to := from; to <= p.Len(); to++ {
+					for _, extra := range []bool{false, true} {
+						s := gen(r)
+						if extra && to > from && r.IntN(2) == 0 { // often share a long prefix with a key
+							k := full(from)
+							n := r.IntN(len(k) + 1)
+							s = append(k[:n:n], s...)
+							s = s[:min(len(s), maxSuffix)]
+						}
+						group := [][]byte{}
+						for i := from; i < to; i++ {
+							group = append(group, full(i))
+						}
+						if extra {
+							group = append(group, s)
+						}
+						want := 0
+						if len(group) >= 2 {
+							want = len(group[0])
+							for _, k := range group[1:] {
+								want = min(want, lcp(group[0], k))
+							}
+						}
+						if got := p.sharedBy(from, to, s, extra); got != want {
+							t.Fatalf("keys %d..%d, extra %v: shared %d bytes, want %d", from, to, extra, got, want)
+						}
+					}
+				}
+			}
+		})
 	}
 }

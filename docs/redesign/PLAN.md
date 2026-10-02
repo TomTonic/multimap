@@ -108,6 +108,9 @@ Wire the page of step 1 into the tree. It replaces the U8 pages.
 - the object statistic of every case.
 
 **Gate 2:**
+- **Lookup gate:** point lookups (`valuesFor`) of string keys at 16K-64K keys at least 0.85 of
+  `node-layout`, else pages only for short suffixes. (Step 1 measured pages alone; this is the first
+  time they sit below a tree.)
 - Credo 1 and 2 for every key kind with one value per key. Ranges at least `btree-map`, memory
   at most `btree-map`. That closes the str, uuid, email, url, path and street gap.
 - No cell below 0.85 against `node-layout` (credo 3), 4K and 16K included.

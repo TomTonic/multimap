@@ -105,18 +105,23 @@ It never holds a pointer per key and never a separate copy of a key. Starting po
 layout of a pointer-free page (the prototype in PLAN step 1 settles it):
 
 ```
-line 0 (128 B): head 16 B  kind, class, count, shared-prefix length, heap top, stale, bloom (8 B)
-                heads      first 8 suffix bytes of each key, big endian (fences + blocks as now)
-lines 1..:      more heads, then per key: suffix length, heap offset, value count
-                values     one word per value
-                heap       suffix bytes beyond the first 8, growing down from the end
+header 8 B      kind, class, count, capacity, uniform length, prefix length, heap top
+prefix          the bytes all keys of the page share, padded to 8 (only if it saves 16 B or more)
+directory       one entry per key, in key order: a tag byte (uniform page) or tag, suffix
+                length and tail offset, 4 B (general page); in the first line or two
+heads           the first 8 suffix bytes of each key, big endian, zero padded; sorted
+values          one word per key
+heap            the suffix bytes beyond the first 8, growing down from the end
 ```
+
+(The layout of the prototype, `internal/vpage`; see docs/redesign/step1-results.md.)
 
 What follows from this layout:
 
-- **A key costs its suffix bytes plus about 11 bytes.**
-- **Lookup:** search the heads (line 0, maybe line 1), then compare the tail and read the value.
-  Both are usually in one more line of the same object.
+- **A key costs its suffix bytes plus about 12 bytes** (17 in all for an integer key), less what the
+  prefix saves.
+- **Lookup:** compare the key's tag with all tags of the directory (first line or two), then read
+  head, value and tail, which are independent, in one round: two rounds in all (R5).
 - **A key that ends where the page starts** (today a node's term leaf) is an entry with an empty
   suffix.
 - **The rule "the first key fixes the page key length" disappears.**
