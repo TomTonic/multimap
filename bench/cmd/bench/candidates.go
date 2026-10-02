@@ -28,9 +28,10 @@ func (f *fixture) candidate(op, impl string) rtcompare.Candidate {
 	return rtcompare.Candidate{Name: impl, Batch: b}
 }
 
-// valuesFor iterates over all values of a random existing key.
+// valuesFor iterates over all values of a random existing key, in the order
+// of the corpus's Probes.
 func (f *fixture) valuesFor(impl string) func(uint64) {
-	p, j := f.c.Hits, 0
+	p, j := f.c.Probes, 0
 	switch impl {
 	case ordered:
 		m := f.ord

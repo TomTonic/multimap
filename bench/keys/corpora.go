@@ -111,5 +111,5 @@ func fromList(all []string, natural [][]uint64, n int, rng *rtcompare.DPRNG) Cor
 	}
 	hits := append([][]byte(nil), keys...)
 	shuffle(hits, rng)
-	return Corpus{Keys: Pack(keys), Hits: Pack(hits), Misses: Pack(misses), Natural: nat}
+	return Corpus{Keys: Pack(keys), Hits: Pack(hits), Misses: Pack(misses), Natural: nat}.withProbes(hits, rng)
 }

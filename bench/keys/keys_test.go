@@ -160,3 +160,54 @@ func TestURL(t *testing.T) {
 		t.Fatalf("%d hosts, the top one holds %d of %d keys", len(perHost), top, len(c.Keys.S))
 	}
 }
+
+// TestProbes makes sure the point-query benchmarks look up keys in an order that
+// a branch predictor cannot learn. It belongs to the benchmark's key corpora: a
+// probe sequence as long as the corpus repeats every n lookups, and at a few
+// thousand keys the predictor learns the cycle, which favours the code with
+// fewer branches over the code with more (docs/redesign, step 0). A corpus
+// therefore offers ProbeLen probes, random picks from its keys when it holds
+// fewer, and its own hits when it holds at least that many.
+func TestProbes(t *testing.T) {
+	t.Run("gives ProbeLen random picks from the keys of a small corpus", func(t *testing.T) {
+		for _, kind := range []Kind{U64, Str, Street} {
+			c := Generate(kind, 100, 42)
+			if len(c.Probes.B) != ProbeLen || len(c.Probes.S) != ProbeLen {
+				t.Fatalf("%s: %d probes, want %d", kind, len(c.Probes.B), ProbeLen)
+			}
+			keys := map[string]int{}
+			for _, k := range c.Keys.S {
+				keys[k] = 0
+			}
+			for _, p := range c.Probes.S {
+				n, ok := keys[p]
+				if !ok {
+					t.Fatalf("%s: probe %q is not a key", kind, p)
+				}
+				keys[p] = n + 1
+			}
+			for k, n := range keys {
+				if n < ProbeLen/100/3 { // a third of the mean: all keys are probed about equally often
+					t.Fatalf("%s: key %q is probed %d times of %d", kind, k, n, ProbeLen)
+				}
+			}
+			if again := Generate(kind, 100, 42); !slices.Equal(again.Probes.S, c.Probes.S) {
+				t.Fatalf("%s: the same seed gave other probes", kind)
+			}
+		}
+	})
+	t.Run("does not repeat within ProbeLen probes", func(t *testing.T) {
+		c := Generate(U64, 4096, 7)
+		for _, period := range []int{4096, 8192, 65536} { // the periods of a cycle over the keys
+			if slices.Equal(c.Probes.S[:period], c.Probes.S[period:2*period]) {
+				t.Errorf("the probes repeat after %d", period)
+			}
+		}
+	})
+	t.Run("is the order of the hits for a corpus of at least ProbeLen keys", func(t *testing.T) {
+		c := Generate(U64, ProbeLen, 3)
+		if len(c.Probes.S) != ProbeLen || !slices.Equal(c.Probes.S, c.Hits.S) {
+			t.Errorf("%d probes, equal to the hits: %v", len(c.Probes.S), slices.Equal(c.Probes.S, c.Hits.S))
+		}
+	})
+}

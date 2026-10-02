@@ -119,8 +119,15 @@ func Capacity(kind Kind) int {
 
 // Corpus holds the inserted keys and disjoint miss keys.
 type Corpus struct {
-	Keys   Set // in insertion order (random)
-	Hits   Set // all keys again, in an independent random order
+	Keys Set // in insertion order (random)
+	Hits Set // all keys again, in an independent random order
+	// Probes are the keys the point-query benchmarks look up, in a random order
+	// that repeats only after ProbeLen probes: Hits if the corpus holds that
+	// many keys, else ProbeLen random picks from the keys. A sequence of just n
+	// probes, which a corpus of n keys would give, repeats every n lookups and
+	// at a few thousand keys a branch predictor learns it, which favours code
+	// with few branches over code with many (see docs/redesign, step 0).
+	Probes Set
 	Misses Set // same distribution, none of them present
 	// Natural holds the values each key of Keys has in the real world, for
 	// kinds that have them (Street: its localities, numbered from 1), else nil.
@@ -156,7 +163,7 @@ func Generate(kind Kind, n int, seed uint64) Corpus {
 	misses := draw()
 	hits := append([][]byte(nil), keys...)
 	shuffle(hits, &rng)
-	return Corpus{Keys: Pack(keys), Hits: Pack(hits), Misses: Pack(misses)}
+	return Corpus{Keys: Pack(keys), Hits: Pack(hits), Misses: Pack(misses)}.withProbes(hits, &rng)
 }
 
 func generator(kind Kind, rng *rtcompare.DPRNG) func() []byte {
@@ -220,6 +227,24 @@ func words(rng *rtcompare.DPRNG, n int) []string {
 		out[i] = string(w)
 	}
 	return out
+}
+
+// ProbeLen is the number of probes after which Corpus.Probes repeats, at least.
+const ProbeLen = 1 << 18
+
+// withProbes sets c.Probes (see there): hits, in their order, if c holds at
+// least ProbeLen keys, else ProbeLen random picks of hits.
+func (c Corpus) withProbes(hits [][]byte, rng *rtcompare.DPRNG) Corpus {
+	if len(hits) >= ProbeLen {
+		c.Probes = c.Hits
+		return c
+	}
+	picks := make([][]byte, ProbeLen)
+	for i := range picks {
+		picks[i] = hits[rng.Uint64()%uint64(len(hits))]
+	}
+	c.Probes = Pack(picks)
+	return c
 }
 
 func shuffle(k [][]byte, rng *rtcompare.DPRNG) {
