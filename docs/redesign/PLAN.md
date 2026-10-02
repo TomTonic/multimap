@@ -34,37 +34,34 @@ decides to merge.
   last step's commit is the reference for diagnosis (`-vs baseline`). The competitors are the
   reference for credo 1 and 2.
 
-## Step 0: groundwork
+## Step 0: groundwork (done 2026-10-02, waiting for the gate)
 
-1. **Object statistic as a tool.**
-   - Add a method that walks every object of an `art.Map` and reports its label, size and
-     whether it holds pointers. The prototype is in [prototype/](prototype/): `zobjstat.go.txt`
-     for `internal/art`, `objstat-main.go.txt` for `bench/cmd/objstat`.
-   - Add `bench/cmd/objstat`, which prints the table of
-     [objstat-node-pages.md](objstat-node-pages.md) for every bench case. Include the corpus
-     maximum for `path` (300 000) and `street` (212 449).
-   - Write tests, so that `internal/art` stays at 100%.
-   - Copy its Go size-class table from the runtime of the Go version in `go.mod`, and state the
-     version.
-2. **Probe order of `valuesFor`.**
-   - Replace the cycle of length n by a long random sequence: 262 144 independent picks of the
-     hit keys, for every n. This is what the experiment `n3-lp` did locally.
-   - Document it in `bench/README.md`: numbers before and after the change are not comparable.
-3. **arm64 job queue.** Build `bench/remote/queue.txt` and `bench/remote/arm-run.sh` as
-   specified in MEASURING.md.
-   - Test the runner on Linux (WSL) with a dry-run flag that skips the bench.
-   - Write a short how-to for the user at the top of the script.
-   - First real job, after the user's go-ahead: an A/A run (`node-pages` against itself, u64 and
-     str, 4K and 16K) to validate the arm64 machine as a measuring instrument.
-4. **Test run time.** On 2026-10-02 `go test ./... -race -cover` for `internal/art` exceeded the
-   default 10-minute timeout of `go test`. The cause is in [STATUS.md](STATUS.md). The full test
-   suite must run under the default timeout, so that CI and `go test ./... -race` work without
-   flags.
+1. **Object statistic as a tool.** `art.Map.Objects` (`internal/art/objects.go`) walks every
+   object of a tree and reports label, size, whether it holds pointers, and the keys it holds;
+   `art.Block` turns a size into the block the Go allocator takes. Tests compare both with the
+   runtime (`TestBlock`, `TestObjectSizes`) and check that the objects account for every key
+   (`TestObjects`). `bench/cmd/objstat` prints the table of
+   [objstat-node-pages.md](objstat-node-pages.md) for every bench case, at the corpus maximum for
+   `path` and `street`. **Every new object kind of the redesign needs a case in `object()`**;
+   `TestObjects` and the tool's check that the objects hold all keys fail without one.
+2. **Probe order of `valuesFor`.** `keys.Corpus.Probes` is the hits for corpora of 262 144 keys
+   and more, else 262 144 random picks of the keys. `valuesFor` uses it. Documented in
+   `bench/README.md`: `valuesFor` numbers at 4K and 16K from before are not comparable.
+3. **arm64 job queue.** `bench/remote/queue.txt` and `bench/remote/arm-run.sh`, see
+   MEASURING.md. Tested with a dry-run test (`bench/remote`) and once end to end on Linux
+   against a local bare repository, with and without a baseline. Not yet tried on macOS.
+4. **Test run time.** Under the race detector the key sets of `TestAgainstReference` are a tenth
+   of their size and the 64K-path set runs in two leaf modes only (`race_on_test.go`,
+   `race_off_test.go`). `go test ./... -race` takes 3.5 minutes instead of more than 20, with
+   100% coverage in both modes.
 
 **Gate 0:**
 - The user has reviewed the tool, the probe order and the runner.
-- The object statistic of `node-pages` is reproduced and committed as the starting point.
-- The arm64 A/A run is between 0.97 and 1.03, or its deviation is explained.
+- The object statistic of `node-pages` is reproduced and committed as the starting point (done:
+  `objstat-node-pages.md`, produced by the tool).
+- The arm64 A/A run (`node-pages` against itself, u64 and str, 4K and 16K) is between 0.97 and
+  1.03, or its deviation is explained. This needs the tools committed and pushed first, and the
+  user starting the job.
 
 ## Step 1: prototype the page for variable keys (isolated)
 

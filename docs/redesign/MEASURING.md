@@ -87,31 +87,41 @@ Useful flags:
 
 ## arm64 via a git job queue
 
-The user has an arm64 machine (128-byte cache lines) that they use for other work during the
-day. They start single jobs there by hand. Nothing runs without them. The sync goes through
-git; PLAN step 0 builds it.
+The user has an arm64 machine: a MacBook with an M1 Pro (8 performance and 2 efficiency cores,
+16 GB, macOS, 128-byte cache lines). They use it for other work during the day and start single
+jobs by hand. Nothing runs without them. The sync goes through git.
 
-- **Queue:** `bench/remote/queue.txt` on the working branch. One job per line:
-  `<id> <ref> <baseline-ref or -> <duration-minutes> <bench arguments>`, for example
-  `a1 cacheline-s1 node-pages 90 -suite dev -keys u64,str,uuid -vs baseline`. With a baseline
-  ref the runner calls `mkbaseline -ref <baseline-ref>` and builds with tag `baseline`.
-  The agent appends jobs, commits and pushes (with the user's consent).
-- **Runner:** `bench/remote/arm-run.sh [id]`, for macOS (arm64) and Linux arm64, started by the
-  user. With no id it picks the first job that has no result yet. Steps:
-  1. `git fetch`; check out the job's ref in a separate worktree;
-  2. run `mkbaseline` if the job names a baseline ref;
-  3. print the duration and expected end;
-  4. run the bench under `caffeinate -i` (macOS) and `nice`;
-  5. write the results and an `env.txt` (`uname -a`, CPU model, cache line size via
-     `sysctl hw.cachelinesize` or `getconf LEVEL1_DCACHE_LINESIZE`, Go version, power source)
-     into `<id>/` on branch `arm-results`;
-  6. commit and push that branch.
+- **Queue:** `bench/remote/queue.txt` on the working branch (`cacheline`). One job per line:
+  `<id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] <arguments of cmd/bench>`, for
+  example `a1 <commit> <baseline-commit> 90 -suite dev -keys u64,str -sizes 4096,16384 -vs baseline
+  -minprocs 4 -maxprocs 8 -skipmem`. Refs are commits, so that a job means the same thing when it
+  is run later. With a baseline ref the runner calls `mkbaseline -ref <baseline-ref>` and builds
+  with the tag `baseline`. The agent appends jobs, commits and pushes (with the user's consent).
+- **Runner:** `bench/remote/arm-run.sh [id]`, run by the user in their clone, on macOS or Linux
+  arm64. Its header is the user's how-to. With no id it picks the first job with no result.
+  `--list` shows the queue, `--dry-run` shows what it would do. Steps:
+  1. fetch the remote, read the queue from `origin/cacheline`;
+  2. print the machine, the duration and the expected end, and warn about battery power and a
+     high load (and ask, unless `--yes`);
+  3. build the job's commit in a temporary worktree (the user's working tree is not touched),
+     with the baseline if the job names one;
+  4. run the bench under `caffeinate -i` on macOS, with the output also on the terminal;
+  5. write the results, `env.txt` (system, CPU, performance cores, memory, cache line size from
+     `sysctl hw.cachelinesize` or `getconf LEVEL1_DCACHE_LINESIZE`, Go version, power source, load
+     before and after), `args.txt`, `run.log` and a `DONE` marker into `<id>/` on the branch
+     `arm-results`, commit it and push that branch.
 - **Evaluation:** the agent runs `git fetch origin arm-results` and reads the results like the
-  Windows ones. Every arm64 claim names the machine.
-- **When to run:** jobs should take at most 2-3 h, so that a lunch break or an evening fits one.
-  Results from a machine in use are invalid. The runner warns if the user is active (load
-  average) and says so in `env.txt`.
-- **Prerequisites** on the arm64 machine:
-  - Go at the version in `go.mod`;
-  - a clone of the repository with push rights;
-  - for Linux, `nice` and `getconf`.
+  Windows ones: `git show origin/arm-results:<id>/bench-out/speed-summary.md`. Every arm64 claim
+  names the machine (`env.txt`).
+- **Limits of this machine:**
+  - 16 GB: a process at 1M keys holds 4-5 GB, so no 1M keys on this machine and no memory phase
+    beyond 256K (`-memn 262144`).
+  - Eight performance cores: `-maxprocs 8` at most. macOS cannot pin processes, so the two
+    efficiency cores may take a process. The A/A job (PLAN, gate 0) shows how large that noise
+    is. Results with a deviation above 3% in the A/A job are to be read with care.
+  - It runs on power only and idle: the runner warns about battery and load.
+- **When to run:** jobs take at most 2-3 h, so that a lunch break or an evening fits one. Results
+  from a machine in use are invalid.
+- **Prerequisites** on the arm64 machine: Go at the version in `go.mod`, a clone of the repository
+  with push rights, and nothing else running. The runner is tested on Linux only; the macOS
+  branches (`sysctl`, `pmset`, `caffeinate`, `date -v`) are untested until the first job.
