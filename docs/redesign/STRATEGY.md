@@ -35,7 +35,7 @@ Rules that follow, binding for every object the tree allocates:
 | R2 64 bytes | Only for anomalous inner nodes, such as chains of path bytes in file paths. Never for pages, leaves or the objects of small maps. |
 | R3 alignment | Use Go size classes that are multiples of 128. Up to 512 bytes they are aligned to their size. Objects with pointers above 512 bytes get an 8-byte malloc header and lose alignment, so they are allowed only for the 256-way nodes (N256, R256): rare, at the top of the tree, and always hot. |
 | R4 no object per key | A key never gets an object of its own. Keys live, many to an object, in pages. The only per-key objects are the value sets of keys with many values (R6). |
-| R5 lines per lookup | Inside an object, a lookup decides in the first 128 bytes and reads its payload in at most one more line of the same object. |
+| R5 lines per lookup | Inside an object, a lookup decides in the first 128 bytes (if possible in its first 64 bytes) and reads its payload in at most one more line of the same object. |
 | R6 values | A key's few values sit next to it in the page. Many values go to a value object built from 128- or 256-byte blocks. |
 
 The object statistic (`objstat`, see PLAN step 0) is the measure of these rules. Target: 100% of
