@@ -147,15 +147,16 @@ else
 	power="not checked"
 fi
 machine=${ARM_MACHINE:-${cpu:-arm64} ${mem}GB $os}
-load() { uptime | sed 's/.*load averages*: *//'; }
+load() { LC_ALL=C uptime | sed 's/.*load averages*: *//'; }
 
 # when prints the clock time in $1 minutes.
 when() { date -v+"$1"M '+%H:%M' 2>/dev/null || date -d "+$1 minutes" '+%H:%M'; }
 
 warn=""
 case "$power" in *Battery*) warn="$warn the machine runs on battery;" ;; esac
-load1=$(load | awk -F'[ ,]+' '{print int($1)}')
-if [ "${load1:-0}" -ge 3 ]; then warn="$warn the load average is $(load);"; fi
+# a machine that was busy a moment ago is not at rest, whatever it does now
+if [ "$(load | awk -F'[ ,]+' '{ print ($1 >= 2 || $2 >= 3) ? 1 : 0 }')" = 1 ]; then warn="$warn the load average is $(load);"; fi
+load_before=$(load)
 
 echo "machine:   $machine (cache line $line_size B, $perf performance cores of $cores, power: $power)"
 echo "job:       $id  ref $ref  baseline $base  tags '${tags:-none}'"
@@ -204,6 +205,9 @@ git worktree add -q --detach "$tmp/src" "$sha"
 	if [ -n "$basesha" ]; then go run ./cmd/mkbaseline -ref "$basesha"; fi
 	go build ${build_tags:+-tags "$build_tags"} -o "$tmp/bench.bin" ./cmd/bench
 )
+# the build has just loaded the machine: let it settle before measuring
+echo "settling for ${ARM_SETTLE:-30} s after the build ..."
+sleep "${ARM_SETTLE:-30}"
 {
 	echo "job:        $id"
 	echo "commit:     $sha"
@@ -217,7 +221,8 @@ git worktree add -q --detach "$tmp/src" "$sha"
 	echo "cache line: $line_size bytes"
 	echo "go:         $(go version)"
 	echo "power:      $power"
-	echo "load start: $(load)"
+	echo "load before the build: $load_before"
+	echo "load at the start:     $(load)"
 	echo "started:    $(date '+%Y-%m-%d %H:%M:%S %z')"
 	if [ -n "$warn" ]; then echo "warnings:  $warn"; fi
 } >"$out/env.txt"

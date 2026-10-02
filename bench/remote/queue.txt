@@ -2,12 +2,18 @@
 # <id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] <arguments of cmd/bench>
 #
 # The arm64 machine is an M1 Pro with 16 GB: 8 performance and 2 efficiency cores, 128-byte cache
-# lines. Use at most 8 processes (-maxprocs 8), and no memory phase beyond 256K keys (-memn
-# 262144) and no 1M keys at all: a process at 1M keys holds 4-5 GB.
+# lines. In the serial regime the processes of a scenario run one after another, so -maxprocs is
+# only how many a scenario may use at most (24 is cheap here). No memory phase beyond 256K keys
+# (-memn 262144) and no 1M keys at all: a process at 1M keys holds 4-5 GB.
 #
 # Jobs are added by the agent as the steps of docs/redesign/PLAN.md need them. Refs are commits,
 # so that a job means the same thing when it is run later.
 
 # Gate 0 of the redesign: an A/A run, the same code against itself, to see how much the M1 Pro
 # scatters (docs/redesign/PLAN.md). Read with care if an interval is wider than +-3 points.
-a0 6b06dd2 6b06dd2 120 -suite dev -keys u64,str -sizes 4096,16384 -ops valuesFor,valuesBetween,churn,build -vs baseline -minprocs 4 -maxprocs 8 -skipmem
+a0 6b06dd2 6b06dd2 5 -suite dev -keys u64,str -sizes 4096,16384 -ops valuesFor,valuesBetween,churn,build -vs baseline -minprocs 4 -maxprocs 8 -skipmem
+
+# a0 ran on 2026-10-02 in 4.5 minutes (not the 2 hours first estimated) with 4-8 processes per
+# scenario: precise in 30 of 32 comparisons, see docs/redesign/STATUS.md. The same again with more
+# processes, to settle the two imprecise cells, with the machine at rest.
+a1 6b06dd2 6b06dd2 20 -suite dev -keys u64,str -sizes 4096,16384 -ops valuesFor,valuesBetween,churn,build -vs baseline -minprocs 8 -maxprocs 24 -skipmem

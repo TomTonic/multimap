@@ -1,5 +1,28 @@
 # Status
 
+## 2026-10-02 afternoon: A/A job a0 on the M1 Pro
+
+`a0` (same code against itself, 6b06dd2, u64 and str, 4K and 16K, multi and unique, four
+operations) ran in 4.5 minutes, from 12:46 on 2026-10-02, results on `origin/arm-results`
+(`a0/`). Of 32 comparisons:
+
+- all 32 point estimates are within 0.97-1.01 (differences -2.8% to +0.9%), 30 within ±1.1%;
+- 30 are precise by the harness's criterion (95% interval within ±2 points or 10% of the
+  difference); the other two have wide intervals (±3.7 and ±4.0 points): `u64 unique 16K
+  valuesFor` has one outlier process (+7.1% against -0.4% to +0.6% for the other seven),
+  `u64 multi 16K churn` scatters between all eight (-4.7% to +3.0%). The scenarios were capped
+  at 8 processes, the harness wanted 29 and 32;
+- **systematic bias:** `valuesBetween` with str keys and one value per key reads 0.97 (4K) and
+  0.98 (16K) in every one of its four processes (-2.0% to -3.2%) for identical code. The
+  harness marks these "resolved"; they are not: its A/A validation runs inside one binary and
+  does not see the layout difference between the library and the baseline copy;
+- the runner's "load at start" in `env.txt` was my own compile (29): fixed, the runner now notes the load
+  before the build, waits 30 s after it, and warns at a load of 2;
+- the machine was not at rest (load 3.8, 15-minute average 6.1 at the start).
+
+Gate 0 reading: numerically met (0.97-1.01), with the two caveats above. Job `a1` (queued, not
+pushed yet) repeats a0 with 8 to 24 processes per scenario on a machine at rest.
+
 ## 2026-10-02: step 0 done, waiting for gate 0
 
 **Parked and pushed:**

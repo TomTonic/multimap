@@ -116,12 +116,22 @@ jobs by hand. Nothing runs without them. The sync goes through git.
 - **Limits of this machine:**
   - 16 GB: a process at 1M keys holds 4-5 GB, so no 1M keys on this machine and no memory phase
     beyond 256K (`-memn 262144`).
-  - Eight performance cores: `-maxprocs 8` at most. macOS cannot pin processes, so the two
-    efficiency cores may take a process. The A/A job (PLAN, gate 0) shows how large that noise
-    is. Results with a deviation above 3% in the A/A job are to be read with care.
+  - Eight performance cores. In the serial regime the processes of a scenario run one after
+    another, so `-maxprocs` is only how many a scenario may use at most: use `-minprocs 8
+    -maxprocs 24`. macOS cannot pin processes, so a process may land on one of the two
+    efficiency cores, which shows as one outlier among the processes of a scenario (see the A/A
+    job a0 in STATUS.md); more processes dilute it.
+  - A/A figures of this machine (job a0, identical code as library and as baseline copy): 30 of
+    32 comparisons within ±1.1% (all 32 between 0.97 and 1.01), but `valuesBetween` with str keys and one value per key reads
+    0.97-0.98 in every process, so treat differences below 3% there as noise. The harness's own
+    "resolved" mark does not know this bias (its A/A validations run inside one binary).
   - It runs on power only and idle: the runner warns about battery and load.
-- **When to run:** jobs take at most 2-3 h, so that a lunch break or an evening fits one. Results
-  from a machine in use are invalid.
+- **Durations:** job a0 (u64 and str, 4K and 16K, both profiles, four operations, 4-8 processes)
+  took 4.5 minutes on this machine, one tenth of what I guessed from the Windows runs. Measure
+  before you estimate.
+- **When to run:** jobs of up to 2-3 h fit a lunch break or an evening. Results from a machine in
+  use are invalid: the runner warns when the load is 2 or more (1 minute) or 3 or more (5 minutes),
+  and waits 30 seconds after the build so that the compile does not count.
 - **Prerequisites** on the arm64 machine: Go at the version in `go.mod`, a clone of the repository
   with push rights, and nothing else running. The runner is tested on Linux only; the macOS
   branches (`sysctl`, `pmset`, `caffeinate`, `date -v`) are untested until the first job.
