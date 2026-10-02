@@ -63,10 +63,10 @@ decides to merge.
   1.03, or its deviation is explained. This needs the tools committed and pushed first, and the
   user starting the job.
 
-## Step 1: prototype the page for variable keys (isolated)
+## Step 1: prototype the page for variable keys (isolated; done 2026-10-02, see step1-results.md)
 
-Build the page of STRATEGY 4.1 as a self-contained unit in `internal/art` (`vpage.go`), not yet
-wired into the tree.
+Build the page of STRATEGY 4.1 as a self-contained unit, not yet wired into the tree (built as its
+own package, `internal/vpage`, so that it stays out of the tree's coverage until step 2).
 - Operations: build from sorted items, search, insert, delete, split, merge, iterate from a
   bound.
 - One value per key only (step 3 adds more).
@@ -82,14 +82,16 @@ prototype):
 |---|---|
 | bytes per key by key kind, at the fill random insertion leaves | must not exceed today's leaf plus its child pointer (`node-pages` objstat and memory figures) |
 | head format: first 8 suffix bytes vs 7 bytes + length | compares per lookup, misses per lookup |
-| tail compare: lines touched per lookup | R5: at most one line after the head line(s) |
+| tail compare: rounds per lookup | R5: at most two rounds (directory, then everything else together) |
 | page classes and split rule (by count or by bytes) | fill after random inserts, bytes per key |
 | insert and delete cost (memmove, heap compaction) | ns per operation against appending to a leaf |
 | bloom filter: keep or drop | misses answered from the head |
 
 **Gate 1:** report to the user with numbers per key kind. Decide on a layout. Continue only if
-memory per key does not exceed today's leaves for any key kind and the lookup inside a page
-touches at most two lines after the head. Otherwise stop and discuss.
+memory per key does not exceed today's leaves for any key kind and a lookup inside a page takes at
+most two rounds of cache-line loads (R5; a round is defined in STRATEGY.md section 2). Otherwise
+stop and discuss. (Decided 2026-10-02: the criterion was "at most two lines after the head"; step 1
+showed that rounds, not lines, are what a cold lookup pays for, and the user restated it as rounds.)
 
 ## Step 2: pages for keys with one value, every key kind
 

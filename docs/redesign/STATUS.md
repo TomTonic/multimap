@@ -1,5 +1,34 @@
 # Status
 
+## 2026-10-02 evening: step 1 done, waiting for gate 1
+
+The page prototype (`internal/vpage`, 100% coverage, fuzzed, race and lint clean) and its
+experiments are built and described in [step1-results.md](step1-results.md). It has a directory
+(the user's idea of a FAT) in the first line or two of the page: a tag byte per key, in general
+pages also the suffix length and the tail's offset. Every lookup takes **two dependent rounds**
+(directory; then head, value and tail together), against 3 to 4 before, and cold lookups in the
+microbenchmark got 23-44% faster (`u64` 157 ns, `uuid` 246, `path` 259; hot 9-14 ns).
+
+Memory against the leaves of `node-pages`: `street` -39..-46%, `str` -15..-24%, `email` -17..-22%,
+`uuid` -2%, `url` -3..-4%, but `path` +2..+6% and `u64` +2..+11% (the directory costs a byte a
+key). A page prefix (not built) would make `path` and `url` -7..-10%.
+
+Gate 1 as first written (memory not above leaves for any kind; at most two lines after the head)
+was not met for `path` and `u64`, and literally not for the lines of general pages (3 to 4 after
+the first), though they are read in one round.
+
+**User's decision (2026-10-02):** the rule is restated as "at most two rounds of cache-line loads"
+(R5 in STRATEGY.md, with a precise definition of a round). Continue with the page prefix, but its
+cost in `churn` is the user's worry and decides whether it stays (see below). `u64`'s 6-10% more
+memory is the price of 44% faster cold lookups. Commit and push at every valuable point: allowed
+without asking.
+
+**Next:** (1) page prefix in the prototype, measured for memory and for mutate cost (insert/delete
+and split/merge), kept only if `churn` does not pay for it; (2) step 2 gets a lookup gate, in
+plain words: after wiring the pages into the tree, point lookups of string keys at 16K-64K keys
+must reach at least 0.85 of `node-layout` (the microbenchmark has no tree above the pages, so it
+can promise nothing about that); if they do not, pages are used only for short suffixes.
+
 ## 2026-10-02 13:06: A/A job a1, gate 0 met
 
 `a1` (the same as a0 with `-minprocs 8 -maxprocs 24`) ran 12:59-13:06, 7 minutes (estimated 20),

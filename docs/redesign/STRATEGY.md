@@ -35,8 +35,18 @@ Rules that follow, binding for every object the tree allocates:
 | R2 64 bytes | Only for anomalous inner nodes, such as chains of path bytes in file paths. Never for pages, leaves or the objects of small maps. |
 | R3 alignment | Use Go size classes that are multiples of 128. Up to 512 bytes they are aligned to their size. Objects with pointers above 512 bytes get an 8-byte malloc header and lose alignment, so they are allowed only for the 256-way nodes (N256, R256): rare, at the top of the tree, and always hot. |
 | R4 no object per key | A key never gets an object of its own. Keys live, many to an object, in pages. The only per-key objects are the value sets of keys with many values (R6). |
-| R5 lines per lookup | Inside an object, a lookup decides in the first 128 bytes (if possible in its first 64 bytes) and reads its payload in at most one more line of the same object. |
+| R5 rounds per lookup | A lookup inside an object takes at most two rounds of cache-line loads (defined below the table). Round 1 reads only the first 128 bytes of the object (if possible its first 64 bytes), which hold everything that says where the key's data lies. Round 2 reads all of that data at once. |
 | R6 values | A key's few values sit next to it in the page. Many values go to a value object built from 128- or 256-byte blocks. |
+
+**What a round is.** A round is a set of cache-line loads whose addresses are all known before
+the first of them completes, so the CPU issues them together and they cost one memory latency, not
+one each. The next round starts when its address depends on data of the round before (a pointer, an
+offset, a position found by a search). When the object is not in the cache a round costs one miss
+(about 50-100 ns from RAM); when it is, a few cycles. So R5 does not limit how many lines a lookup
+touches, only how many times it must wait for memory: a page lookup reads the directory in the
+first lines (round 1), finds the position, and then loads head word, value and tail in round 2, in
+whichever lines they lie. Step 1 measured that rounds, not lines, set the cost of a cold lookup
+(loading all lines at once changed nothing; cutting rounds from 3-4 to 2 cut the cold lookup by 35-45%).
 
 The object statistic (`objstat`, see PLAN step 0) is the measure of these rules. Target: 100% of
 objects at multiples of 64 bytes, at least 95% at multiples of 128, no object crossing more lines
@@ -146,7 +156,7 @@ What follows from this layout:
 |---|---|
 | K pages (keys up to 255 bytes, 16-byte heads, a pointer to a separate full-key copy per long key, capacities 1/3/7/14) lost 10-35% on point, `churn` and `build` and needed 15-45% more memory than leaves. Never a pointer or object per key; capacity by bytes, not by tiny fixed slot counts. | `node-pages` `n1-u64` |
 | Pages for keys with several values (S, U8-n) won at 256K (point 1.04-1.25, ranges 1.2-1.7, memory -20..-51%) but lost at 4K (`churn` 0.57-0.81, `build` 0.38-0.71). Small maps are the risk; measure 4K and 16K first, every time. | `leaf-pages`, night run 2026-09-28 |
-| Point lookups in pages at 16K-64K: 0.84-0.88 of leaves. The cause is serial misses (head, fences, block, values) and range nodes costing one load more per level than 256-way nodes. R5 is the answer: decide in line 0, payload in one more line. A blocked layout (4 keys and 4 values per row) gained only 1.5 ns at 64K in a prototype. | `node-pages` `n3-lp` |
+| Point lookups in pages at 16K-64K: 0.84-0.88 of leaves. The cause is serial misses (head, fences, block, values) and range nodes costing one load more per level than 256-way nodes. R5 is the answer: decide in the first line(s), then one round for the payload. A blocked layout (4 keys and 4 values per row) gained only 1.5 ns at 64K in a prototype. | `node-pages` `n3-lp` |
 | 63-key pages were worse at small sizes, 15-key pages too; 31 stayed. Binary search, full-count search and an inlined search lost against the branch-free block search. | `node-pages` diagnosis |
 | 256-byte pages measured worse than 512-byte ones (an extra tree level). | `leaf-pages` |
 | A tree that turns out unsuitable for pages must fall back at once (settle, crowded ratio 4). Keep that robustness, even if the page becomes the rule. | `node-pages` |
