@@ -1,0 +1,16 @@
+# Redesign: an ART that uses whole cache lines
+
+Start here when you resume the work.
+
+1. [STRATEGY.md](STRATEGY.md): the goal, the cache-line premise with its binding rules (R1-R6),
+   the diagnosis of the current state, the target architecture and the lessons that bind it.
+2. [PLAN.md](PLAN.md): the steps, each with its gate, and the working rules.
+3. [STATUS.md](STATUS.md): where the work stands, the next action and the open questions.
+4. [MEASURING.md](MEASURING.md): how to measure on Windows and arm64.
+5. [objstat-node-pages.md](objstat-node-pages.md): the object statistic of the starting point.
+6. [prototype/](prototype/): the throw-away tool that produced it. `.go.txt` files, not
+   compiled: step 0 turns them into a tested tool.
+
+Measured history:
+- `bench/results-layout/` (`node-layout`, `node-pages`);
+- `bench/results-leaf-pages/` on branch `leaf-pages`.
