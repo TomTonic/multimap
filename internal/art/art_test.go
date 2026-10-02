@@ -20,13 +20,21 @@ import (
 // sparse integers (which drive nodes through every kind), nodes whose slots a
 // term fills up, and shared string prefixes.
 func keySets() map[string][][]byte {
+	// size is the number of keys of a big set: full, or a tenth of it under the
+	// race detector, which would otherwise take the suite past go test's timeout.
+	size := func(n int) int {
+		if underRace {
+			return n / 10
+		}
+		return n
+	}
 	r := rand.New(rand.NewPCG(1, 2))
 	sets := map[string][][]byte{}
 	var u64, dense [][]byte
-	for range 5000 {
+	for range size(5000) {
 		u64 = append(u64, binary.BigEndian.AppendUint64(nil, r.Uint64()))
 	}
-	for i := range uint64(20000) {
+	for i := range uint64(size(20000)) {
 		dense = append(dense, binary.BigEndian.AppendUint64(nil, i))
 	}
 	sets["u64-random"], sets["u64-dense"] = u64, dense
@@ -41,7 +49,7 @@ func keySets() map[string][][]byte {
 
 	var strs [][]byte
 	words := []string{"user", "users", "item", "items", "a", "", "product", "productcatalogue"}
-	for range 8000 {
+	for range size(8000) {
 		strs = append(strs, fmt.Appendf(nil, "%s/%s/%s/%d", words[r.IntN(len(words))],
 			words[r.IntN(len(words))], words[r.IntN(len(words))], r.IntN(300)))
 	}
@@ -55,6 +63,16 @@ func keySets() map[string][][]byte {
 		for b := range fan {
 			wide = append(wide, append(append(p[:len(p):len(p)], byte(b)), "tail"...))
 		}
+	}
+	// ... and a term that arrives after the fan children filled the node up to
+	// its capacity, which makes it grow.
+	late := []byte("a-prefix-of-keys-that-end-late/")
+	for _, fan := range []int{5, 12, 26, 58} {
+		p := append(append([]byte(nil), late...), byte(fan))
+		for b := range fan {
+			wide = append(wide, append(append(p[:len(p):len(p)], byte(b)), "tail"...))
+		}
+		wide = append(wide, p)
 	}
 	sets["long-prefix-wide"] = append(wide, long[:20], append(long[:30:30], 'Z'))
 
@@ -75,7 +93,7 @@ func keySets() map[string][][]byte {
 	sets["paths-over-64k"] = long64k
 
 	var small [][]byte
-	for range 6000 {
+	for range size(6000) {
 		k := make([]byte, r.IntN(12))
 		for i := range k {
 			k[i] = byte(r.IntN(3))
@@ -85,7 +103,7 @@ func keySets() map[string][][]byte {
 	sets["random-small-alphabet"] = small
 
 	var lengths [][]byte
-	for range 4000 {
+	for range size(4000) {
 		k := make([]byte, r.IntN(100))
 		for i := range k {
 			k[i] = 'a' + byte(r.IntN(4))
@@ -136,6 +154,9 @@ func TestAgainstReference(t *testing.T) {
 	for _, mode := range []int8{0, 1, 2, -1, -2} {
 		for name, keys := range keySets() {
 			t.Run(fmt.Sprintf("%s/leaves=%d", name, mode), func(t *testing.T) {
+				if underRace && name == "paths-over-64k" && mode != 0 && mode != -2 {
+					t.Skip("the long paths are the same for every leaf kind; the race detector makes them slow")
+				}
 				switch mode {
 				case 0:
 					againstReference(t, keys, &Map[uint64]{}, id) // with pages
