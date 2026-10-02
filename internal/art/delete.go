@@ -4,14 +4,34 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
+// The outcomes of del.
+const (
+	absent    = iota // the key is not there
+	deleted          // the key is gone
+	keptLeaf         // the key has a leaf, which del left in place
+	keptEntry        // the key's entry in a page holds another value, and is still there
+)
+
 // remove deletes key and reports whether it was there. rk moves a leaf that
 // takes the place of a node above it (see collapse).
 func (t *Tree) remove(key []byte, rk rekeyFunc) bool {
-	ok := del(&t.root, key, 0, rk)
+	ok := del(&t.root, key, 0, rk, nil) == deleted
 	if ok {
 		t.size--
 	}
 	return ok
+}
+
+// removeRaw deletes key if it has one value in a page, which is the raw word
+// want: in one descent, where a lookup and a delete would make two. It
+// reports absent, deleted, keptEntry for another value, or keptLeaf if key has
+// a leaf, which the caller removes values from. rk is as in remove.
+func (t *Tree) removeRaw(key []byte, want uint64, rk rekeyFunc) int8 {
+	r := del(&t.root, key, 0, rk, &want)
+	if r == deleted {
+		t.size--
+	}
+	return r
 }
 
 // del deletes key from the subtree at *loc, whose compressed path starts at
@@ -21,79 +41,90 @@ func (t *Tree) remove(key []byte, rk rekeyFunc) bool {
 // would have had if the key had never been inserted. Below a range node, a
 // range whose child is gone goes to its neighbour, and a page merges with a
 // neighbouring page once both are thin (see rMerge).
-func del(loc **header, key []byte, depth int, rk rekeyFunc) bool {
+//
+// If want is not nil, del deletes only a key that is in a page with the raw
+// value *want (see removeRaw).
+func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
 	n := *loc
 	if n == nil {
-		return false
+		return absent
 	}
 	if n.kind <= kLastPage {
 		if isPage(n.kind) {
-			return delFromPage(loc, key, depth)
+			return delFromPage(loc, key, want)
 		}
-		if !asLeaf(n).matches(key) {
-			return false
+		switch {
+		case !asLeaf(n).matches(key):
+			return absent
+		case want != nil:
+			return keptLeaf
 		}
 		*loc = nil
-		return true
+		return deleted
 	}
 	pl := n.pathLen()
 	if pl != 0 && !pathMatches(n, pl, key, depth) {
-		return false
+		return absent
 	}
 	d := depth + pl
 	switch {
 	case d == len(key):
 		// The term's key is the path to n, which key matched: it is key.
 		if termOf(n) == nil {
-			return false
+			return absent
+		}
+		if want != nil {
+			return keptLeaf
 		}
 		setTermSlot(n, nil)
 	case isRange(n.kind):
 		r := asR(n)
 		i := r.index(key[d])
 		c := &r.children()[i]
-		if !del(c, key, d, rk) {
-			return false
+		if r := del(c, key, d, rk, want); r != deleted {
+			return r
 		}
 		switch {
 		case *c == nil:
 			n = rRemove(n, i)
-		case isPage((*c).kind):
+		case isPage((*c).kind) && int(asPage(*c).count) <= pageCaps[len(pageCaps)-1]/4:
+			// Two pages merge only if they hold at most half a page between them,
+			// so one with more than a quarter does not need its neighbours looked at.
 			n = rMerge(n, i)
 		}
 	default:
 		b := key[d]
 		c := findLoc(n, b)
-		if c == nil || !del(c, key, d+1, rk) {
-			return false
+		if c == nil {
+			return absent
+		}
+		if r := del(c, key, d+1, rk, want); r != deleted {
+			return r
 		}
 		if *c == nil {
 			n = removeChild(n, b)
 		}
 	}
 	*loc = collapse(n, key, depth, d, rk)
-	return true
+	return deleted
 }
 
-// delFromPage deletes key from the page at *loc, below which the nodes have
-// checked the key up to depth, and reports whether it was there.
-func delFromPage(loc **header, key []byte, depth int) bool {
+// delFromPage deletes key from the page at *loc, unless want is not nil and
+// the key's value is not *want, and reports what it found (see del).
+func delFromPage(loc **header, key []byte, want *uint64) int8 {
 	p := asPage(*loc)
-	if p.kind == kPageK {
-		i, ok, _ := p.kFind(key, depth)
-		if ok {
-			*loc = pageHdr(p.kRemoveAt(i))
-		}
-		return ok
-	}
 	if len(key) != int(p.klen) {
-		return false
+		return absent
 	}
 	i, ok := p.search(keyWord(key))
-	if ok {
-		*loc = pageHdr(p.removeAt(i))
+	switch {
+	case !ok:
+		return absent
+	case want != nil && p.vals()[i] != *want:
+		return keptEntry
 	}
-	return ok
+	*loc = pageHdr(p.removeAt(i))
+	return deleted
 }
 
 // collapse replaces an inner or range node n at depth, whose path ends at d,

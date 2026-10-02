@@ -152,9 +152,6 @@ func scanPage(p *pageHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) 
 // seek returns how many keys of p are below bound, or at most bound with
 // orEqual.
 func (p *pageHead) seek(bound []byte, orEqual bool) int {
-	if p.kind == kPageK {
-		return p.kSeek(bound, orEqual)
-	}
 	// Keys and bound compare as their zero-padded first 8 bytes, then, if
 	// those are equal, by length.
 	w, l := keyWord(bound[:min(len(bound), 8)]), int(p.klen)

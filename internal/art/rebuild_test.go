@@ -137,7 +137,7 @@ func TestFallback(t *testing.T) {
 // instead of below it: the check starts at that range node.
 func TestFallbackKeepsTerm(t *testing.T) {
 	m := &Map[uint64]{}
-	for _, k := range []string{"ab", "abc", "abd"} {
+	for _, k := range []string{"abc", "abd", "ab"} { // the first key's length is the pages' key length
 		m.Add([]byte(k), 1)
 	}
 	m.Add([]byte("ab"), 2)

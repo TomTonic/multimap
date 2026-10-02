@@ -880,12 +880,17 @@ func findLeaf(tr *Tree, key []byte) *leafHead {
 // with path, the key bytes above the page, and returns their number.
 func checkPage(t *testing.T, p *pageHead, path []byte) int {
 	t.Helper()
-	if p.count == 0 || (p.kind == kPage && int(p.count) > pageCaps[p.class]) || (p.kind == kPageK && int(p.count) > int(p.kcap)) {
-		t.Fatalf("page of kind %d class %d holds %d keys", p.kind, p.class, p.count)
+	if p.count == 0 || int(p.count) > pageCaps[p.class] {
+		t.Fatalf("page of class %d holds %d keys", p.class, p.count)
 	}
 	items := pageItems(p)
+	for _, w := range p.keys() {
+		if p.bloom&bloomBit(w) == 0 {
+			t.Fatalf("the bloom filter of a page lacks the bit of key %x", w)
+		}
+	}
 	for i, it := range items {
-		if !bytes.HasPrefix(it.key, path) || len(it.key) > maxPageKey {
+		if !bytes.HasPrefix(it.key, path) || len(it.key) != int(p.klen) {
 			t.Fatalf("page key %q does not continue its path %q", it.key, path)
 		}
 		if i > 0 && bytes.Compare(items[i-1].key, it.key) >= 0 {
@@ -903,6 +908,9 @@ func checkRangeNode(t *testing.T, n *header, end []byte) int {
 	t.Helper()
 	r := asR(n)
 	rs := r.ranges()
+	if r.pathLen() > maxPageKey {
+		t.Fatalf("range node with a path of %d bytes, longer than a key of a page", r.pathLen())
+	}
 	if len(rs) != int(r.n) || rs[0].b != 0 {
 		t.Fatalf("range node of %d ranges, first at byte %d", len(rs), rs[0].b)
 	}

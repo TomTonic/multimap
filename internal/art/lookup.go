@@ -16,6 +16,8 @@ type Tree struct {
 	// a key with one raw value, which a rebuild needs as a term and a key that
 	// gets a second value needs in place of its page entry.
 	small bool
+	at    spot  // where upsert found a key that was in a page
+	pk    uint8 // the length of the keys of pages plus one, or 0 for none (see chooseKeyLen)
 	mk    func(key []byte, base int, raw uint64) *leafHead
 }
 
@@ -38,7 +40,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 	for n != nil {
 		if n.kind <= kLastPage {
 			if n.kind > kLastLeaf {
-				return findInPage(asPage(n), key, depth)
+				return findInPage(asPage(n), key)
 			}
 			// The nodes have checked the key up to depth; the leaf holds the
 			// rest.
@@ -108,16 +110,13 @@ func (t *Tree) find(key []byte) (*header, int) {
 	return nil, 0
 }
 
-// findInPage looks for key in page p, below which the nodes have checked the
-// key up to depth.
-func findInPage(p *pageHead, key []byte, depth int) (*header, int) {
-	if p.kind == kPageK {
-		if i, ok, _ := p.kFind(key, depth); ok {
-			return pageHdr(p), i
-		}
-	} else if len(key) == int(p.klen) {
-		if i, ok := p.search(keyWord(key)); ok {
-			return pageHdr(p), i
+// findInPage looks for key in page p.
+func findInPage(p *pageHead, key []byte) (*header, int) {
+	if len(key) == int(p.klen) {
+		if w := keyWord(key); p.bloom&bloomBit(w) != 0 {
+			if i, ok := p.search(w); ok {
+				return pageHdr(p), i
+			}
 		}
 	}
 	return nil, 0

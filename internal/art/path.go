@@ -204,9 +204,10 @@ func withPath(n *header, p []byte) *header {
 	return n
 }
 
-// copyFixed copies the fixed part of node src, children included, into dst of
-// the same kind. The copy is typed, so the garbage collector sees the
-// pointers move.
+// copyFixed copies the fixed part of inner node src, children included, into
+// dst of the same kind. Range nodes never get here: their paths are no longer
+// than the keys of a page, so they carry no tail. The copy is typed, so the
+// garbage collector sees the pointers move.
 func copyFixed(dst, src *header) {
 	switch src.kind {
 	case kN5:
@@ -217,16 +218,8 @@ func copyFixed(dst, src *header) {
 		*asN26(dst) = *asN26(src)
 	case kN58:
 		*asN58(dst) = *asN58(src)
-	case kN256:
-		*asN256(dst) = *asN256(src)
-	case kR8:
-		*asR8(dst) = *asR8(src)
-	case kR24:
-		*asR24(dst) = *asR24(src)
-	case kR56:
-		*asR56(dst) = *asR56(src)
 	default:
-		*asR256(dst) = *asR256(src)
+		*asN256(dst) = *asN256(src)
 	}
 }
 

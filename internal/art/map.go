@@ -172,23 +172,13 @@ func pageType[T comparable]() bool {
 // leafWith allocates a flat leaf that holds key from base on and the value that
 // raw holds, a page's word, as its only value. It is the Tree's mk.
 func leafWith[T comparable](key []byte, base int, raw uint64) *leafHead {
-	l := newFlatLeaf[T](key, base)
-	v := *(*T)(unsafe.Pointer(&raw))
-	if l.kind == kSet {
-		vals[T](l).Add(v)
-	} else {
-		appendFlat(l, v)
-	}
+	l := newFlatLeaf[T](key, base) // a key of a page is short: a flat leaf
+	appendFlat(l, *(*T)(unsafe.Pointer(&raw)))
 	return l
 }
 
 // pageVal returns the raw value of key i of page p, a word that holds a T.
-func pageVal(p *pageHead, i int) *uint64 {
-	if p.kind == kPageK {
-		return &p.kVals()[i]
-	}
-	return &p.vals()[i]
-}
+func pageVal(p *pageHead, i int) *uint64 { return &p.vals()[i] }
 
 // Len returns the number of keys.
 func (m *Map[T]) Len() int { return m.t.Len() }
@@ -215,15 +205,21 @@ func (m *Map[T]) Add(key []byte, v T) {
 	if m.t.small {
 		*(*T)(unsafe.Pointer(&raw)) = v
 	}
-	sp := m.t.upsert(key, raw, nl)
-	n := *sp.loc
+	size := m.t.size
+	loc := m.t.upsert(key, raw, nl)
+	n := *loc
 	switch {
 	case isLeaf(n.kind):
-		m.addToLeaf(sp.loc, asLeaf(n), v)
-	case sp.created:
+		m.addToLeaf(loc, asLeaf(n), v)
+		if m.t.size != size && m.t.small && isRange(m.t.root.kind) {
+			// A new leaf among pages: keys that need leaves may crowd them.
+			m.t.settle(key)
+		}
+	case m.t.size != size:
 		// A page took the key and its value.
 	default:
 		// The key has one value in a page; a second one gives it a leaf.
+		sp := m.t.at
 		old := pageVal(asPage(n), sp.i)
 		if *(*T)(unsafe.Pointer(old)) == v {
 			return
@@ -257,20 +253,21 @@ func (m *Map[T]) addToLeaf(loc **header, l *leafHead, v T) {
 // It finds the leaf as a lookup does and looks for the leaf's slot only when
 // the leaf has to move into a smaller one.
 func (m *Map[T]) Remove(key []byte, v T) {
-	n, i := m.t.find(key)
-	if n == nil {
-		return
-	}
 	// Chosen here, as in Add: a function value that does not escape stays on
 	// the stack.
 	var rk rekeyFunc = rekey[T]
 	if m.flat == 2 {
 		rk = rekeyTyped[T]
 	}
-	if isPage(n.kind) {
-		if *(*T)(unsafe.Pointer(pageVal(asPage(n), i))) == v {
-			m.t.remove(key, rk)
+	if m.t.hasPages() {
+		var raw uint64
+		*(*T)(unsafe.Pointer(&raw)) = v
+		if m.t.removeRaw(key, raw, rk) != keptLeaf {
+			return
 		}
+	}
+	n, _ := m.t.find(key)
+	if n == nil {
 		return
 	}
 	l := asLeaf(n)
@@ -376,7 +373,7 @@ func (m *Map[T]) leafTail() uintptr {
 // and must not modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 	var kb keyBuf
-	var pk pageKey
+	var pk [8]byte
 	m.t.scan(b, m.leafTail(), &kb, func(n *header, i, j int) bool {
 		if isLeaf(n.kind) {
 			return fn(kb.key)
@@ -400,9 +397,6 @@ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 		}
 		p := asPage(n)
 		raw := p.vals()
-		if p.kind == kPageK {
-			raw = p.kVals()
-		}
 		for k := i; k < j; k++ {
 			if !yield(*(*T)(unsafe.Pointer(&raw[k]))) {
 				return false

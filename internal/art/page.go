@@ -2,6 +2,7 @@ package art
 
 import (
 	"encoding/binary"
+	"math/bits"
 	"unsafe"
 )
 
@@ -12,18 +13,12 @@ import (
 // contiguous memory.
 //
 // Pages hold values of a small pointer-free type only (see Tree.small), and
-// only keys with exactly one value keep it in the page. There are two page
-// types:
-//
-//   - U8-1 (this file): keys of one common length of at most 8 bytes (integer
-//     keys are 8), each with exactly one value. The keys are stored as
-//     big-endian words; keys and values are plain words, so the page contains
-//     no pointers and the garbage collector never scans it.
-//   - K (pagek.go): keys of any lengths up to maxPageKey, each with exactly
-//     one value, in a fixed layout.
-//
-// A key with more than one value has a generic leaf with a value set, as in a
-// tree without pages, which a range node holds like a page (see rnode.go).
+// only keys with exactly one value keep it in the page. All keys of a page have
+// one length of at most 8 bytes (integer keys are 8), the length of the first
+// key of the tree (see Tree.pk). The keys are stored as big-endian words; keys
+// and values are plain words, so the page contains no pointers and the garbage
+// collector never scans it. A key of another length, or with more than one
+// value, has a leaf, which a range node holds like a page (see rnode.go).
 //
 // Every page can rebuild its full keys, so it never depends on where in the
 // tree it sits: when a node above it collapses, the page just moves up.
@@ -32,20 +27,32 @@ import (
 var pageCaps = [4]int{3, 7, 15, 31}
 
 // maxPageKey is the longest key a page holds; a longer key gets a leaf.
-const maxPageKey = 255
+const maxPageKey = 8
 
-// pageKey holds a key that a page rebuilds from its parts.
-type pageKey [maxPageKey + 16]byte
-
-// pageHead is the start of every page (8 B).
+// pageHead is the start of every page (16 B).
 type pageHead struct {
 	kind  kind
-	class uint8 // index into pageCaps (U8-1) or kCaps (K)
+	class uint8 // index into pageCaps
 	count uint8 // keys
-	klen  uint8 // U8-1: length of every key in the page, 0..8; K: see pageKHead
-	_     uint16
-	kcap  uint8 // K: key slots
-	base  uint8 // K: length of the prefix all keys share
+	klen  uint8 // length of every key in the page, 0..8
+	stale uint8 // keys removed since bloom was computed
+	_     [3]byte
+	bloom uint64 // one bit per key (see bloomBit); keys removed since leave theirs set
+}
+
+// bloomBit returns the bit of key word w in a page's bloom filter. A lookup that
+// finds its bit unset knows that the key is not in the page, without reading
+// anything but the head: most lookups of absent keys end there, where a
+// lookup in a tree of leaves ends one node earlier than its keys' depth. The 64
+// bits are about half set in a page of 31 keys.
+func bloomBit(w uint64) uint64 { return 1 << ((w * 0x9E3779B97F4A7C15) >> 58) }
+
+// rebloom recomputes the page's bloom filter from its keys.
+func (p *pageHead) rebloom() {
+	p.bloom, p.stale = 0, 0
+	for _, w := range p.keys() {
+		p.bloom |= bloomBit(w)
+	}
 }
 
 // The page classes: 56, 120, 248 and 504 bytes, allocated as 64, 128, 256
@@ -94,6 +101,10 @@ func newPage(class int) *pageHead {
 		p = &(&page31{}).pageHead
 	}
 	p.kind, p.class = kPage, uint8(class)
+	h := p.heads()
+	for i := range h {
+		h[i] = pad
+	}
 	return p
 }
 
@@ -131,29 +142,47 @@ func wordKey(w uint64, l int, buf *[8]byte) []byte {
 	return buf[:l]
 }
 
-// search returns the position of key w in a U8 page, or where it would be
-// inserted, and whether it is there.
-func (p *pageHead) search(w uint64) (int, bool) { return search(p.keys(), w) }
+// pad fills the head slots of a page that hold no key, so that comparisons
+// against them are never "below" and search can look at whole blocks.
+const pad = ^uint64(0)
 
-// search returns the position of the first word in h, which is sorted, that
-// is not below w, and whether it is w.
+// search returns the position of key w in a page, or where it would be
+// inserted, and whether it is there.
 //
-// Heads 0-14 fill the page's first 128 bytes, one cache line on Apple
-// silicon. One comparison with head 14 picks the line that holds w, and a
-// linear search within that line follows. Measured against a branch-free
-// binary search, this is 1.4x as fast while the tree is cached and as fast
-// once it is not; a linear search over all heads is as fast in the cache but
-// loses 25-35% without it, and counting all heads without branching is
-// slower in both.
-func search(h []uint64, w uint64) (int, bool) {
-	i := 0
-	if len(h) > 15 && h[14] < w {
-		i = 15
+// It counts the keys below w without branching: the heads of a page are
+// compared in blocks of 8, one fence head per block (the last of the block)
+// picks the block, and the other 7 heads of that block are counted. All these
+// loads are independent of each other, so the cache misses of a page that is
+// not in the L1 cache overlap, and no branch depends on where w lies, which
+// mispredicted about once per lookup in a linear search (measured against it
+// and against binary searches: 15-25% faster on 16K to 64K integer keys).
+func (p *pageHead) search(w uint64) (int, bool) {
+	h := p.heads()
+	var i int
+	switch p.class {
+	case 3:
+		blk := below(h[7], w) + below(h[15], w) + below(h[23], w)
+		i = 8*blk + count7((*[7]uint64)(h[8*blk:]), w)
+	case 2:
+		blk := below(h[7], w)
+		i = 8*blk + count7((*[7]uint64)(h[8*blk:]), w)
+	case 1:
+		i = count7((*[7]uint64)(h), w)
+	default:
+		i = below(h[0], w) + below(h[1], w) + below(h[2], w)
 	}
-	for i < len(h) && h[i] < w {
-		i++
-	}
-	return i, i < len(h) && h[i] == w
+	return i, i < int(p.count) && h[i] == w
+}
+
+// below returns 1 if x < w, else 0, without a branch.
+func below(x, w uint64) int {
+	_, b := bits.Sub64(x, w, 0)
+	return int(b)
+}
+
+// count7 returns how many of the 7 heads in h are below w.
+func count7(h *[7]uint64, w uint64) int {
+	return below(h[0], w) + below(h[1], w) + below(h[2], w) + below(h[3], w) + below(h[4], w) + below(h[5], w) + below(h[6], w)
 }
 
 // insertAt inserts key w with value v at position i, growing the page into
@@ -169,6 +198,7 @@ func (p *pageHead) insertAt(i int, w, v uint64) *pageHead {
 	copy(vs[i+1:n+1], vs[i:n])
 	h[i], vs[i] = w, v
 	p.count++
+	p.bloom |= bloomBit(w)
 	return p
 }
 
@@ -182,7 +212,11 @@ func (p *pageHead) removeAt(i int) *pageHead {
 	h, vs := p.heads(), p.vals()
 	copy(h[i:n-1], h[i+1:n])
 	copy(vs[i:n-1], vs[i+1:n])
+	h[n-1] = pad
 	p.count--
+	if p.stale++; p.stale >= 8 {
+		p.rebloom()
+	}
 	if n-1 <= pageShrink[p.class] {
 		return p.resize(int(p.class) - 1)
 	}
@@ -197,17 +231,22 @@ func (p *pageHead) split(s int) (*pageHead, *pageHead) {
 	q.count, q.klen = uint8(n-s), p.klen
 	copy(q.heads(), p.heads()[s:n])
 	copy(q.vals(), p.vals()[s:n])
+	for i := s; i < n; i++ {
+		p.heads()[i] = pad
+	}
 	p.count = uint8(s)
+	q.rebloom()
 	if s <= pageShrink[p.class] {
 		p = p.resize(classFor(s))
 	}
+	p.rebloom()
 	return p, q
 }
 
 // resize copies the page into a new page of the given class.
 func (p *pageHead) resize(class int) *pageHead {
 	q := newPage(class)
-	q.count, q.klen = p.count, p.klen
+	q.count, q.klen, q.bloom, q.stale = p.count, p.klen, p.bloom, p.stale
 	n := int(p.count)
 	copy(q.heads()[:n], p.heads()[:n])
 	copy(q.vals()[:n], p.vals()[:n])
@@ -223,63 +262,37 @@ func classFor(n int) int {
 	return c
 }
 
-// key returns key i of a page of either type, rebuilt in buf.
-func (p *pageHead) key(i int, buf *pageKey) []byte {
-	if p.kind == kPageK {
-		return p.kKey(i, buf)
-	}
-	return wordKey(p.keys()[i], int(p.klen), (*[8]byte)(buf[:8]))
+// key returns key i of a page, rebuilt in buf.
+func (p *pageHead) key(i int, buf *[8]byte) []byte {
+	return wordKey(p.keys()[i], int(p.klen), buf)
 }
 
-// pageItems returns the keys of page p, of either type, as items, in order.
+// pageItems returns the keys of page p as items, in order.
 func pageItems(p *pageHead) []item {
 	n := int(p.count)
-	var buf []byte
 	out := make([]item, n)
-	var kb pageKey
-	ends := make([]int, n)
-	for i := range n {
-		buf = append(buf, p.key(i, &kb)...)
-		ends[i] = len(buf)
-	}
-	start := 0
-	for i, e := range ends {
-		out[i].key = buf[start:e:e]
-		start = e
-	}
-	if p.kind == kPage {
-		for i, v := range p.vals()[:n] {
-			out[i].val = v
-		}
-		return out
-	}
-	vs, ts, ls := p.kVals(), p.kTails(), p.kLens()
-	for i := range out {
-		if ls[i] > 16 {
-			out[i].full = unsafe.Slice((*byte)(ts[i]), len(out[i].key))
-		}
-		out[i].val = vs[i]
+	buf := make([]byte, 0, n*int(p.klen))
+	for i, w := range p.keys() {
+		var kb [8]byte
+		start := len(buf)
+		buf = append(buf, wordKey(w, int(p.klen), &kb)...)
+		out[i].key = buf[start:len(buf):len(buf)]
+		out[i].val = p.vals()[i]
 	}
 	return out
 }
 
-// pageFor returns the page that holds items, or nil if they do not fit one
-// or one of them has a leaf. Keys of one length of at most 8 bytes go into a
-// U8-1 page, all others into a K page (see kPack).
+// pageFor returns the page that holds items, or nil if they do not fit one:
+// there are too many, they differ in length, or one of them has a leaf.
 func pageFor(items []item) *pageHead {
-	l := len(items[0].key)
-	u8 := true
-	for _, it := range items {
-		if it.leaf != nil {
-			return nil
-		}
-		u8 = u8 && len(it.key) == l && l <= 8
-	}
-	if !u8 {
-		return kPack(items)
-	}
 	if len(items) > pageCaps[len(pageCaps)-1] {
 		return nil
+	}
+	l := len(items[0].key)
+	for _, it := range items {
+		if it.leaf != nil || len(it.key) != l {
+			return nil
+		}
 	}
 	p := newPage(classFor(len(items)))
 	p.count, p.klen = uint8(len(items)), uint8(l)
@@ -287,6 +300,7 @@ func pageFor(items []item) *pageHead {
 	for i, it := range items {
 		h[i], vs[i] = keyWord(it.key), it.val
 	}
+	p.rebloom()
 	return p
 }
 

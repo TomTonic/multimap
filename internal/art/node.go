@@ -32,11 +32,12 @@
 //     children reach only when there is no term: few keys are prefixes of
 //     others, so no node pays a field for them.
 //   - In a map whose values are small and pointer-free (at most 8 bytes), keys
-//     with exactly one value need no leaf at all: they live in pages (page.go,
-//     pagek.go), sorted arrays of up to 31 keys with their values that
-//     hold whole keys. Range nodes (rnode.go) give the pages below them ranges
-//     of key bytes instead of one child per byte, which keeps them full however
-//     many keys there are, and let a range scan walk contiguous memory. A key
+//     with exactly one value need no leaf at all: they live in pages
+//     (page.go), sorted arrays of up to 31 keys with their values that hold
+//     whole keys of one length of at most 8 bytes, such as integers. Range
+//     nodes (rnode.go) give the pages below them ranges of key bytes instead
+//     of one child per byte, which keeps them full however many keys there
+//     are, and let a range scan walk contiguous memory. A key
 //     that gets a second value leaves its page for a leaf, and where such keys
 //     crowd a range node, its subtree is rebuilt from inner nodes and leaves
 //     (rebuild.go). Only keys in such a tree's pages and range nodes pay for
@@ -72,8 +73,7 @@ const (
 	_
 	_
 	kLastLeaf // flat leaf of the largest class
-	kPage     // U8-1 page, see page.go
-	kPageK    // K page, see pagek.go
+	kPage     // page, see page.go
 	kN5
 	kN12
 	kN26
@@ -87,7 +87,7 @@ const (
 
 // kLastPage is the last kind that ends a descent: leaves and pages come first,
 // so that one comparison detects them.
-const kLastPage = kPageK
+const kLastPage = kPage
 
 // kindMask maps a kind to an index of the tables below, which hold every kind.
 const kindMask = 31
@@ -145,7 +145,7 @@ type leafHead struct {
 func isLeaf(k kind) bool { return k <= kLastLeaf }
 
 // isPage reports whether an object of kind k is a page of either type.
-func isPage(k kind) bool { return k > kLastLeaf && k <= kLastPage }
+func isPage(k kind) bool { return k == kPage }
 
 // isRange reports whether an object of kind k is a range node.
 func isRange(k kind) bool { return k >= kR8 }
@@ -297,7 +297,8 @@ func fillHead(dst, pre []byte, b, depth int) {
 	}
 }
 
-// slots returns all child slots of n, including the one its term takes.
+// slots returns all child slots of n, including the one its term takes; n must
+// not be a 256-way or a range node.
 func slots(n *header) []*header {
 	switch n.kind {
 	case kN5:
@@ -306,10 +307,8 @@ func slots(n *header) []*header {
 		return asN12(n).child[:]
 	case kN26:
 		return asN26(n).child[:]
-	case kN58:
-		return asN58(n).child[:]
 	}
-	return asN256(n).child[:]
+	return asN58(n).child[:]
 }
 
 // slotCap and termOff give, by kind, the number of child slots and the offset

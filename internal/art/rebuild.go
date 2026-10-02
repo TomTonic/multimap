@@ -13,7 +13,6 @@ type item struct {
 	key  []byte    // the whole key
 	val  uint64    // the key's value, if it has no leaf
 	leaf *leafHead // holds key from a base of some depth on, or nil
-	full []byte    // an immutable copy of key a K page may keep, or nil
 }
 
 // leafOf returns the leaf of it, ready to stand at depth: the leaf it has, or a

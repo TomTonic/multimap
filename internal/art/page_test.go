@@ -1,8 +1,6 @@
 package art
 
 import (
-	"bytes"
-	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -193,7 +191,7 @@ func TestPagePromotion(t *testing.T) {
 	if !leafAt(key(0, 3)) || !isRange(m.t.root.kind) || asR(m.t.root).n != 3 {
 		t.Fatalf("a second value did not give the key a leaf between two pages")
 	}
-	// many values, and more keys than a K page holds
+	// many values, and more keys than a leaf's flat values hold
 	for v := range uint64(40) {
 		add(key(0, 5), 100+v)
 	}
@@ -226,114 +224,6 @@ func TestPagePromotion(t *testing.T) {
 	}
 }
 
-// TestPageKLifecycle makes sure that string keys of any length keep all their
-// values while the pages that hold them change underneath. It covers the K
-// pages of the ART behind multimap.Ordered: a page grows through every class
-// as keys arrive and learns a shorter shared prefix when a key does not share
-// the one it has, splits into pages below a range node when it overflows,
-// finds keys that differ only beyond their first 16 suffix bytes or in
-// trailing zero bytes, gives a key a leaf of its own when it gets a second
-// value, sends a key too long for any page to a leaf, and shrinks back
-// through the classes as keys leave. After every step the map must match a
-// reference and satisfy the structural invariants.
-func TestPageKLifecycle(t *testing.T) {
-	r := rand.New(rand.NewPCG(5, 6))
-	var m Map[uint64]
-	ref := reference{}
-	add := func(k string, vs ...uint64) {
-		t.Helper()
-		for _, v := range vs {
-			m.Add([]byte(k), v)
-			ref.add([]byte(k), v)
-		}
-		compare(t, &m, ref, id, r)
-		checkInvariants(t, &m.t)
-	}
-	page := func(k string) *pageHead {
-		t.Helper()
-		n, _ := m.t.find([]byte(k))
-		if n == nil || n.kind != kPageK {
-			t.Fatalf("key %q is not in a K page", k)
-		}
-		return asPage(n)
-	}
-	item := func(i int) string { return fmt.Sprintf("tenant/category/item-%02d/%d", i, 1000+i*7) }
-
-	// Keys that share a page grow it through every class; the first key's
-	// page knows it alone, so the second teaches it a shorter prefix.
-	var classes []int
-	for i := range 14 {
-		add(item(i), uint64(i))
-		classes = append(classes, int(page(item(i)).class))
-	}
-	if m.t.root.kind != kPageK || !slices.IsSorted(classes) || classes[0] != 0 || classes[len(classes)-1] != 3 {
-		t.Fatalf("classes while growing = %v, want one page growing from class 0 to 3", classes)
-	}
-	if b := int(asPage(m.t.root).base); b != len("tenant/category/item-") {
-		t.Fatalf("shared prefix of %d bytes, want %d", b, len("tenant/category/item-"))
-	}
-	// More keys overflow the largest page: it splits below a range node.
-	for i := 14; i < 40; i++ {
-		add(item(i), uint64(i))
-	}
-	if !isRange(m.t.root.kind) {
-		t.Fatalf("the full page did not split: root kind %d", m.t.root.kind)
-	}
-
-	// Keys that share their first 16 suffix bytes, or differ in trailing
-	// zeros, share head words; the full keys and lengths tell them apart.
-	for _, k := range []string{"zz/abcdefghijklmnop", "zz/abcdefghijklmnop1", "zz/abcdefghijklmnop2",
-		"zz/abcdefghijklmnop12", "zz/ab", "zz/ab\x00", "zz/ab\x00\x00"} {
-		add(k, 1)
-	}
-
-	// A key too long for any page goes to a leaf among pages.
-	long := "zz/abcdefgh1" + string(bytes.Repeat([]byte{'x'}, maxPageKey))
-	add(long, 1, 2)
-	if findLeaf(&m.t, []byte(long)) == nil {
-		t.Fatalf("a key of %d bytes is not a leaf", len(long))
-	}
-
-	// A second value gives a key a leaf of its own, for a short and for a
-	// long suffix; more values go to the leaf.
-	for _, k := range []string{item(3), "zz/abcdefghijklmnop12"} {
-		add(k, 2, 3, 4)
-		if findLeaf(&m.t, []byte(k)) == nil {
-			t.Fatalf("a second value did not give %q a leaf", k)
-		}
-	}
-	for v := range uint64(4) {
-		m.Remove([]byte(item(3)), 1+v)
-		ref.remove([]byte(item(3)), 1+v)
-		compare(t, &m, ref, id, r)
-		checkInvariants(t, &m.t)
-	}
-
-	// Removing the keys again shrinks the pages back through the classes.
-	shrunk := false
-	for i := 39; i >= 0; i-- {
-		before := page(item(0)).class
-		m.RemoveKey([]byte(item(i)))
-		delete(ref, item(i))
-		if i > 0 && page(item(0)).class < before {
-			shrunk = true
-		}
-	}
-	compare(t, &m, ref, id, r)
-	checkInvariants(t, &m.t)
-	if !shrunk {
-		t.Fatalf("no page shrank while its keys were removed")
-	}
-	for _, k := range ref.sortedKeys() {
-		m.RemoveKey([]byte(k))
-		delete(ref, k)
-		checkInvariants(t, &m.t)
-	}
-	if m.Len() != 0 || m.t.root != nil {
-		t.Fatalf("%d keys left", m.Len())
-	}
-}
-
 // TestPageLayout makes sure that every page class has the size and the layout
 // the code that reaches into it assumes. It covers the pages of the ART behind
 // multimap.Ordered, which are read and written through offsets, not fields: a
@@ -344,41 +234,28 @@ func TestPageLayout(t *testing.T) {
 		name      string
 		got, want uintptr
 	}{
-		{"page head", unsafe.Sizeof(pageHead{}), 8},
-		{"page of 3 keys", unsafe.Sizeof(page3{}), 56},
-		{"page of 7 keys", unsafe.Sizeof(page7{}), 120},
-		{"page of 15 keys", unsafe.Sizeof(page15{}), 248},
-		{"page of 31 keys", unsafe.Sizeof(page31{}), 504},
+		{"page head", unsafe.Sizeof(pageHead{}), 16},
+		{"page of 3 keys", unsafe.Sizeof(page3{}), 64},
+		{"page of 7 keys", unsafe.Sizeof(page7{}), 128},
+		{"page of 15 keys", unsafe.Sizeof(page15{}), 256},
+		{"page of 31 keys", unsafe.Sizeof(page31{}), 512},
 		{"heads of a page of 7 keys", unsafe.Offsetof(page7{}.heads), headsOff},
 		{"values of a page of 7 keys", unsafe.Offsetof(page7{}.vals), headsOff + 7*8},
-		{"K page head", unsafe.Sizeof(pageKHead{}), 24},
-		{"K page of 1 key", unsafe.Sizeof(pageK1{}), 64},
-		{"K page of 3 keys", unsafe.Sizeof(pageK3{}), 128},
-		{"K page of 7 keys", unsafe.Sizeof(pageK7{}), 256},
-		{"K page of 14 keys", unsafe.Sizeof(pageK14{}), 488},
-		{"tails of a K page of 3 keys", unsafe.Offsetof(pageK3{}.tails), kHeadOff},
-		{"heads of a K page of 3 keys", unsafe.Offsetof(pageK3{}.heads), kHeadOff + 3*8},
-		{"values of a K page of 3 keys", unsafe.Offsetof(pageK3{}.vals), kHeadOff + 3*24},
-		{"lengths of a K page of 3 keys", unsafe.Offsetof(pageK3{}.lens), kHeadOff + 3*32},
-		{"tails of a K page of 7 keys", unsafe.Offsetof(pageK7{}.tails), kHeadOff},
-		{"heads of a K page of 7 keys", unsafe.Offsetof(pageK7{}.heads), kHeadOff + 7*8},
-		{"values of a K page of 7 keys", unsafe.Offsetof(pageK7{}.vals), kHeadOff + 7*24},
-		{"lengths of a K page of 7 keys", unsafe.Offsetof(pageK7{}.lens), kHeadOff + 7*32},
 		{"heads of a page of 3 keys", unsafe.Offsetof(page3{}.heads), headsOff},
 		{"heads of a page of 15 keys", unsafe.Offsetof(page15{}.heads), headsOff},
 		{"heads of a page of 31 keys", unsafe.Offsetof(page31{}.heads), headsOff},
-		{"tails of a K page of 1 keys", unsafe.Offsetof(pageK1{}.tails), kHeadOff},
-		{"heads of a K page of 1 keys", unsafe.Offsetof(pageK1{}.heads), kHeadOff + 1*8},
-		{"values of a K page of 1 keys", unsafe.Offsetof(pageK1{}.vals), kHeadOff + 1*24},
-		{"lengths of a K page of 1 keys", unsafe.Offsetof(pageK1{}.lens), kHeadOff + 1*32},
-		{"tails of a K page of 14 keys", unsafe.Offsetof(pageK14{}.tails), kHeadOff},
-		{"heads of a K page of 14 keys", unsafe.Offsetof(pageK14{}.heads), kHeadOff + 14*8},
-		{"values of a K page of 14 keys", unsafe.Offsetof(pageK14{}.vals), kHeadOff + 14*24},
-		{"lengths of a K page of 14 keys", unsafe.Offsetof(pageK14{}.lens), kHeadOff + 14*32},
 		{"values of a page of 3 keys", unsafe.Offsetof(page3{}.vals), headsOff + 3*8},
 		{"values of a page of 15 keys", unsafe.Offsetof(page15{}.vals), headsOff + 15*8},
 		{"values of a page of 31 keys", unsafe.Offsetof(page31{}.vals), headsOff + 31*8},
 		{"kind at the start of a page", unsafe.Offsetof(pageHead{}.kind), 0},
+		{"head of a range node of 8 ranges", unsafe.Offsetof(rnode8{}.rhead), 0},
+		{"children of a range node of 8 ranges", unsafe.Offsetof(rnode8{}.child), rChildOff},
+		{"head of a range node of 24 ranges", unsafe.Offsetof(rnode24{}.rhead), 0},
+		{"children of a range node of 24 ranges", unsafe.Offsetof(rnode24{}.child), rChildOff},
+		{"head of a range node of 56 ranges", unsafe.Offsetof(rnode56{}.rhead), 0},
+		{"children of a range node of 56 ranges", unsafe.Offsetof(rnode56{}.child), rChildOff},
+		{"head of a range node of 256 ranges", unsafe.Offsetof(rnode256{}.rhead), 0},
+		{"children of a range node of 256 ranges", unsafe.Offsetof(rnode256{}.child), rChildOff},
 		{"range node head", unsafe.Sizeof(rhead{}), 56},
 		{"range node of 8 ranges", unsafe.Sizeof(rnode8{}), 128},
 		{"range node of 24 ranges", unsafe.Sizeof(rnode24{}), 256},
