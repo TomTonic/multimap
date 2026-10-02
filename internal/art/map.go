@@ -396,9 +396,9 @@ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 		if isLeaf(n.kind) {
 			return eachValue(asLeaf(n), yield)
 		}
-		raw := asPage(n).Vals()
-		for k := i; k < j; k++ {
-			if !yield(*(*T)(unsafe.Pointer(&raw[k]))) {
+		sl := asPage(n).Slots(i, j)
+		for k := range sl {
+			if !yield(*(*T)(unsafe.Pointer(&sl[k].Val))) {
 				return false
 			}
 		}

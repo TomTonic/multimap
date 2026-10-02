@@ -15,7 +15,7 @@ var (
 	// move there after a removal.
 	ShrinkFill = 70
 	// MergeFill is how full the two pages merged into one may be.
-	MergeFill = 60
+	MergeFill = 75
 	// SplitByBytes splits a page where the bytes of its entries are halved,
 	// not where its count is.
 	SplitByBytes = false
@@ -94,7 +94,7 @@ func see(tails, uni, l int) (int, int) {
 // and the tails only if the heads are equal.
 func (p *Page) lcpEntries(i, j int) int {
 	m := min(p.length(i), p.length(j))
-	if x := p.heads()[i] ^ p.heads()[j]; x != 0 {
+	if x := p.slots()[i].Head ^ p.slots()[j].Head; x != 0 {
 		return min(bits.LeadingZeros64(x)/8, m)
 	}
 	if m <= headLen {
@@ -112,7 +112,7 @@ func (p *Page) lcpWith(i int, s []byte) int {
 	}
 	rest := s[pl:]
 	m := min(len(rest), p.length(i))
-	if x := p.heads()[i] ^ word(rest); x != 0 {
+	if x := p.slots()[i].Head ^ word(rest); x != 0 {
 		return pl + min(bits.LeadingZeros64(x)/8, m)
 	}
 	if m <= headLen {
@@ -176,11 +176,18 @@ func (p *Page) planFor(from, to int, s []byte, extra bool) plan {
 		// for a prefix to shorten.
 		return plan{n: to - from + b2i(extra), ulen: int(p.ulen)}
 	}
-	pl := p.planWith(from, to, s, extra, 0)
+	// The prefix the page has stays, as far as the new suffix starts with it: a
+	// plan that dropped it, because the keys left are too few for it to save
+	// MinGain, would need more room than the page has.
+	q0 := int(p.plen)
+	if extra && q0 > 0 {
+		q0 = min(q0, lcp(p.prefix(), s))
+	}
+	pl := p.planWith(from, to, s, extra, q0)
 	if pl.tails < MinGain { // a prefix only shortens tails
 		return pl
 	}
-	if q := p.sharedBy(from, to, s, extra); q > 0 {
+	if q := p.sharedBy(from, to, s, extra); q > q0 {
 		if with := p.planWith(from, to, s, extra, q); need(with)+MinGain <= need(pl) {
 			return with
 		}
@@ -222,9 +229,9 @@ func newPage(c int, pl plan, pfx []byte) *Page {
 		}
 		q.cap = uint8(max(k, 1))
 	}
-	h := q.heads()
+	h := q.slots()
 	for i := range h {
-		h[i] = pad
+		h[i].Head = pad
 	}
 	return q
 }
@@ -236,7 +243,7 @@ func New(c, ulen int) *Page { return newPage(c, plan{ulen: ulen}, nil) }
 // appendEntry adds an entry after the last; the page must have room.
 func (q *Page) appendEntry(w, v uint64, l int, tail []byte) {
 	n := int(q.count)
-	q.heads()[n], q.vals()[n] = w, v
+	q.slots()[n].Head, q.slots()[n].Val = w, v
 	if q.ulen != 0 {
 		q.tags()[n] = tag(w)
 	} else {
@@ -297,9 +304,9 @@ func (p *Page) rebuild(c int, pl plan, from, to int, in *insertion) *Page {
 			q.appendFull(in.s, in.v)
 		}
 		if same {
-			q.appendEntry(p.heads()[i], p.vals()[i], p.length(i), p.tail(i))
+			q.appendEntry(p.slots()[i].Head, p.slots()[i].Val, p.length(i), p.tail(i))
 		} else {
-			q.appendFull(p.Key(i, &buf), p.vals()[i])
+			q.appendFull(p.Key(i, &buf), p.slots()[i].Val)
 		}
 	}
 	if in != nil && in.pos == to {
@@ -357,8 +364,7 @@ func (p *Page) copyGeneral(q *Page, in *insertion) bool {
 	if int(q.cap) < n+b2i(in != nil) || heap+extra > int(q.top)-arraysEnd(int(q.cap), false, int(q.plen)) {
 		return false
 	}
-	copy(q.heads()[:n], p.heads()[:n])
-	copy(q.vals()[:n], p.vals()[:n])
+	copy(q.slots()[:n], p.slots()[:n])
 	copy(q.mem()[qsize-heap:], p.mem()[int(p.top):psize])
 	q.top = uint16(qsize - heap)
 	pf, qf := p.fat(), q.fat()
@@ -389,8 +395,7 @@ func (p *Page) copyUniform(q *Page, from, to int, in *insertion) {
 	n := q.count // entries written so far
 	put := func(a, b int) {
 		k := b - a
-		copy(q.heads()[n:], p.heads()[a:b])
-		copy(q.vals()[n:], p.vals()[a:b])
+		copy(q.slots()[n:], p.slots()[a:b])
 		copy(q.tags()[n:], p.tags()[a:b])
 		n += uint8(k)
 	}
@@ -415,7 +420,7 @@ func (p *Page) Insert(s []byte, v uint64) (*Page, Result, error) {
 	}
 	i, found := p.find(s)
 	if found {
-		p.vals()[i] = v
+		p.slots()[i].Val = v
 		return p, Updated, nil
 	}
 	q, res := p.InsertAt(i, s, v)
@@ -455,10 +460,9 @@ func (p *Page) insertKey(i int, key []byte, off int, v uint64) (*Page, Result) {
 // insertAt puts suffix s at position i of a page with room for it.
 func (p *Page) insertAt(i int, w, v uint64, s []byte) {
 	n := int(p.count)
-	h, vs := p.heads(), p.vals()
+	h := p.slots()
 	copy(h[i+1:n+1], h[i:n])
-	copy(vs[i+1:n+1], vs[i:n])
-	h[i], vs[i] = w, v
+	h[i] = Slot{w, v}
 	if p.ulen != 0 {
 		tg := p.tags()
 		copy(tg[i+1:n+1], tg[i:n])
@@ -497,10 +501,9 @@ func (p *Page) DeleteAt(i int) *Page {
 	if n == 1 {
 		return nil
 	}
-	h, vs := p.heads(), p.vals()
+	h := p.slots()
 	copy(h[i:n-1], h[i+1:n])
-	copy(vs[i:n-1], vs[i+1:n])
-	h[n-1] = pad
+	h[n-1].Head = pad
 	if p.ulen != 0 {
 		tg := p.tags()
 		copy(tg[i:n-1], tg[i+1:n])
@@ -579,9 +582,9 @@ func (p *Page) half(from, to int) *Page {
 func (p *Page) SplitOff(m int) (left, right *Page) {
 	n := int(p.count)
 	right = p.half(m, n)
-	h := p.heads()
+	h := p.slots()
 	for i := m; i < n; i++ {
-		h[i] = pad
+		h[i].Head = pad
 	}
 	p.count = uint8(m)
 	left = p
@@ -629,7 +632,7 @@ func Merge(a, b *Page) *Page {
 	var buf [maxSuffix]byte
 	for _, src := range []*Page{a, b} {
 		for i := range int(src.count) {
-			m.appendFull(src.Key(i, &buf), src.vals()[i])
+			m.appendFull(src.Key(i, &buf), src.slots()[i].Val)
 		}
 	}
 	return m
@@ -644,7 +647,7 @@ func (p *Page) Each(from []byte, fn func(s []byte, v uint64) bool) {
 	}
 	var buf [maxSuffix]byte
 	for ; i < int(p.count); i++ {
-		if !fn(p.Key(i, &buf), p.vals()[i]) {
+		if !fn(p.Key(i, &buf), p.slots()[i].Val) {
 			return
 		}
 	}

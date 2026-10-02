@@ -1,39 +1,44 @@
-// Package vpage is the prototype of the page of the redesign (docs/redesign,
-// step 1): a sorted run of keys of any length, each with one value, in one
-// object of 128 to 1024 bytes that holds no pointers. It is not part of the
-// tree yet; it answers the questions of PLAN step 1 (bytes per key, lines per
-// lookup, the cost of inserts and deletes) before the tree is changed.
+// Package vpage is the page of the redesign (docs/redesign): a sorted run of
+// keys of any length, each with one value, in one object of 128 to 1024 bytes
+// that holds no pointers. internal/art holds every key with one value in such a
+// page, below a range node or at the root; the page was first built and measured
+// alone (docs/redesign/step1-results.md, cmd/pagefill).
 //
-// A page holds the suffixes of its keys below the place the tree routes them
-// to; the tree strips the rest. It comes in two flavors, told by Page.ulen:
+// A page holds the suffixes of its keys from its base on, the depth the tree
+// created it at (Page.Base); the bytes before are the path to it, which the nodes
+// above have checked. It comes in two flavors, told by Page.ulen:
 //
 //   - uniform (ulen 1..8): all suffixes have that length. A key is a head
 //     word, its suffix big endian and zero padded, and a value word: 16
-//     bytes. This is the page of integer keys of branch node-pages.
+//     bytes, and one byte in the directory. This is the page of integer keys.
 //   - general (ulen 0): a suffix has any length up to 255. The head word
 //     holds its first 8 bytes, zero padded; the bytes beyond them, the tail,
 //     are in a heap that grows down from the end of the page. A key costs
 //     head, value, and a directory entry of 4 bytes, and its tail.
 //
+// The bytes that all keys of a page share may be stored once, in a prefix right
+// behind the header, if that saves enough (MinGain).
+//
 // Both flavors start with a directory in the first bytes of the page, in the
-// manner of a file allocation table: the header of 8 bytes, then an entry for
-// each key, in the order of the keys. In the uniform flavor it is a tag, one
-// byte, a hash of the key's head word. In the general flavor it is 4 bytes: the
-// tag, the length of the suffix, and the offset of its tail in the heap. A
-// lookup reads that directory, which is in the first line or two of the page,
-// compares the tag of its key with the tags of all keys, and learns the position
-// of the key, or that it is not there, and for a key with a tail, where the tail
-// is; then it reads the head, the value and the tail, which are independent of
-// each other, in one round. The arrays are packed by the capacity cap of the
-// page, which a rebuild chooses so that the slots and the heap fill up at about
-// the same time:
+// manner of a file allocation table: the header of 8 bytes, the prefix, then an
+// entry for each key, in the order of the keys. In the uniform flavor it is a
+// tag, one byte, a hash of the key's head word. In the general flavor it is 4
+// bytes: the tag, the length of the suffix, and the offset of its tail in the
+// heap. A lookup reads that directory, which is in the first line or two of the
+// page, compares the tag of its key with the tags of all keys, and learns the
+// position of the key, or that it is not there, and for a key with a tail, where
+// the tail is; then it reads the slot (head word and value, side by side) and
+// the tail, which are independent of each other, in one round. The slots are
+// packed by the capacity cap of the page, which a rebuild chooses so that the
+// slots and the heap fill up at about the same time:
 //
-//	header 8 B | prefix | directory [cap]uint8 or [cap]uint32 | heads [cap]uint64 | vals [cap]uint64 | free | heap
+//	header 8 B | prefix | directory [cap]uint8 or [cap]uint32 | slots [cap]{head, value uint64} | free | heap
 //
-// (the prefix, which all keys of the page share, and the arrays start at a multiple of 8). Heads past count hold pad, so that the
-// ordered search, which inserts, deletes and scans use, can look at every slot
-// without a branch. The directory is read as words, so the page assumes a
-// little endian machine.
+// (the prefix and the directory start at a multiple of 8, the slots at a
+// multiple of 16, so that no slot lies across two cache lines). Heads past count
+// hold pad, so that the ordered search, which inserts, deletes and scans use, can
+// look at every slot without a branch. The directory is read as words, so the
+// page assumes a little endian machine.
 package vpage
 
 import (
@@ -133,24 +138,27 @@ func (p *Page) tags() []uint8 { return unsafe.Slice((*uint8)(p.at(dirAt(int(p.pl
 // low byte, the length of its suffix, and the offset of its tail.
 func (p *Page) fat() []uint32 { return unsafe.Slice((*uint32)(p.at(dirAt(int(p.plen)))), p.cap) }
 
-// base is where the arrays of a page of capacity c and a prefix of plen bytes
-// start: after the header, the prefix and the directory, at a multiple of 8.
+// Slot is the head word of a key and its value, side by side: a lookup that has
+// found the key's position reads both in one line, and an insert or a delete
+// moves them in one copy.
+type Slot struct{ Head, Val uint64 }
+
+// base is where the slots of a page of capacity c and a prefix of plen bytes
+// start: after the header, the prefix and the directory, at a multiple of 16, so
+// that no slot lies across two cache lines.
 func base(c int, uniform bool, plen int) int {
 	if uniform {
-		return (dirAt(plen) + c + 7) &^ 7
+		return (dirAt(plen) + c + 15) &^ 15
 	}
-	return (dirAt(plen) + 4*c + 7) &^ 7
+	return (dirAt(plen) + 4*c + 15) &^ 15
 }
 
-// heads and vals return the arrays, as long as the capacity.
-func (p *Page) heads() []uint64 {
-	return unsafe.Slice((*uint64)(p.at(base(int(p.cap), p.ulen != 0, int(p.plen)))), p.cap)
-}
-func (p *Page) vals() []uint64 {
-	return unsafe.Slice((*uint64)(p.at(base(int(p.cap), p.ulen != 0, int(p.plen))+8*int(p.cap))), p.cap)
+// slots returns the slots, as many as the capacity.
+func (p *Page) slots() []Slot {
+	return unsafe.Slice((*Slot)(p.at(base(int(p.cap), p.ulen != 0, int(p.plen)))), p.cap)
 }
 
-// arraysEnd is the end of the arrays of a page of capacity c.
+// arraysEnd is the end of the slots of a page of capacity c.
 func arraysEnd(c int, uniform bool, plen int) int { return base(c, uniform, plen) + 16*c }
 
 // entry makes the directory entry of a general page.
@@ -190,23 +198,23 @@ func below(x, w uint64) int {
 // head per block of 8 first, which picks the block, then the other heads of
 // that block; all these loads are independent, so the cache misses of a page
 // that is not in the L1 cache overlap, and no branch depends on where w lies.
-func lower(h []uint64, w uint64) int {
+func lower(h []Slot, w uint64) int {
 	n := len(h)
 	if n <= 8 {
 		c := 0
 		for _, x := range h {
-			c += below(x, w)
+			c += below(x.Head, w)
 		}
 		return c
 	}
 	blk := 0
 	for f := 7; f < n; f += 8 {
-		blk += below(h[f], w)
+		blk += below(h[f].Head, w)
 	}
 	start := 8 * blk
 	c := 0
 	for _, x := range h[start:min(start+7, n)] { // a block's last head is its fence: known not to be below
-		c += below(x, w)
+		c += below(x.Head, w)
 	}
 	return start + c
 }
@@ -302,13 +310,13 @@ func (p *Page) findAt(key []byte, off int) (int, bool) {
 // uniform page a suffix of another length is never there, but has a position,
 // between the suffixes it shares a head with.
 func (p *Page) findRest(s []byte, w uint64) (int, bool) {
-	h := p.heads()
+	h := p.slots()
 	i := lower(h, w)
 	n := int(p.count)
 	if p.ulen != 0 && len(s) == int(p.ulen) {
-		return i, i < n && h[i] == w
+		return i, i < n && h[i].Head == w
 	}
-	for ; i < n && h[i] == w; i++ {
+	for ; i < n && h[i].Head == w; i++ {
 		switch c := p.cmpEntry(i, s); {
 		case c == 0:
 			return i, true
@@ -327,7 +335,7 @@ func bswap(x uint64) uint64 { return bits.ReverseBytes64(x) }
 // Get returns the value of suffix s.
 func (p *Page) Get(s []byte) (uint64, bool) {
 	if i, ok := p.Find(s); ok {
-		return p.vals()[i], true
+		return p.slots()[i].Val, true
 	}
 	return 0, false
 }
@@ -353,7 +361,7 @@ func (p *Page) lookup(s []byte, w uint64) (int, bool) {
 		for off := 0; off < n; off += 8 {
 			x := *(*uint64)(p.at(d + off)) ^ pat
 			for m := (x - ones) & ^x & highs; m != 0; m &= m - 1 {
-				if i := off + bits.TrailingZeros64(m)>>3; i < n && p.heads()[i] == w {
+				if i := off + bits.TrailingZeros64(m)>>3; i < n && p.slots()[i].Head == w {
 					return i, true
 				}
 			}
@@ -375,7 +383,7 @@ func (p *Page) lookup(s []byte, w uint64) (int, bool) {
 // directory entry is e and whose tag is the one of s, is s.
 func (p *Page) sameGeneral(i int, e uint32, s []byte, w uint64) bool {
 	l := int(e >> 8 & 0xff)
-	if l != len(s) || p.heads()[i] != w {
+	if l != len(s) || p.slots()[i].Head != w {
 		return false
 	}
 	if l <= headLen {
@@ -390,7 +398,7 @@ func (p *Page) Key(i int, buf *[maxSuffix]byte) []byte {
 	pl := int(p.plen)
 	copy(buf[:], p.prefix())
 	l := p.length(i)
-	w := p.heads()[i]
+	w := p.slots()[i].Head
 	for j := range min(l, headLen) {
 		buf[pl+j] = byte(w >> (56 - 8*j))
 	}
@@ -401,7 +409,7 @@ func (p *Page) Key(i int, buf *[maxSuffix]byte) []byte {
 }
 
 // Val returns the value at position i.
-func (p *Page) Val(i int) uint64 { return p.vals()[i] }
+func (p *Page) Val(i int) uint64 { return p.slots()[i].Val }
 
 // tag returns the tag of the key at position i, from the directory.
 func (p *Page) tag(i int) uint8 {

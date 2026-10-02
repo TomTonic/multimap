@@ -81,11 +81,11 @@ func (p *Page) findUniform(key []byte, off int) (int, bool) {
 	}
 	w := headWord(key, off)
 	n, pat := int(p.count), uint64(tag(w))*ones
-	heads := (hdr + int(p.cap) + 7) &^ 7
+	slots := base(int(p.cap), true, 0)
 	for o := 0; o < n; o += 8 {
 		x := *(*uint64)(p.at(hdr + o)) ^ pat
 		for m := (x - ones) & ^x & highs; m != 0; m &= m - 1 {
-			if i := o + bits.TrailingZeros64(m)>>3; i < n && *(*uint64)(p.at(heads + 8*i)) == w {
+			if i := o + bits.TrailingZeros64(m)>>3; i < n && *(*uint64)(p.at(slots + 16*i)) == w {
 				return i, true
 			}
 		}
@@ -104,7 +104,7 @@ func (p *Page) ByteAt(i, off int) byte {
 	case off >= l:
 		return 0
 	case off < headLen:
-		return byte(p.heads()[i] >> (56 - 8*off))
+		return byte(p.slots()[i].Head >> (56 - 8*off))
 	}
 	return p.tail(i)[off-headLen]
 }
@@ -169,17 +169,14 @@ func (p *Page) Rebase(base int, pre []byte) *Page {
 
 // ValPtr returns the address of the value at position i, which the caller may
 // read or set.
-func (p *Page) ValPtr(i int) *uint64 { return &p.vals()[i] }
-
-// Vals returns the values of the page's entries, in key order.
-func (p *Page) Vals() []uint64 { return p.vals()[:p.count] }
+func (p *Page) ValPtr(i int) *uint64 { return &p.slots()[i].Val }
 
 // AppendKey appends the suffix at position i, with the page's prefix, to dst
 // and returns the result.
 func (p *Page) AppendKey(dst []byte, i int) []byte {
 	dst = append(dst, p.prefix()...)
 	l := p.length(i)
-	w := p.heads()[i]
+	w := p.slots()[i].Head
 	for j := range min(l, headLen) {
 		dst = append(dst, byte(w>>(56-8*j)))
 	}
@@ -190,11 +187,22 @@ func (p *Page) AppendKey(dst []byte, i int) []byte {
 }
 
 // Thin reports whether the page holds so little that it may fit a page with
-// a neighbour (see Merge): its entries and heap take at most half of what a merge
-// allows. It is a cheap test that most deletes fail, which spares looking at the
-// neighbours.
+// a neighbour (see Merge): its entries and the live tails of its keys take at
+// most half of what a merge allows. It is a cheap test that most deletes fail
+// at the first step, which spares looking at the neighbours; the bytes that
+// removed keys left in the heap are not counted, since a merge gives them back.
 func (p *Page) Thin() bool {
-	used := arraysEnd(int(p.count), p.ulen != 0, int(p.plen)) + sizes[p.class()] - int(p.top)
+	n := int(p.count)
+	used := arraysEnd(n, p.ulen != 0, int(p.plen))
+	if 2*used*100 > MergeFill*sizes[MaxClass] {
+		return false
+	}
+	if p.ulen == 0 {
+		f := p.fat()
+		for i := range n {
+			used += max(int(f[i]>>8&0xff)-headLen, 0)
+		}
+	}
 	return 2*used*100 <= MergeFill*sizes[MaxClass]
 }
 
@@ -207,3 +215,8 @@ func (p *Page) Shared() int {
 	}
 	return int(p.plen) + p.lcpEntries(0, n-1)
 }
+
+// Slots returns the slots of the entries from position i up to j, in key order:
+// the head words and the values, for a scan that reads the values of a run of
+// entries without asking the page for each.
+func (p *Page) Slots(i, j int) []Slot { return p.slots()[i:j] }

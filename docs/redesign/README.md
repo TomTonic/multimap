@@ -8,7 +8,9 @@ Start here when you resume the work.
 3. [STATUS.md](STATUS.md): where the work stands, the next action and the open questions.
 4. [MEASURING.md](MEASURING.md): how to measure on Windows and arm64.
 5. [objstat-node-pages.md](objstat-node-pages.md): the object statistic of the starting point.
-   [step1-results.md](step1-results.md): the results of the page prototype (step 1).
+   [step1-results.md](step1-results.md): the results of the page prototype (step 1);
+   [step2-design.md](step2-design.md) and [step2-results.md](step2-results.md): the pages in the tree
+   (step 2) and their measurements.
 6. The tools: `bench/cmd/objstat` (the object statistic), `bench/cmd/pagefill` (bytes per key of
    the page prototype `internal/vpage`), `bench/remote/` (the arm64 job queue and its runner, see
    MEASURING.md).

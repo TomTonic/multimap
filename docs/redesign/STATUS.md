@@ -1,5 +1,27 @@
 # Status
 
+## 2026-10-02 night: step 2 done, gate 2 not met, waiting for the user's decision
+
+The pages of `internal/vpage` hold every key with one value in the tree (`internal/art`), whatever its
+length; design in [step2-design.md](step2-design.md), results and the reading against gate 2 in
+[step2-results.md](step2-results.md), raw files in `bench/results-layout/step2-pages/`. Tests: 100%
+coverage in `art` and `vpage`, `go test -race ./internal/...` and the fuzz test (`FuzzOperations`, 60 s)
+pass, `golangci-lint` is clean.
+
+**What the pages bring** against `node-pages` (and `btree-map`): string ranges and prefix queries 2.5-5.6
+times faster, memory per key -4..-46% for five of seven kinds and below `btree-map` for all seven, 2-9
+times less for the garbage collector to scan, point lookups of string keys at 256K 8-29% faster, multi
+profile neutral.
+
+**What they cost:** at 4K-16K keys point lookups 5-19% slower, `build` 3-30% slower, `churn` of email
+and uuid 10-20% slower, `u64` 5-14% slower in every operation; `url` and `path` are below `btree-map`
+at 4K-16K in ranges, `churn` and `build`. Gate 2 as written (no cell below 0.85, `u64` unchanged,
+credo 1 and 2 for every kind) is not met.
+
+**Decision for the user:** the four options and my recommendation (keep the old integer page next to the
+new general page, accept the rest as the price of the design, and take the routing layer of step 4 on
+next) are at the end of step2-results.md. Nothing in steps 3-6 starts before the decision.
+
 ## 2026-10-02 evening: step 1 done, page prefix built, waiting for the go for step 2
 
 The page prototype (`internal/vpage`, 100% coverage, fuzzed, race and lint clean) and its

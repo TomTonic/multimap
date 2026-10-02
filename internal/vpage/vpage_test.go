@@ -68,7 +68,7 @@ func check(t *testing.T, p *Page) {
 		t.Fatalf("count %d, cap %d, arrays end %d, heap %d of %d", n, c, arraysEnd(c, p.ulen != 0, int(p.plen)), p.top, end)
 	}
 	for i := n; i < c; i++ {
-		if p.heads()[i] != pad {
+		if p.slots()[i].Head != pad {
 			t.Fatalf("head %d past the count is not padded", i)
 		}
 	}
@@ -86,8 +86,8 @@ func check(t *testing.T, p *Page) {
 			t.Fatalf("key %d has %d bytes in a uniform page of %d", i, len(k), p.ulen)
 		}
 		got := p.tag(i)
-		if p.heads()[i] != word(k) || got != tag(word(k)) {
-			t.Fatalf("key %d: head %x, word %x, tag %x, want %x", i, p.heads()[i], word(k), got, tag(word(k)))
+		if p.slots()[i].Head != word(k) || got != tag(word(k)) {
+			t.Fatalf("key %d: head %x, word %x, tag %x, want %x", i, p.slots()[i].Head, word(k), got, tag(word(k)))
 		}
 		if i > 0 && bytes.Compare(prevKey, full) >= 0 {
 			t.Fatalf("keys %d and %d are out of order: %x %x", i-1, i, prevKey, full)
@@ -518,8 +518,8 @@ func TestLayout(t *testing.T) {
 		}
 	}
 	for c := 1; c < 40; c++ {
-		if base(c, true, 0)%8 != 0 || base(c, false, 0)%8 != 0 || base(c, true, 0) < hdr+c || base(c, false, 0) < hdr+4*c {
-			t.Errorf("the arrays of capacity %d start at %d (uniform) and %d: not a multiple of 8, or inside the directory", c, base(c, true, 0), base(c, false, 0))
+		if base(c, true, 0)%16 != 0 || base(c, false, 0)%16 != 0 || base(c, true, 0) < hdr+c || base(c, false, 0) < hdr+4*c {
+			t.Errorf("the arrays of capacity %d start at %d (uniform) and %d: not a multiple of 16, or inside the directory", c, base(c, true, 0), base(c, false, 0))
 		}
 	}
 }

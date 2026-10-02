@@ -234,27 +234,22 @@ func getTrace(p *Page, s []byte) (lines map[int]bool, rounds int, v uint64, ok b
 		return lines, rounds, 0, false
 	}
 	w, t := word(s), tag(word(s))
-	first := true
 	for i := range n {
 		if p.tag(i) != t {
 			continue
 		}
 		rounds = 2
-		read(base(c, u, pl)+8*i, 8) // the head
-		if first {                  // the value and the tail are read on speculation, while the head is compared
-			first = false
-			read(base(c, u, pl)+8*c+8*i, 8)
-		}
+		read(base(c, u, pl)+16*i, 16) // the head and the value, side by side
 		if !u && p.length(i) > headLen {
 			read(int(p.fat()[i]>>16), p.length(i)-headLen)
 		}
-		if p.heads()[i] != w || (!u && p.length(i) != len(s)) {
+		if p.slots()[i].Head != w || (!u && p.length(i) != len(s)) {
 			continue
 		}
 		if !u && p.length(i) > headLen && !bytes.Equal(p.tail(i), s[headLen:]) {
 			continue
 		}
-		return lines, rounds, p.vals()[i], true
+		return lines, rounds, p.slots()[i].Val, true
 	}
 	return lines, rounds, 0, false
 }

@@ -161,8 +161,11 @@ func TestPageAccessors(t *testing.T) {
 			t.Fatalf("AppendKey(%d) = %q", i, got)
 		}
 	}
-	if !slices.Equal(p.Vals(), []uint64{0, 1, 2}) {
-		t.Fatalf("Vals = %v", p.Vals())
+	if p.Val(0) != 0 || p.Val(1) != 1 || p.Val(2) != 2 {
+		t.Fatalf("values %d %d %d, want 0 1 2", p.Val(0), p.Val(1), p.Val(2))
+	}
+	if sl := p.Slots(1, 3); len(sl) != 2 || sl[0].Val != 1 || sl[1].Val != 2 {
+		t.Fatalf("Slots(1, 3) = %v, want the values 1 and 2", sl)
 	}
 	*p.ValPtr(1) = 42
 	if v, _ := p.Get(ks[1]); v != 42 {
@@ -393,4 +396,36 @@ func mustFind(t *testing.T, p *Page, k []byte) int {
 		t.Fatalf("key %x is not in the page", k)
 	}
 	return i
+}
+
+// TestSplitFullPages makes sure that a page filled to the brim can be cut at any
+// position, for every shape of key: each half needs no more room than the page
+// had, which holds only if a half keeps the prefix its page has, however few
+// keys are left to make the prefix pay. It belongs to the page of the redesign
+// (docs/redesign, step 2), whose tree splits full pages again and again; a half
+// that did not fit a class crashed a build of 256K urls once. The test cuts
+// pages of every shape at every position.
+func TestSplitFullPages(t *testing.T) {
+	for name, gen := range shapes {
+		t.Run(name, func(t *testing.T) {
+			r := rand.New(rand.NewPCG(31, 32))
+			for round := range 20 {
+				ks := fitting(r, gen, 3+round*2)
+				if len(ks) < 2 {
+					continue
+				}
+				for m := 1; m < len(ks); m++ {
+					l, rt := pageOf(t, 0, ks).SplitOff(m)
+					check(t, l)
+					check(t, rt)
+					if l.Len() != m || rt.Len() != len(ks)-m {
+						t.Fatalf("a split at %d of %d keys: halves of %d and %d", m, len(ks), l.Len(), rt.Len())
+					}
+					a, b := pageOf(t, 0, ks).SplitAt(m)
+					check(t, a)
+					check(t, b)
+				}
+			}
+		})
+	}
 }
