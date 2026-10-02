@@ -87,9 +87,9 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
 		switch {
 		case *c == nil:
 			n = rRemove(n, i)
-		case isPage((*c).kind) && int(asPage(*c).count) <= pageCaps[len(pageCaps)-1]/4:
-			// Two pages merge only if they hold at most half a page between them,
-			// so one with more than a quarter does not need its neighbours looked at.
+		case isPage((*c).kind) && asPage(*c).Thin():
+			// Two pages merge only if they fit one page together, so one that is
+			// not thin does not need its neighbours looked at.
 			n = rMerge(n, i)
 		}
 	default:
@@ -113,17 +113,14 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
 // the key's value is not *want, and reports what it found (see del).
 func delFromPage(loc **header, key []byte, want *uint64) int8 {
 	p := asPage(*loc)
-	if len(key) != int(p.klen) {
-		return absent
-	}
-	i, ok := p.search(keyWord(key))
+	i, ok := p.FindIn(key)
 	switch {
 	case !ok:
 		return absent
-	case want != nil && p.vals()[i] != *want:
+	case want != nil && p.Val(i) != *want:
 		return keptEntry
 	}
-	*loc = pageHdr(p.removeAt(i))
+	*loc = pageHdr(p.DeleteAt(i))
 	return deleted
 }
 
@@ -145,7 +142,7 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 	b, c := onlyChild(n)
 	if c.kind <= kLastPage {
 		if isPage(c.kind) {
-			return c // pages hold whole keys: they just move up
+			return pageUp(n, c, key, depth)
 		}
 		l := asLeaf(c)
 		if l.base() <= depth {
@@ -159,6 +156,21 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 		p = append(p, byte(b))
 	}
 	return withPath(c, appendPath(p, c))
+}
+
+// pageUp returns what should stand in the place of the range node n at depth,
+// which has no term and one child, page c: the page, which then starts at depth,
+// or n itself if the page cannot take the bytes of n's path in front of its
+// keys.
+func pageUp(n, c *header, key []byte, depth int) *header {
+	p := asPage(c)
+	if p.Base() <= depth {
+		return c
+	}
+	if q := p.Rebase(depth, key[depth:p.Base()]); q != nil {
+		return pageHdr(q)
+	}
+	return n
 }
 
 // childCount returns the number of byte children of an inner node, or of ranges

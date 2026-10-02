@@ -113,7 +113,7 @@ func (m *Map[T]) object(n *header) Object {
 		return m.leafObject(asLeaf(n))
 	case isPage(n.kind):
 		p := asPage(n)
-		return Object{"page", 64 << p.class, false, int(p.count)}
+		return Object{"page", p.Size(), false, p.Len()}
 	}
 	size, label := int(fixedSize[n.kind&kindMask]), kindLabels[n.kind]
 	if tc := tailClass(n.pathLen()); tc != tailNone {

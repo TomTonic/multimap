@@ -75,12 +75,12 @@ func TestRangeNodeClasses(t *testing.T) {
 	}
 }
 
-// TestPageKeyLength makes sure that a map of integers holds them in pages and
-// that keys of other lengths still work among them. It covers the pages of the
-// ART behind multimap.Ordered, whose keys all have the length of the first key
-// of an empty map and at most 8 bytes: shorter and longer keys get leaves next
-// to the pages, a first key that is too long leaves the map without pages, and
-// a map that has become empty chooses again.
+// TestPageKeyLength makes sure that keys of any length go into pages, and that
+// a key that no page holds, because more than 255 bytes of it lie below the
+// page, gets a leaf and stays among them. It covers the pages of the ART behind
+// multimap.Ordered, which hold the part of every key below their base: a map
+// whose first key is such a long one has pages for the keys that follow, and a
+// map that has become empty starts again.
 func TestPageKeyLength(t *testing.T) {
 	var m Map[uint64]
 	ref := reference{}
@@ -102,11 +102,23 @@ func TestPageKeyLength(t *testing.T) {
 	pages := func() int {
 		count := map[kind]int{}
 		kindsOf(m.t.root, count)
-		return count[kPage]
+		n := 0
+		for k := kPage; k <= kLastPage; k++ {
+			n += count[k]
+		}
+		return n
 	}
-	fill(2000) // the first key has 4 bytes: only such keys go into pages
+	leaves := func(m *Map[uint64]) int {
+		n := 0
+		m.Objects(func(o Object) { n += b2i(o.Label == "flat leaf" || o.Label == "set leaf") })
+		return n
+	}
+	fill(2000)
 	if pages() == 0 {
-		t.Fatal("keys of the first key's length did not go into pages")
+		t.Fatal("keys of three lengths did not go into pages")
+	}
+	if n := leaves(&m); n > 10 { // keys that are the prefix of others end at a node: their leaf is its term
+		t.Fatalf("%d of %d keys of one value have leaves, want pages for nearly all", n, m.Len())
 	}
 	for k := range ref {
 		m.RemoveKey([]byte(k))
@@ -115,11 +127,12 @@ func TestPageKeyLength(t *testing.T) {
 	if m.t.root != nil {
 		t.Fatalf("%d keys left", m.Len())
 	}
-	m.Add(bytes.Repeat([]byte{'x'}, 20), 1) // too long for a page
-	ref.add(bytes.Repeat([]byte{'x'}, 20), 1)
+	long := bytes.Repeat([]byte{'x'}, 300) // too long for a page
+	m.Add(long, 1)
+	ref.add(long, 1)
 	fill(2000)
-	if pages() != 0 {
-		t.Fatal("a map whose first key is too long holds pages")
+	if pages() == 0 || leaves(&m) < 1 || leaves(&m) > 11 {
+		t.Fatalf("after a first key that is too long: %d pages, %d leaves, want pages and a few leaves", pages(), leaves(&m))
 	}
 }
 

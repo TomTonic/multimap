@@ -73,7 +73,10 @@ const (
 	_
 	_
 	kLastLeaf // flat leaf of the largest class
-	kPage     // page, see page.go
+	kPage     // page of the smallest class; kPage+c is a page of class c (see page.go)
+	_
+	_
+	kLastPage // page of the largest class
 	kN5
 	kN12
 	kN26
@@ -85,9 +88,8 @@ const (
 	kR256
 )
 
-// kLastPage is the last kind that ends a descent: leaves and pages come first,
-// so that one comparison detects them.
-const kLastPage = kPage
+// A descent ends at an object of a kind up to kLastPage: leaves and pages come
+// first, so that one comparison detects them.
 
 // kindMask maps a kind to an index of the tables below, which hold every kind.
 const kindMask = 31
@@ -144,8 +146,8 @@ type leafHead struct {
 // isLeaf reports whether an object of kind k is a leaf.
 func isLeaf(k kind) bool { return k <= kLastLeaf }
 
-// isPage reports whether an object of kind k is a page of either type.
-func isPage(k kind) bool { return k == kPage }
+// isPage reports whether an object of kind k is a page.
+func isPage(k kind) bool { return k-kPage <= kLastPage-kPage }
 
 // isRange reports whether an object of kind k is a range node.
 func isRange(k kind) bool { return k >= kR8 }

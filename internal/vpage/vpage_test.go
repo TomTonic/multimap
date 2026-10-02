@@ -40,6 +40,9 @@ var shapes = map[string]func(r *rand.Rand) []byte{
 	"deep": func(r *rand.Rand) []byte {
 		return append([]byte("/a/very/deep/directory/of/some/repository/"), rbytes(r, 1+r.IntN(6), 3)...)
 	},
+	"twelve": func(r *rand.Rand) []byte { // 12 bytes that share 6: a page of them is uniform, with a prefix
+		return append([]byte("shared"), rbytes(r, 6, 256)...)
+	},
 	"long":  func(r *rand.Rand) []byte { return rbytes(r, 200+r.IntN(56), 2) },
 	"zeros": func(r *rand.Rand) []byte { return make([]byte, r.IntN(12)) },
 	"any":   func(r *rand.Rand) []byte { return rbytes(r, r.IntN(maxSuffix+1), 256) },

@@ -34,11 +34,11 @@ func (t *Tree) leafOf(it item, depth int) *leafHead {
 // from its keys. Items that fit a page become one; otherwise a range node
 // takes their common path and splits them into ranges (see ranges).
 func (t *Tree) build(items []item, depth int) *header {
-	if len(items) == 1 && items[0].leaf != nil {
-		return leafHdr(t.leafOf(items[0], depth))
-	}
-	if p := pageFor(items); p != nil {
+	if p := pageFor(items, depth); p != nil {
 		return pageHdr(p)
+	}
+	if len(items) == 1 {
+		return leafHdr(t.leafOf(items[0], depth)) // a key that no page holds, or that has a leaf
 	}
 	first, last := items[0].key, items[len(items)-1].key
 	plen := swar.Lcp(first[depth:], last[depth:])
@@ -68,7 +68,7 @@ func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 	if first == last {
 		return append(out, rng{first, t.build(items, d)})
 	}
-	if p := pageFor(items); p != nil {
+	if p := pageFor(items, d); p != nil {
 		return append(out, rng{first, pageHdr(p)})
 	}
 	k := slices.IndexFunc(items, func(it item) bool { return it.leaf != nil })
@@ -172,7 +172,7 @@ func crowded(r *rhead, gained int) bool {
 	for _, c := range r.children()[:r.n] {
 		switch {
 		case isPage(c.kind):
-			keys += int(asPage(c).count)
+			keys += asPage(c).Len()
 		case isRange(c.kind):
 			ranges++
 		default:
@@ -215,7 +215,7 @@ func (w *walker) walk(n *header, depth int) {
 		w.leaf(asLeaf(n))
 		return
 	case isPage(n.kind):
-		w.out = append(w.out, pageItems(asPage(n))...)
+		w.out = append(w.out, pageItems(asPage(n), w.path)...)
 		return
 	}
 	w.path = appendPath(w.path[:depth], n)

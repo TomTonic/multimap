@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/TomTonic/multimap/internal/swar"
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // spot is where upsert left a key that already was in a page: at position i of
@@ -30,9 +31,6 @@ type spot struct {
 // added right where the descent stopped, without a second traversal.
 func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 	loc, depth := &t.root, 0
-	if t.root == nil {
-		t.chooseKeyLen(key)
-	}
 	var par **header // the range node *loc is a child of, or nil
 	pi := 0
 	inner := false // *loc is below an inner node, where no pages go
@@ -107,20 +105,6 @@ func (t *Tree) hasPages() bool {
 	return t.root != nil && (isPage(t.root.kind) || isRange(t.root.kind))
 }
 
-// chooseKeyLen decides, when key is the first key of an empty tree, how long
-// the keys of its pages are: as long as key, if it is short enough for a page. A
-// tree whose keys all have the length of its first one, such as a tree of
-// integers, holds them in pages; keys of other lengths get leaves.
-func (t *Tree) chooseKeyLen(key []byte) {
-	t.pk = 0
-	if t.small && len(key) <= maxPageKey {
-		t.pk = uint8(len(key)) + 1
-	}
-}
-
-// pageable reports whether key may go into a page.
-func (t *Tree) pageable(key []byte) bool { return t.pk != 0 && len(key) == int(t.pk)-1 }
-
 // firstByte returns byte depth of every key below c, a child of a range
 // node, if they all share it: the byte of a leaf, or the first path byte of a
 // node. A page's keys may differ there.
@@ -137,63 +121,91 @@ func firstByte(c *header, depth int) (byte, bool) {
 // newChild returns a new page holding key with the raw value v when the key
 // fits a page, else a new leaf made by nl, for a child at depth.
 func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc, depth int) *header {
-	if !t.pageable(key) {
+	if !t.pageable(key, depth) {
 		return leafHdr(nl(key, depth))
 	}
-	p := newPage(0)
-	p.count, p.klen = 1, uint8(len(key))
-	w := keyWord(key)
-	p.heads()[0], p.vals()[0], p.bloom = w, v, bloomBit(w)
-	return pageHdr(p)
+	return pageHdr(newPageFor(key, depth, v))
 }
 
-// upsertPage handles a key whose descent reaches the page at *loc: the key is
-// there, or goes in, or the subtree is rebuilt with it (see build) because
-// the page is full or the key does not fit it.
+// upsertPage handles a key whose descent reaches the page at *loc, whose keys
+// are the ones below depth: the key is there, or goes in, or the subtree is
+// rebuilt with it (see build) because the page is full or the key does not fit
+// it.
 func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v uint64, nl newLeafFunc) **header {
 	p := asPage(*loc)
+	base := p.Base()
 	full := false // the key fits the page but for its room
-	if t.pageable(key) {
-		w := keyWord(key)
-		i, ok := p.search(w)
-		switch {
-		case ok:
+	if len(key)-base <= maxPageSuffix {
+		i, ok := p.LocateIn(key)
+		if ok {
 			t.at = spot{loc: loc, i: i, depth: depth, par: par, pi: pi}
 			return loc
-		case int(p.count) < pageCaps[len(pageCaps)-1]:
-			*loc = pageHdr(p.insertAt(i, w, v))
+		}
+		q, res := p.InsertIn(i, key, v) // the suffix is not too long: checked above
+		if res != vpage.Full {
+			*loc = pageHdr(q)
 			t.size++
 			return loc
 		}
 		full = true
 	}
-	if full && par != nil && splitFull(loc, par, pi, depth) {
-		r := asR(*par)
-		i := r.index(key[depth])
-		return t.upsertPage(&r.children()[i], par, i, key, depth, v, nl)
+	if full {
+		if par != nil && splitFull(loc, par, pi, depth) {
+			r := asR(*par)
+			i := r.index(key[depth])
+			return t.upsertPage(&r.children()[i], par, i, key, depth, v, nl)
+		}
+		return t.burst(loc, p, key, depth, v, nl)
 	}
 	it := item{key: key, val: v}
-	if !t.pageable(key) {
+	if !t.pageable(key, depth) {
 		it = item{key: key, leaf: nl(key, depth)}
 	}
-	items := pageItems(p)
+	items := pageItems(p, key)
 	i, _ := slices.BinarySearchFunc(items, key, func(x item, k []byte) int { return bytes.Compare(x.key, k) })
 	t.replace(loc, par, pi, slices.Insert(items, i, it), depth)
 	t.size++
 	return t.upsert(key, v, nl) // finds the key in the rebuilt subtree
 }
 
+// burst makes room for key where the full page p at *loc, whose keys start at
+// depth and share their byte there (or the page is the root), cannot be split
+// by a byte at that depth. The keys of p all start with the bytes up to some
+// depth d. If key starts with them too, the page gets a range node of its own
+// with those bytes as its path, in which splitFull can cut it where its keys
+// differ; else key leaves them where it differs, and a range node there holds p
+// and a new page or leaf for key (see fork). Either way no key of the page is
+// copied: it replaces a rebuild of the subtree from its keys.
+func (t *Tree) burst(loc **header, p *vpage.Page, key []byte, depth int, v uint64, nl newLeafFunc) **header {
+	var buf [maxPageSuffix]byte
+	base, d := p.Base(), p.Base()+p.Shared()
+	first := p.Key(0, &buf)[depth-base:] // the first key, from depth on: it holds the shared bytes
+	shared := first[:d-depth]
+	if m := swar.Lcp(shared, key[depth:]); depth+m < d {
+		return t.fork(loc, pageHdr(p), false, key, depth, depth+m, v, nl)
+	}
+	var term *leafHead
+	if len(first) == d-depth {
+		// The first key is the shared bytes: it ends at the range node, so it is
+		// the node's term, and a leaf. The others are longer.
+		whole := append(key[:depth:depth], first...)
+		term = t.mk(whole, d, p.Val(0))
+		p = p.DeleteAt(0) // the page was full: it has more keys
+	}
+	*loc = makeR(key[depth:d], term, []rng{{0, pageHdr(p)}})
+	return t.upsert(key, v, nl)
+}
+
 // splitFull splits the full page at *loc, child pi of the range node at
 // *par, whose keys start at depth, at the byte boundary nearest its middle
 // (see ranges): the page keeps the keys before it and a new page takes the
 // others, with a range of its own. Unlike a rebuild, it copies half a page
-// and allocates one, and the keys keep their encoding: a K page's half keeps
-// the shared prefix, which its keys may share beyond. It reports false and
-// changes nothing when all keys share their byte at depth.
+// and allocates one. It reports false and changes nothing when all keys share
+// their byte at depth.
 func splitFull(loc, par **header, pi, depth int) bool {
 	p := asPage(*loc)
-	n := int(p.count)
-	at := p.byteAt(depth)
+	n := p.Len()
+	at := func(i int) byte { return p.ByteAt(i, depth-p.Base()) }
 	if at(0) == at(n-1) {
 		return false // all keys share byte depth
 	}
@@ -210,16 +222,9 @@ func splitFull(loc, par **header, pi, depth int) bool {
 		s = hi
 	}
 	rb := at(s)
-	left, right := p.split(s)
+	left, right := p.SplitOff(s)
 	*par = rSplice(*par, pi, []rng{{0, pageHdr(left)}, {rb, pageHdr(right)}})
 	return true
-}
-
-// byteAt returns a function that returns byte depth of key i of p, below a
-// range node at depth.
-func (p *pageHead) byteAt(depth int) func(i int) byte {
-	h, sh := p.keys(), 56-8*depth
-	return func(i int) byte { return byte(h[i] >> sh) }
 }
 
 // replace puts items, the keys of the page at *at, in the page's place: as a
@@ -248,15 +253,16 @@ func (t *Tree) promote(sp spot, l *leafHead, key []byte) {
 // page's keys are rebuilt with the leaf in the key's place (see ranges), which
 // gives it a range or a subtree of its own.
 func (t *Tree) place(sp spot, l *leafHead, key []byte) {
-	p, i, n := asPage(*sp.loc), sp.i, int(asPage(*sp.loc).count)
+	p, i := asPage(*sp.loc), sp.i
+	n := p.Len()
 	if n == 1 {
 		*sp.loc = leafHdr(l) // the page held only this key
 		return
 	}
 	// Below a range node, a key alone with its byte gets a range of its own
 	// by cutting the page around it.
-	if at := p.byteAt(sp.depth); sp.par != nil &&
-		(i == 0 || at(i-1) != at(i)) && (i == n-1 || at(i+1) != at(i)) {
+	at := func(i int) byte { return p.ByteAt(i, sp.depth-p.Base()) }
+	if sp.par != nil && (i == 0 || at(i-1) != at(i)) && (i == n-1 || at(i+1) != at(i)) {
 		b := at(i)
 		var after byte
 		if i < n-1 {
@@ -264,19 +270,19 @@ func (t *Tree) place(sp spot, l *leafHead, key []byte) {
 		}
 		var rs []rng
 		if i > 0 {
-			var left *pageHead
-			left, p = p.split(i)
+			var left *vpage.Page
+			left, p = p.SplitAt(i)
 			rs = append(rs, rng{0, pageHdr(left)})
 		}
 		rs = append(rs, rng{b, leafHdr(l)})
 		if i < n-1 {
-			_, right := p.split(1)
+			_, right := p.SplitAt(1)
 			rs = append(rs, rng{after, pageHdr(right)})
 		}
 		*sp.par = rSplice(*sp.par, sp.pi, rs)
 		return
 	}
-	items := pageItems(p)
+	items := pageItems(p, key)
 	items[sp.i] = item{key: key, leaf: l}
 	t.replace(sp.loc, sp.par, sp.pi, items, sp.depth)
 }
@@ -291,8 +297,7 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uin
 		return loc
 	}
 	p := swar.Lcp(ls, rest)
-	if !inner && t.pageable(key) {
-		d := depth + p
+	if d := depth + p; !inner && t.pageable(key, d) {
 		return t.fork(loc, leafHdr(l), d == l.keyLen(), key, depth, d, v, nl)
 	}
 	nn := newNode(kN5, p)
@@ -340,7 +345,7 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d i
 	rs := []rng{{0, nc}}
 	if oend {
 		term = asLeaf(old)
-	} else if ob, _ := firstByte(old, d); key[d] < ob {
+	} else if ob := forkByte(old, d); key[d] < ob {
 		rs = append(rs, rng{ob, old})
 	} else {
 		rs = []rng{{0, old}, {key[d], nc}}
@@ -349,6 +354,17 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d i
 	r := asR(*loc)
 	t.size++
 	return &r.children()[r.index(key[d])]
+}
+
+// forkByte returns byte d of every key below old, a leaf, a node whose path
+// starts there or a page whose keys all share that byte, which fork puts next to
+// a new key.
+func forkByte(old *header, d int) byte {
+	if isPage(old.kind) {
+		return asPage(old).ByteAt(0, d-asPage(old).Base())
+	}
+	b, _ := firstByte(old, d)
+	return b
 }
 
 // attachAt hangs leaf l below node h, where rest is l's key from h's child

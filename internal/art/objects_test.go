@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"unsafe"
+
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // allocated returns the size of the blocks Go allocates for the objects that mk
@@ -141,8 +143,8 @@ func TestObjectSizes(t *testing.T) {
 		}
 	})
 	t.Run("pages of every class", func(t *testing.T) {
-		for class := range pageCaps {
-			check(t, &flat, func() unsafe.Pointer { return unsafe.Pointer(newPage(class)) })
+		for class := range 4 {
+			check(t, &flat, func() unsafe.Pointer { return unsafe.Pointer(vpage.New(class, 0)) })
 		}
 	})
 	t.Run("flat leaves of every class", func(t *testing.T) {

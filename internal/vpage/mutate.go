@@ -27,7 +27,7 @@ var (
 	// prefix shortens the tails, which only keys longer than a head have, and may
 	// make the page uniform. A prefix that does not pay costs the lookup its
 	// shifts and a rebuild that changes it cuts all keys anew.
-	MinGain = 16
+	MinGain = 48
 	// PrefixSlack makes a rebuild keep this many bytes less than the keys
 	// share, so that keys that differ a little later do not shorten it again.
 	PrefixSlack = 0
@@ -171,6 +171,11 @@ func (p *Page) planWith(from, to int, s []byte, extra bool, q int) plan {
 // planFor returns the plan of the entries from to to of p and, if extra, of one
 // more suffix s: with the prefix they share if that saves MinGain bytes.
 func (p *Page) planFor(from, to int, s []byte, extra bool) plan {
+	if p.ulen != 0 && p.plen == 0 && (!extra || len(s) == int(p.ulen)) {
+		// A page of equal short suffixes stays what it is: there are no tails
+		// for a prefix to shorten.
+		return plan{n: to - from + b2i(extra), ulen: int(p.ulen)}
+	}
 	pl := p.planWith(from, to, s, extra, 0)
 	if pl.tails < MinGain { // a prefix only shortens tails
 		return pl
@@ -198,7 +203,7 @@ func fitClass(pl plan, min, fill int) int {
 // is the entries of pl and as many more as fit with tails of the average length.
 func newPage(c int, pl plan, pfx []byte) *Page {
 	q := alloc(c)
-	q.class, q.ulen, q.plen = uint8(c), uint8(pl.ulen), uint8(pl.plen)
+	q.kind, q.ulen, q.plen = KindBase+uint8(c), uint8(pl.ulen), uint8(pl.plen)
 	size := sizes[c]
 	q.top = uint16(size)
 	copy(q.mem()[hdr:], pfx)
@@ -274,10 +279,18 @@ func (p *Page) rebuild(c int, pl plan, from, to int, in *insertion) *Page {
 		pfx = p.Key(from, &buf)[:pl.plen]
 	}
 	q := newPage(c, pl, pfx)
+	q.base = p.base
 	same := pl.plen == int(p.plen)
 	Counts.Rebuilds++
 	if !same {
 		Counts.PrefixChanges++
+	}
+	if same && p.ulen != 0 && pl.ulen == int(p.ulen) {
+		p.copyUniform(q, from, to, in)
+		return q
+	}
+	if same && p.ulen == 0 && pl.ulen == 0 && from == 0 && to == int(p.count) && p.copyGeneral(q, in) {
+		return q
 	}
 	for i := from; i < to; i++ {
 		if in != nil && in.pos == i {
@@ -295,6 +308,103 @@ func (p *Page) rebuild(c int, pl plan, from, to int, in *insertion) *Page {
 	return q
 }
 
+// compactFor makes room in the heap for a tail of tail bytes by moving the tails
+// of the entries together, if the room that the removed entries left is enough,
+// and reports whether it did. A page in which keys come and go would otherwise
+// be rebuilt, in a new object, every time its heap has run out.
+func (p *Page) compactFor(tail int) bool {
+	n, live := int(p.count), 0
+	f := p.fat()
+	for i := range n {
+		live += max(int(f[i]>>8&0xff)-headLen, 0)
+	}
+	size := sizes[p.class()]
+	if size-arraysEnd(int(p.cap), false, int(p.plen))-live < tail {
+		return false
+	}
+	var tmp [1024]byte // the tails, at the offsets they will have
+	top := size
+	for i := range n {
+		e := f[i]
+		l := int(e>>8&0xff) - headLen
+		if l <= 0 {
+			continue
+		}
+		off := int(e >> 16)
+		top -= l
+		copy(tmp[top:], p.mem()[off:off+l])
+		f[i] = entry(uint8(e), int(e>>8&0xff), top)
+	}
+	copy(p.mem()[top:size], tmp[top:size])
+	p.top = uint16(top)
+	return true
+}
+
+// copyGeneral fills q, an empty page of the same general flavor and prefix as p,
+// with all entries of p and, if in is not nil, its suffix: the heads and values
+// in two block copies and the heap in one, with the offsets of the tails moved by
+// the difference of the page sizes. It copies the garbage in the heap, too, and
+// reports false, having changed nothing, if that leaves no room for the new
+// entry.
+func (p *Page) copyGeneral(q *Page, in *insertion) bool {
+	n := int(p.count)
+	psize, qsize := sizes[p.class()], sizes[q.class()]
+	heap := psize - int(p.top)
+	extra := 0
+	if in != nil {
+		extra = max(len(in.s)-int(q.plen)-headLen, 0)
+	}
+	if int(q.cap) < n+b2i(in != nil) || heap+extra > int(q.top)-arraysEnd(int(q.cap), false, int(q.plen)) {
+		return false
+	}
+	copy(q.heads()[:n], p.heads()[:n])
+	copy(q.vals()[:n], p.vals()[:n])
+	copy(q.mem()[qsize-heap:], p.mem()[int(p.top):psize])
+	q.top = uint16(qsize - heap)
+	pf, qf := p.fat(), q.fat()
+	delta := qsize - psize
+	for i := range n {
+		e := pf[i]
+		if e>>8&0xff > headLen { // it has a tail
+			e = e&0xffff | uint32(int(e>>16)+delta)<<16
+		}
+		qf[i] = e
+	}
+	q.count = uint8(n)
+	if in != nil {
+		q.insertAt(in.pos, headWord(in.s, int(q.plen)), in.v, in.s[q.plen:])
+	}
+	return true
+}
+
+// copyUniform fills q, an empty page of the same uniform flavor and prefix as p,
+// with the entries from to to of p and, if in is not nil, its suffix before the
+// entry at position in.pos: three block copies, since the entries of uniform
+// pages need no heap.
+func (p *Page) copyUniform(q *Page, from, to int, in *insertion) {
+	at := to
+	if in != nil {
+		at = in.pos
+	}
+	n := q.count // entries written so far
+	put := func(a, b int) {
+		k := b - a
+		copy(q.heads()[n:], p.heads()[a:b])
+		copy(q.vals()[n:], p.vals()[a:b])
+		copy(q.tags()[n:], p.tags()[a:b])
+		n += uint8(k)
+	}
+	put(from, at)
+	q.count = n
+	if in != nil {
+		rest := in.s[q.plen:]
+		q.appendEntry(headWord(in.s, int(q.plen)), in.v, len(rest), nil)
+		n = q.count
+		put(at, to)
+	}
+	q.count = n
+}
+
 // Insert sets the value of suffix s, adding it if it is not there. It returns
 // the page, or the larger page that replaces it; the old page must not be used
 // any more then. Full means that nothing changed because the page holds as much
@@ -308,19 +418,38 @@ func (p *Page) Insert(s []byte, v uint64) (*Page, Result, error) {
 		p.vals()[i] = v
 		return p, Updated, nil
 	}
-	rest, rel := p.strip(s)
-	tail := max(len(rest)-headLen, 0)
-	fits := rel == 0 && (p.ulen == 0 || len(rest) == int(p.ulen))
-	if fits && int(p.count) < int(p.cap) && (p.ulen != 0 || tail <= p.heapFree()) {
-		p.insertAt(i, word(rest), v, rest)
-		return p, Inserted, nil
+	q, res := p.InsertAt(i, s, v)
+	return q, res, nil
+}
+
+// InsertAt adds suffix s, which is not in the page and goes at position i (see
+// Locate), with the value v: what Insert does after its search. s must not be
+// longer than 255 bytes.
+func (p *Page) InsertAt(i int, s []byte, v uint64) (*Page, Result) { return p.insertKey(i, s, 0, v) }
+
+// InsertIn is InsertAt for the part of key from the page's base on.
+func (p *Page) InsertIn(i int, key []byte, v uint64) (*Page, Result) {
+	return p.insertKey(i, key, int(p.base), v)
+}
+
+// insertKey adds the suffix key[off:] at position i.
+func (p *Page) insertKey(i int, key []byte, off int, v uint64) (*Page, Result) {
+	plen := int(p.plen)
+	has := len(key)-off >= plen && (plen == 0 || string(key[off:off+plen]) == string(p.prefix())) // s starts with the prefix
+	rest := len(key) - off - plen                                                                 // its length after the prefix
+	tail := max(rest-headLen, 0)
+	fits := has && (p.ulen == 0 || rest == int(p.ulen))
+	if fits && int(p.count) < int(p.cap) && (p.ulen != 0 || tail <= p.heapFree() || p.compactFor(tail)) {
+		p.insertAt(i, headWord(key, off+plen), v, key[off+plen:])
+		return p, Inserted
 	}
+	s := key[off:]
 	pl := p.planFor(0, int(p.count), s, true)
-	c := fitClass(pl, int(p.class), 100)
+	c := fitClass(pl, p.class(), 100)
 	if c < 0 {
-		return p, Full, nil
+		return p, Full
 	}
-	return p.rebuild(c, pl, 0, int(p.count), &insertion{i, s, v}), Inserted, nil
+	return p.rebuild(c, pl, 0, int(p.count), &insertion{i, s, v}), Inserted
 }
 
 // insertAt puts suffix s at position i of a page with room for it.
@@ -358,9 +487,15 @@ func (p *Page) Delete(s []byte) (*Page, bool) {
 	if !found {
 		return p, false
 	}
+	return p.DeleteAt(i), true
+}
+
+// DeleteAt removes the entry at position i. It returns the page, or the smaller
+// page that replaces it, or nil once the page is empty.
+func (p *Page) DeleteAt(i int) *Page {
 	n := int(p.count)
 	if n == 1 {
-		return nil, true
+		return nil
 	}
 	h, vs := p.heads(), p.vals()
 	copy(h[i:n-1], h[i+1:n])
@@ -374,14 +509,16 @@ func (p *Page) Delete(s []byte) (*Page, bool) {
 		copy(f[i:n-1], f[i+1:n])
 	}
 	p.count--
-	if p.class > 0 {
+	// The leanest page for n-1 entries, without tails, is the lower bound for a
+	// shrunken page: most deletes fail it, which spares planning the page.
+	if p.class() > 0 && arraysEnd(n-1, true, 0)*100 <= ShrinkFill*sizes[p.class()-1] {
 		pl := p.planFor(0, n-1, nil, false)
-		if need(pl)*100 <= ShrinkFill*sizes[p.class-1] {
+		if need(pl)*100 <= ShrinkFill*sizes[p.class()-1] {
 			Counts.Shrinks++
-			return p.rebuild(int(p.class)-1, pl, 0, n-1, nil), true
+			return p.rebuild(p.class()-1, pl, 0, n-1, nil)
 		}
 	}
-	return p, true
+	return p
 }
 
 // cost is what the entry at position i takes (not counting the prefix).
@@ -413,15 +550,48 @@ func (p *Page) Split() (left, right *Page, err error) {
 			}
 		}
 	}
-	half := func(from, to int) *Page {
-		pl := p.planFor(from, to, nil, false)
-		c := fitClass(pl, 0, SplitFill)
-		if c < 0 { // two long suffixes: no room to spare, but a half never needs more than the page had
-			c = fitClass(pl, 0, 100)
-		}
-		return p.rebuild(c, pl, from, to, nil)
+	left, right = p.SplitAt(m)
+	return left, right, nil
+}
+
+// SplitAt divides a page into the page of its first m keys and the page of the
+// others (0 < m < Len), each in the smallest class that holds it with SplitFill
+// percent to spare.
+func (p *Page) SplitAt(m int) (left, right *Page) {
+	return p.half(0, m), p.half(m, int(p.count))
+}
+
+// half returns a new page of the entries from to to of p.
+func (p *Page) half(from, to int) *Page {
+	pl := p.planFor(from, to, nil, false)
+	c := fitClass(pl, 0, SplitFill)
+	if c < 0 { // two long suffixes: no room to spare, but a half never needs more than the page had
+		c = fitClass(pl, 0, 100)
 	}
-	return half(0, m), half(m, n), nil
+	return p.rebuild(c, pl, from, to, nil)
+}
+
+// SplitOff moves the entries from position m on (0 < m < Len) into a new page
+// and returns the page of the first m entries and the new page. The first
+// entries stay where they are, in p, and are copied only if they fit a smaller
+// class, which they rarely do: a split in two, and the tail of the heap that
+// the moved entries leave is room that a rebuild or compaction gets back.
+func (p *Page) SplitOff(m int) (left, right *Page) {
+	n := int(p.count)
+	right = p.half(m, n)
+	h := p.heads()
+	for i := m; i < n; i++ {
+		h[i] = pad
+	}
+	p.count = uint8(m)
+	left = p
+	if c := p.class(); c > 0 && arraysEnd(m, true, 0)*100 <= ShrinkFill*sizes[c-1] {
+		if pl := p.planFor(0, m, nil, false); need(pl)*100 <= ShrinkFill*sizes[c-1] {
+			Counts.Shrinks++
+			left = p.rebuild(c-1, pl, 0, m, nil)
+		}
+	}
+	return left, right
 }
 
 // Merge returns the page that holds the keys of a and then those of b, which
@@ -454,6 +624,7 @@ func Merge(a, b *Page) *Page {
 		return nil
 	}
 	m := newPage(c, pl, first[:pl.plen])
+	m.base = a.base
 	Counts.Merges++
 	var buf [maxSuffix]byte
 	for _, src := range []*Page{a, b} {
@@ -493,4 +664,12 @@ type Stats struct {
 func (p *Page) Stats() Stats {
 	pl := p.planFor(0, int(p.count), nil, false)
 	return Stats{Keys: pl.n, Size: p.Size(), Used: need(pl), Tails: pl.tails, Prefix: pl.plen, Uniform: p.ulen != 0}
+}
+
+// b2i returns 1 for true and 0 for false.
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

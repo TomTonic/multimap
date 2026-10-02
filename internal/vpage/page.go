@@ -61,25 +61,37 @@ var MaxClass = 2
 // ErrTooLong is returned for a suffix longer than a page can hold.
 var ErrTooLong = errors.New("vpage: suffix longer than 255 bytes")
 
+// KindBase is the kind byte of a page of the smallest class: the page of class
+// c has the kind KindBase+c, which is how the tree tells pages from its other
+// objects and the pages' classes apart. The tree sets it before it makes a page.
+var KindBase uint8 = 1
+
 // Page is the header of a page; the page itself is the object it starts.
 type Page struct {
-	kind  uint8  // reserved: the tree's kind byte
-	class uint8  // index into sizes
+	kind  uint8  // KindBase + the index of the class in sizes
 	count uint8  // keys
 	cap   uint8  // slots in the arrays
 	ulen  uint8  // stored length of every suffix in the uniform flavor, else 0
-	plen  uint8  // length of the prefix all keys of the page share, stored once at the end
+	plen  uint8  // length of the prefix all keys of the page share, stored once behind the header
+	base  uint8  // the depth in the tree's keys where the page's suffixes start
 	top   uint16 // start of the heap
 }
 
+func (p *Page) class() int { return int(p.kind - KindBase) }
+
+// Base returns the depth in the tree's keys where the suffixes of the page
+// start: the key of an entry is the first Base bytes of the path to the page,
+// followed by the entry's suffix.
+func (p *Page) Base() int { return int(p.base) }
+
 // Size returns the size of the page's object in bytes.
-func (p *Page) Size() int { return sizes[p.class] }
+func (p *Page) Size() int { return sizes[p.class()] }
 
 // Len returns the number of keys.
 func (p *Page) Len() int { return int(p.count) }
 
 // Class returns the index of the page's class: 0 for 128 bytes, up to 3 for 1024.
-func (p *Page) Class() int { return int(p.class) }
+func (p *Page) Class() int { return p.class() }
 
 // PrefixLen returns the length of the prefix the page stores once.
 func (p *Page) PrefixLen() int { return int(p.plen) }
@@ -109,28 +121,10 @@ func (p *Page) prefix() []byte { return p.mem()[hdr : hdr+int(p.plen)] }
 // after the header and the prefix, at a multiple of 8.
 func dirAt(plen int) int { return hdr + (plen+7)&^7 }
 
-// strip returns suffix s without the page's prefix and 0. A suffix that does
-// not start with the prefix is not in the page: strip returns nil and -1 if it
-// sorts below all keys of the page, +1 if above them.
-func (p *Page) strip(s []byte) ([]byte, int) {
-	n := int(p.plen)
-	if n == 0 {
-		return s, 0
-	}
-	pre := p.prefix()
-	if len(s) >= n && string(s[:n]) == string(pre) {
-		return s[n:], 0
-	}
-	if compare(s[:min(len(s), n)], pre) < 0 {
-		return nil, -1
-	}
-	return nil, 1
-}
-
 func (p *Page) at(off int) unsafe.Pointer { return unsafe.Add(unsafe.Pointer(p), off) }
 
 // mem returns the whole object.
-func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class]) }
+func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class()]) }
 
 // tags returns the directory of a uniform page: the tag of each key.
 func (p *Page) tags() []uint8 { return unsafe.Slice((*uint8)(p.at(dirAt(int(p.plen)))), p.cap) }
@@ -269,15 +263,39 @@ func compare(a, b []byte) int {
 // find returns the position of suffix s and whether it is there, or the
 // position where it would go, also for a suffix that does not start with the
 // page's prefix.
-func (p *Page) find(s []byte) (int, bool) {
-	rest, rel := p.strip(s)
-	switch rel {
-	case -1:
-		return 0, false
-	case 1:
-		return int(p.count), false
+func (p *Page) find(s []byte) (int, bool) { return p.findAt(s, 0) }
+
+// headWord returns the head word of key[off:]: its first 8 bytes, zero padded.
+// A suffix shorter than 8 bytes is taken from the last 8 bytes of the key, in
+// one load and a shift, if the key has them (a loop over the bytes of a suffix
+// of a length that changes from page to page mispredicts).
+func headWord(key []byte, off int) uint64 {
+	n := len(key) - off
+	switch {
+	case n >= headLen:
+		return binary.BigEndian.Uint64(key[off:])
+	case len(key) >= headLen:
+		return binary.BigEndian.Uint64(key[len(key)-headLen:]) << (8 * (headLen - n))
 	}
-	return p.findRest(rest, word(rest))
+	return word(key[off:])
+}
+
+// findAt is find for the suffix key[off:], the part of a key that starts at the
+// page's base.
+func (p *Page) findAt(key []byte, off int) (int, bool) {
+	n := int(p.plen)
+	if n > 0 {
+		pre := p.prefix()
+		if len(key)-off >= n && string(key[off:off+n]) == string(pre) {
+			off += n
+		} else {
+			if compare(key[off:min(len(key), off+n)], pre) < 0 {
+				return 0, false
+			}
+			return int(p.count), false
+		}
+	}
+	return p.findRest(key[off:], headWord(key, off))
 }
 
 // findRest is find for a suffix without the prefix, whose head word is w. In a
@@ -301,50 +319,14 @@ func (p *Page) findRest(s []byte, w uint64) (int, bool) {
 	return i, false
 }
 
-// maxFast is the longest prefix Get handles without a branch on its length.
+// maxFast is the longest prefix Find handles without a branch on its length.
 const maxFast = 3*headLen - 1
 
-// Get returns the value of suffix s. A page without a prefix, the common case
-// for integers, goes the short way. For a prefix of up to maxFast bytes Get
-// takes the head word of the stripped suffix and compares the prefix by
-// shifting and masking words, without a branch that depends on the length of the
-// page's prefix: such a branch, if the next page makes it go the other way,
-// would flush the lookups the CPU has started on other keys while this page was
-// loading.
+func bswap(x uint64) uint64 { return bits.ReverseBytes64(x) }
+
+// Get returns the value of suffix s.
 func (p *Page) Get(s []byte) (uint64, bool) {
-	plen := int(p.plen)
-	if len(s) > maxSuffix || len(s) < plen {
-		return 0, false
-	}
-	rest, w := s, uint64(0)
-	switch {
-	case plen == 0:
-		w = word(s)
-	case plen > maxFast:
-		var rel int
-		if rest, rel = p.strip(s); rel != 0 {
-			return 0, false
-		}
-		w = word(rest)
-	default:
-		var ws [4]uint64 // the first 32 bytes of s as head words
-		for j := 0; j < 4 && headLen*j < len(s); j++ {
-			ws[j] = word(s[headLen*j:])
-		}
-		var diff uint64
-		for j := range 3 { // the prefix, a word at a time, the bytes past it masked off
-			pw := bits.ReverseBytes64(*(*uint64)(p.at(hdr + headLen*j)))
-			valid := uint(min(max(plen-headLen*j, 0), headLen))
-			diff |= (ws[j] ^ pw) & (^uint64(0) << (64 - 8*valid))
-		}
-		if diff != 0 {
-			return 0, false
-		}
-		k, r := plen/headLen, uint(plen%headLen)*8
-		w = ws[k]<<r | ws[k+1]>>(64-r)
-		rest = s[plen:]
-	}
-	if i, ok := p.lookup(rest, w); ok {
+	if i, ok := p.Find(s); ok {
 		return p.vals()[i], true
 	}
 	return 0, false

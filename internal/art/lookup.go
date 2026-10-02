@@ -4,6 +4,7 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // Tree is the untyped adaptive radix tree; Map[T] wraps it. The zero value is
@@ -16,8 +17,7 @@ type Tree struct {
 	// a key with one raw value, which a rebuild needs as a term and a key that
 	// gets a second value needs in place of its page entry.
 	small bool
-	at    spot  // where upsert found a key that was in a page
-	pk    uint8 // the length of the keys of pages plus one, or 0 for none (see chooseKeyLen)
+	at    spot // where upsert found a key that was in a page
 	mk    func(key []byte, base int, raw uint64) *leafHead
 }
 
@@ -110,14 +110,10 @@ func (t *Tree) find(key []byte) (*header, int) {
 	return nil, 0
 }
 
-// findInPage looks for key in page p.
-func findInPage(p *pageHead, key []byte) (*header, int) {
-	if len(key) == int(p.klen) {
-		if w := keyWord(key); p.bloom&bloomBit(w) != 0 {
-			if i, ok := p.search(w); ok {
-				return pageHdr(p), i
-			}
-		}
+// findInPage looks for key in page p, which holds its keys from its base on.
+func findInPage(p *vpage.Page, key []byte) (*header, int) {
+	if i, ok := p.FindIn(key); ok { // the descent has checked the bytes above the base
+		return pageHdr(p), i
 	}
 	return nil, 0
 }

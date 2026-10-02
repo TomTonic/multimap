@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // Bounds selects a key range. A bound that is not set leaves that side open.
@@ -35,6 +36,12 @@ type keyBuf struct {
 // reach sets kb.key to the key of leaf l, whose path is in kb.path.
 func (kb *keyBuf) reach(l *leafHead) {
 	kb.key = append(append(kb.key[:0], kb.path[:l.base()]...), l.stored()...)
+}
+
+// pageKey returns key i of page p, whose path is in kb.path, in kb.key.
+func (kb *keyBuf) pageKey(p *vpage.Page, i int) []byte {
+	kb.key = p.AppendKey(append(kb.key[:0], kb.path[:p.Base()]...), i)
+	return kb.key
 }
 
 // scanRange visits the leaves of the subtree n within b in order and returns
@@ -132,16 +139,17 @@ func scanLeaf(l *leafHead, b *Bounds, depth int, lo, hi bool, kb *keyBuf, fn fun
 	return fn(leafHdr(l), 0, 1)
 }
 
-// scanPage hands fn the run of the page's keys within b. A page's keys are
-// whole keys, so the bounds are compared directly, and only on their paths:
-// with the words the page keeps, not with rebuilt keys (see seek).
-func scanPage(p *pageHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
-	i, j := 0, int(p.count)
+// scanPage hands fn the run of the page's keys within b. The page's keys start
+// at its base, below the path to it, which on a bound's path agrees with the
+// bound: so the parts of the keys are compared with the part of the bound below
+// the base, and only on the bounds' paths.
+func scanPage(p *vpage.Page, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
+	i, j := 0, p.Len()
 	if lo {
-		i = p.seek(b.From, !b.FromIncl)
+		i = seek(p, b.From[p.Base():], !b.FromIncl)
 	}
 	if hi {
-		j = max(i, p.seek(b.To, b.ToIncl))
+		j = max(i, seek(p, b.To[p.Base():], b.ToIncl))
 	}
 	if i < j && !fn(pageHdr(p), i, j) {
 		return false
@@ -151,15 +159,9 @@ func scanPage(p *pageHead, b *Bounds, lo, hi bool, fn func(n *header, i, j int) 
 
 // seek returns how many keys of p are below bound, or at most bound with
 // orEqual.
-func (p *pageHead) seek(bound []byte, orEqual bool) int {
-	// Keys and bound compare as their zero-padded first 8 bytes, then, if
-	// those are equal, by length.
-	w, l := keyWord(bound[:min(len(bound), 8)]), int(p.klen)
-	i := 0
-	for _, k := range p.keys() {
-		if k > w || k == w && (l > len(bound) || l == len(bound) && !orEqual) {
-			break
-		}
+func seek(p *vpage.Page, bound []byte, orEqual bool) int {
+	i, found := p.Locate(bound)
+	if found && orEqual {
 		i++
 	}
 	return i

@@ -229,7 +229,7 @@ func getTrace(p *Page, s []byte) (lines map[int]bool, rounds int, v uint64, ok b
 	if len(s) > maxSuffix {
 		return lines, rounds, 0, false
 	}
-	s, rel := p.strip(s)
+	s, rel := stripPrefix(p, s)
 	if rel != 0 || (u && len(s) != int(p.ulen)) {
 		return lines, rounds, 0, false
 	}
@@ -309,4 +309,22 @@ func TestLinesPerGet(t *testing.T) {
 			}
 		}
 	}
+}
+
+// stripPrefix returns suffix s without the page's prefix and 0, or nil and -1 if
+// s sorts below all keys of the page, +1 if above (it does not start with the
+// prefix).
+func stripPrefix(p *Page, s []byte) ([]byte, int) {
+	n := int(p.plen)
+	if n == 0 {
+		return s, 0
+	}
+	pre := p.prefix()
+	if len(s) >= n && string(s[:n]) == string(pre) {
+		return s[n:], 0
+	}
+	if compare(s[:min(len(s), n)], pre) < 0 {
+		return nil, -1
+	}
+	return nil, 1
 }

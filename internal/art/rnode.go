@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // Range nodes keep pages full.
@@ -232,12 +233,11 @@ func rRemove(n *header, i int) *header {
 }
 
 // rMerge merges the page of range i of n into a neighbouring page when the
-// two hold at most half the keys a page holds. Such a merged page always fits,
-// and pages thinned out by deletes do not stay behind half empty. A page that
-// has just split holds about half of that already, so the two halves do not
-// merge back after a few deletes; and the check costs nothing on most deletes,
-// which leave their page well above it. It returns n or its smaller
-// replacement.
+// two fit one page with room to spare (see vpage.Merge), so that pages thinned
+// out by deletes do not stay behind half empty. A page that has just split holds
+// about half of that already, so the two halves do not merge back after a few
+// deletes; and the check costs nothing on most deletes, which leave their page
+// well above it. It returns n or its smaller replacement.
 func rMerge(n *header, i int) *header {
 	r := asR(n)
 	ch := r.children()
@@ -246,12 +246,13 @@ func rMerge(n *header, i int) *header {
 			continue
 		}
 		a, b := ch[min(i, j)], ch[max(i, j)]
-		if !isPage(a.kind) || !isPage(b.kind) ||
-			2*(int(asPage(a).count)+int(asPage(b).count)) > pageCaps[len(pageCaps)-1] {
+		if !isPage(a.kind) || !isPage(b.kind) || asPage(a).Base() != asPage(b).Base() {
 			continue
 		}
-		ch[min(i, j)] = pageHdr(pageFor(append(pageItems(asPage(a)), pageItems(asPage(b))...)))
-		return rRemove(n, max(i, j))
+		if m := vpage.Merge(asPage(a), asPage(b)); m != nil {
+			ch[min(i, j)] = pageHdr(m)
+			return rRemove(n, max(i, j))
+		}
 	}
 	return n
 }

@@ -1,22 +1,27 @@
 package art
 
 import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
 	"unsafe"
+
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // TestPageLifecycle makes sure that integer keys with one value each stay
 // compact however their number changes. It covers the pages of the ART behind
-// multimap.Ordered: a page grows through every class as keys arrive, splits
-// into two half-full pages below a range node when it overflows, shrinks back
-// through the classes as keys leave, moves up when its sibling is gone, and
-// every key keeps its value throughout.
+// multimap.Ordered: a page grows through its classes as keys arrive, splits
+// into two pages below a range node when it overflows, shrinks back through the
+// classes and merges with its neighbour as keys leave, moves up when its
+// sibling is gone, and every key keeps its value throughout.
 func TestPageLifecycle(t *testing.T) {
-	var keys [][]byte // 6 shared bytes, then two groups of 16
+	var keys [][]byte // 6 shared bytes, then two groups of 20
 	for a := range 2 {
-		for b := range 16 {
+		for b := range 20 {
 			keys = append(keys, []byte{1, 2, 3, 4, 5, 6, byte(a), byte(3 * b)})
 		}
 	}
@@ -29,40 +34,47 @@ func TestPageLifecycle(t *testing.T) {
 			}
 		}
 	}
-	for i, k := range keys[:31] {
+	class, split := -1, 0
+	for i, k := range keys {
 		m.Add(k, uint64(i))
 		checkInvariants(t, &m.t)
-		if r := m.t.root; r.kind != kPage || int(asPage(r).class) != classFor(i+1) {
-			t.Fatalf("after %d keys: root kind %d, want a page of class %d", i+1, r.kind, classFor(i+1))
+		if r := m.t.root; !isPage(r.kind) {
+			if split == 0 {
+				split = i + 1 // the number of keys the page held when it overflowed, plus one
+			}
+			continue
+		} else if c := asPage(r).Class(); c < class {
+			t.Fatalf("after %d keys the root page shrank from class %d to %d", i+1, class, c)
+		} else {
+			class = c
 		}
 	}
-	m.Add(keys[31], 31) // the 32nd key splits the full page
-	checkInvariants(t, &m.t)
+	if class != 2 || split < 20 || split > 40 {
+		t.Fatalf("the page grew to class %d and overflowed at key %d, want class 2 and a split between the 20th and 40th key", class, split)
+	}
 	r := m.t.root
-	if !isRange(r.kind) || r.plen != 6 || asR(r).n != 2 {
-		t.Fatalf("after the split: root kind %d, path %d, %d ranges; want a range node, path 6, 2 ranges", r.kind, r.plen, asR(r).n)
+	if !isRange(r.kind) || r.plen != 6 {
+		t.Fatalf("after the split: root kind %d, path %d; want a range node, path 6", r.kind, r.plen)
 	}
-	for _, c := range asR(r).children()[:2] {
-		if c.kind != kPage || asPage(c).count != 16 {
-			t.Fatalf("after the split: child kind %d, want a page of 16 keys", c.kind)
+	pages := 0
+	for _, c := range asR(r).children()[:asR(r).n] {
+		if !isPage(c.kind) {
+			t.Fatalf("after the split: child kind %d, want a page", c.kind)
 		}
+		pages++
+	}
+	if pages < 2 {
+		t.Fatalf("after the split: %d pages, want at least 2", pages)
 	}
 	checkValues(0)
 
-	var classes []int
-	for i, k := range keys[:16] {
+	for i, k := range keys[:20] {
 		m.RemoveKey(k)
 		checkInvariants(t, &m.t)
 		checkValues(i + 1)
-		if i < 15 {
-			classes = append(classes, int(asPage(asR(m.t.root).children()[0]).class))
-		}
 	}
-	if want := []int{3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 0, 0}; !slices.Equal(classes, want) {
-		t.Fatalf("classes while shrinking = %v, want %v", classes, want)
-	}
-	if r := m.t.root; r.kind != kPage || asPage(r).count != 16 {
-		t.Fatalf("after emptying one page: root kind %d, want the other page", r.kind)
+	if m.Len() != 20 {
+		t.Fatalf("after emptying one group: %d keys, want the 20 of the other", m.Len())
 	}
 }
 
@@ -127,7 +139,7 @@ func checkValueType[T comparable](t *testing.T, vs []T) {
 	for i, v := range vs {
 		m.Add(key(i), v)
 	}
-	if got, want := m.t.root.kind == kPage, takesPages[T](); got != want {
+	if got, want := isPage(m.t.root.kind), takesPages[T](); got != want {
 		t.Fatalf("root is a page: %v, want %v", got, want)
 	}
 	var got []T
@@ -184,7 +196,7 @@ func TestPagePromotion(t *testing.T) {
 		add(key(0, b), 1)
 	}
 	add(key(0, 3), 1) // the same value again changes nothing
-	if m.t.root.kind != kPage {
+	if !isPage(m.t.root.kind) {
 		t.Fatalf("a repeated value changed the page")
 	}
 	add(key(0, 3), 2)
@@ -226,28 +238,21 @@ func TestPagePromotion(t *testing.T) {
 
 // TestPageLayout makes sure that every page class has the size and the layout
 // the code that reaches into it assumes. It covers the pages of the ART behind
-// multimap.Ordered, which are read and written through offsets, not fields: a
-// page fills one Go size class, starts with its kind, and keeps its arrays one
-// after another, each key's data at the same index in every array.
+// multimap.Ordered, which the tree reads through the kind byte at their start:
+// a page of class c has the kind kPage+c, the header is 8 bytes, and the range
+// nodes, which hold pages, have the layout their offsets say.
 func TestPageLayout(t *testing.T) {
+	for class := range 4 {
+		h := (*header)(unsafe.Pointer(vpage.New(class, 0)))
+		if k := asPage(h).Class(); k != class || h.kind != kPage+kind(class) || !isPage(h.kind) || isLeaf(h.kind) {
+			t.Errorf("page of class %d has class %d, kind %d", class, k, h.kind)
+		}
+	}
 	for _, tc := range []struct {
 		name      string
 		got, want uintptr
 	}{
-		{"page head", unsafe.Sizeof(pageHead{}), 16},
-		{"page of 3 keys", unsafe.Sizeof(page3{}), 64},
-		{"page of 7 keys", unsafe.Sizeof(page7{}), 128},
-		{"page of 15 keys", unsafe.Sizeof(page15{}), 256},
-		{"page of 31 keys", unsafe.Sizeof(page31{}), 512},
-		{"heads of a page of 7 keys", unsafe.Offsetof(page7{}.heads), headsOff},
-		{"values of a page of 7 keys", unsafe.Offsetof(page7{}.vals), headsOff + 7*8},
-		{"heads of a page of 3 keys", unsafe.Offsetof(page3{}.heads), headsOff},
-		{"heads of a page of 15 keys", unsafe.Offsetof(page15{}.heads), headsOff},
-		{"heads of a page of 31 keys", unsafe.Offsetof(page31{}.heads), headsOff},
-		{"values of a page of 3 keys", unsafe.Offsetof(page3{}.vals), headsOff + 3*8},
-		{"values of a page of 15 keys", unsafe.Offsetof(page15{}.vals), headsOff + 15*8},
-		{"values of a page of 31 keys", unsafe.Offsetof(page31{}.vals), headsOff + 31*8},
-		{"kind at the start of a page", unsafe.Offsetof(pageHead{}.kind), 0},
+		{"page header", unsafe.Sizeof(vpage.Page{}), 8},
 		{"head of a range node of 8 ranges", unsafe.Offsetof(rnode8{}.rhead), 0},
 		{"children of a range node of 8 ranges", unsafe.Offsetof(rnode8{}.child), rChildOff},
 		{"head of a range node of 24 ranges", unsafe.Offsetof(rnode24{}.rhead), 0},
@@ -265,5 +270,125 @@ func TestPageLayout(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s: %d bytes, want %d", tc.name, tc.got, tc.want)
 		}
+	}
+}
+
+// TestPageLongSuffix makes sure that a key with as much below its page as a page
+// holds, and one with more, keep their values, also when they get a second
+// one. It covers the limits of the pages of the ART behind multimap.Ordered
+// (255 bytes below the base) and the leaf a key gets that is too long for a page,
+// a flat leaf up to 254 bytes of its key and a set leaf beyond.
+func TestPageLongSuffix(t *testing.T) {
+	r := rand.New(rand.NewPCG(5, 6))
+	var m Map[uint64]
+	ref := reference{}
+	// a key with more than 255 bytes, added to a root page of short keys
+	for _, k := range []string{"abc1", "abc2", "abd", "ab"} {
+		m.Add([]byte(k), 1)
+		ref.add([]byte(k), 1)
+	}
+	m.Add(bytes.Repeat([]byte("abc"), 100), 1)
+	ref.add(bytes.Repeat([]byte("abc"), 100), 1)
+	compare(t, &m, ref, id, r)
+	checkInvariants(t, &m.t)
+	m.Clear()
+	ref = reference{}
+	key := func(n int, last byte) []byte { return append(bytes.Repeat([]byte("k"), n-1), last) }
+	m.Add(key(255, 'a'), 1) // a key with 255 bytes below the root page, the most it holds,
+	m.Add(key(255, 'b'), 1)
+	m.Add(key(255, 'a'), 2) // gets a second value: a set leaf, as the key is too long for a flat one
+	ref.add(key(255, 'a'), 1)
+	ref.add(key(255, 'b'), 1)
+	ref.add(key(255, 'a'), 2)
+	compare(t, &m, ref, id, r)
+	checkInvariants(t, &m.t)
+	for _, k := range [][]byte{key(255, 'a'), key(255, 'b'), key(300, 'a'), key(254, 'c'), key(256, 'd')} {
+		m.Add(k, 1)
+		ref.add(k, 1)
+		checkInvariants(t, &m.t)
+	}
+	for _, k := range [][]byte{key(255, 'a'), key(300, 'a'), key(254, 'c'), key(256, 'd')} {
+		m.Add(k, 2) // a second value: the key leaves its page, or already has a leaf
+		ref.add(k, 2)
+		compare(t, &m, ref, id, r)
+		checkInvariants(t, &m.t)
+	}
+	for _, k := range [][]byte{key(255, 'a'), key(255, 'b'), key(300, 'a'), key(254, 'c'), key(256, 'd')} {
+		m.RemoveKey(k)
+		delete(ref, string(k))
+		compare(t, &m, ref, id, r)
+		checkInvariants(t, &m.t)
+	}
+}
+
+// TestPageMovesUp makes sure that a page whose range node goes away takes the
+// bytes of the node's path into its keys, as far as they fit it, and stays
+// below the node when they do not. It covers the collapse of range nodes in the
+// ART behind multimap.Ordered: the page of the one child left holds its keys
+// from a base below the node's path, so it must start higher up (see pageUp).
+func TestPageMovesUp(t *testing.T) {
+	path := bytes.Repeat([]byte("p"), 40)
+	for _, tc := range []struct {
+		name   string
+		keys   int // keys of 8 bytes in each of two families below the path
+		pinned bool
+	}{
+		{"a page with room takes the path", 3, false},
+		{"a full page cannot, and stays below the node", 29, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m Map[uint64]
+			ref := reference{}
+			key := func(fam byte, i int) []byte {
+				return slices.Concat(path, []byte{fam}, binary.BigEndian.AppendUint64(nil, uint64(i))[1:])
+			}
+			for fam := byte(0); fam < 2; fam++ {
+				for i := range tc.keys {
+					m.Add(key(fam, i), uint64(i))
+					ref.add(key(fam, i), uint64(i))
+				}
+			}
+			checkInvariants(t, &m.t)
+			for i := range tc.keys { // the first family goes: the node has one child
+				m.RemoveKey(key(0, i))
+				delete(ref, string(key(0, i)))
+			}
+			checkInvariants(t, &m.t)
+			compare(t, &m, ref, id, rand.New(rand.NewPCG(7, 8)))
+			if got := isRange(m.t.root.kind); got != tc.pinned {
+				t.Fatalf("root is a range node: %v, want %v", got, tc.pinned)
+			}
+		})
+	}
+}
+
+// TestRangeNodeLongPath makes sure that a range node with a long path keeps its
+// ranges and children when another key splits its path. It covers the ART
+// behind multimap.Ordered, whose range nodes carry the shared bytes of keys of
+// any length: the node is copied into a new object when its path changes the
+// tail class, and every class of range nodes (8, 24, 56 and 256 ranges) must
+// survive the copy.
+func TestRangeNodeLongPath(t *testing.T) {
+	for _, fan := range []int{4, 20, 50, 250} {
+		t.Run(fmt.Sprintf("%d groups", fan), func(t *testing.T) {
+			r := rand.New(rand.NewPCG(uint64(fan), 9))
+			var m Map[uint64]
+			ref := reference{}
+			prefix := []byte("a-path-of-twenty-bytes/")
+			add := func(k []byte) {
+				m.Add(k, 1)
+				ref.add(k, 1)
+			}
+			for g := range fan {
+				for range 40 {
+					add(slices.Concat(prefix, []byte{byte(g)}, binary.BigEndian.AppendUint32(nil, r.Uint32())[1:]))
+				}
+			}
+			checkInvariants(t, &m.t)
+			add(slices.Concat(prefix[:11], []byte("-splits-the-path"))) // leaves the node a path of 12 bytes: no tail
+			add(slices.Concat(prefix[:3], []byte("-and-again")))        // and a path of 8 above it
+			compare(t, &m, ref, id, r)
+			checkInvariants(t, &m.t)
+		})
 	}
 }

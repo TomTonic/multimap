@@ -11,6 +11,8 @@ import (
 	"sort"
 	"testing"
 	"unsafe"
+
+	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // keySets returns key corpora that exercise every structural case: keys that
@@ -111,6 +113,22 @@ func keySets() map[string][][]byte {
 		lengths = append(lengths, k)
 	}
 	sets["every-length"] = lengths
+
+	// Keys whose pages lie deep, or that no page can hold: 200 shared bytes, a
+	// byte that splits the keys in two families, 69 more bytes that each family
+	// shares, and two bytes of 8 symbols. A page that forks the two families
+	// holds the 70 bytes below it, a page that is full rebuilds at a depth
+	// beyond 255 (where pages end, see maxPageDepth), and a key of 300 bytes,
+	// with no part of it in a page, comes along.
+	top, mid := bytes.Repeat([]byte("t"), 200), bytes.Repeat([]byte("m"), 69)
+	deep := [][]byte{ // the first two keys fork at byte 200, so that pages hold the others
+		slices.Concat(top, []byte{1}, mid, []byte("aa")), slices.Concat(top, []byte{2}, mid, []byte("aa")),
+	}
+	for range size(500) {
+		fam := byte(1 + r.IntN(2))
+		deep = append(deep, slices.Concat(top, []byte{fam}, mid, []byte{'a' + byte(r.IntN(8)), 'a' + byte(r.IntN(8))}))
+	}
+	sets["deep"] = append(deep, bytes.Repeat([]byte("l"), 300))
 	return sets
 }
 
@@ -647,8 +665,8 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
 		t.Fatalf("kind %d holds %d children, allowed %d..%d", n.kind, count, lo, hi)
 	}
-	if count+b2i(term != nil) < 2 {
-		t.Fatalf("node does not branch (count %d, term %v): it should have collapsed", count, term != nil)
+	if count+b2i(term != nil) < 2 && !pinned(n) {
+		t.Fatalf("node does not branch (kind %d, count %d, term %v): it should have collapsed", n.kind, count, term != nil)
 	}
 	if n.kind != kN256 && !isRange(n.kind) {
 		s := slots(n)
@@ -898,20 +916,16 @@ func findLeaf(tr *Tree, key []byte) *leafHead {
 }
 
 // checkPage fails unless the keys of page p are strictly ascending and start
-// with path, the key bytes above the page, and returns their number.
-func checkPage(t *testing.T, p *pageHead, path []byte) int {
+// with path, the key bytes above the page, which the page's base does not lie
+// below, and returns their number.
+func checkPage(t *testing.T, p *vpage.Page, path []byte) int {
 	t.Helper()
-	if p.count == 0 || int(p.count) > pageCaps[p.class] {
-		t.Fatalf("page of class %d holds %d keys", p.class, p.count)
+	if p.Len() == 0 || p.Base() > len(path) {
+		t.Fatalf("page of class %d holds %d keys, from base %d below a path of %d bytes", p.Class(), p.Len(), p.Base(), len(path))
 	}
-	items := pageItems(p)
-	for _, w := range p.keys() {
-		if p.bloom&bloomBit(w) == 0 {
-			t.Fatalf("the bloom filter of a page lacks the bit of key %x", w)
-		}
-	}
+	items := pageItems(p, path)
 	for i, it := range items {
-		if !bytes.HasPrefix(it.key, path) || len(it.key) != int(p.klen) {
+		if !bytes.HasPrefix(it.key, path) {
 			t.Fatalf("page key %q does not continue its path %q", it.key, path)
 		}
 		if i > 0 && bytes.Compare(items[i-1].key, it.key) >= 0 {
@@ -919,6 +933,15 @@ func checkPage(t *testing.T, p *pageHead, path []byte) int {
 		}
 	}
 	return len(items)
+}
+
+// pinned reports whether n is a range node of one page and no term. Such a node
+// is allowed: it can stand where the page holds its keys from below the node's
+// path and does not fit the path's bytes (see pageUp), or where a split of the
+// node's path has left it with a page that could stand alone (the next delete
+// through it takes the node away).
+func pinned(n *header) bool {
+	return isRange(n.kind) && asR(n).n == 1 && termOf(n) == nil && isPage(asR(n).children()[0].kind)
 }
 
 // checkRangeNode checks the ranges of range node n, whose path ends at end, and
@@ -929,9 +952,6 @@ func checkRangeNode(t *testing.T, n *header, end []byte) int {
 	t.Helper()
 	r := asR(n)
 	rs := r.ranges()
-	if r.pathLen() > maxPageKey {
-		t.Fatalf("range node with a path of %d bytes, longer than a key of a page", r.pathLen())
-	}
 	if len(rs) != int(r.n) || rs[0].b != 0 {
 		t.Fatalf("range node of %d ranges, first at byte %d", len(rs), rs[0].b)
 	}

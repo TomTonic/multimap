@@ -172,13 +172,15 @@ func pageType[T comparable]() bool {
 // leafWith allocates a flat leaf that holds key from base on and the value that
 // raw holds, a page's word, as its only value. It is the Tree's mk.
 func leafWith[T comparable](key []byte, base int, raw uint64) *leafHead {
-	l := newFlatLeaf[T](key, base) // a key of a page is short: a flat leaf
-	appendFlat(l, *(*T)(unsafe.Pointer(&raw)))
+	l := newFlatLeaf[T](key, base) // a set leaf if the key is too long for a flat one
+	v := *(*T)(unsafe.Pointer(&raw))
+	if l.kind == kSet {
+		vals[T](l).Add(v)
+	} else {
+		appendFlat(l, v)
+	}
 	return l
 }
-
-// pageVal returns the raw value of key i of page p, a word that holds a T.
-func pageVal(p *pageHead, i int) *uint64 { return &p.vals()[i] }
 
 // Len returns the number of keys.
 func (m *Map[T]) Len() int { return m.t.Len() }
@@ -220,7 +222,7 @@ func (m *Map[T]) Add(key []byte, v T) {
 	default:
 		// The key has one value in a page; a second one gives it a leaf.
 		sp := m.t.at
-		old := pageVal(asPage(n), sp.i)
+		old := asPage(n).ValPtr(sp.i)
 		if *(*T)(unsafe.Pointer(old)) == v {
 			return
 		}
@@ -332,7 +334,7 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 	switch {
 	case n == nil:
 	case isPage(n.kind):
-		yield(*(*T)(unsafe.Pointer(pageVal(asPage(n), i))))
+		yield(*(*T)(unsafe.Pointer(asPage(n).ValPtr(i))))
 	default:
 		eachValue(asLeaf(n), yield)
 	}
@@ -373,14 +375,13 @@ func (m *Map[T]) leafTail() uintptr {
 // and must not modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 	var kb keyBuf
-	var pk [8]byte
 	m.t.scan(b, m.leafTail(), &kb, func(n *header, i, j int) bool {
 		if isLeaf(n.kind) {
 			return fn(kb.key)
 		}
 		p := asPage(n)
 		for k := i; k < j; k++ {
-			if !fn(p.key(k, &pk)) {
+			if !fn(kb.pageKey(p, k)) {
 				return false
 			}
 		}
@@ -395,8 +396,7 @@ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 		if isLeaf(n.kind) {
 			return eachValue(asLeaf(n), yield)
 		}
-		p := asPage(n)
-		raw := p.vals()
+		raw := asPage(n).Vals()
 		for k := i; k < j; k++ {
 			if !yield(*(*T)(unsafe.Pointer(&raw[k]))) {
 				return false

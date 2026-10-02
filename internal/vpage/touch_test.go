@@ -41,7 +41,7 @@ func BenchmarkCold(b *testing.B) {
 		}
 		return 0
 	})
-	run("header only", func(p *Page, k []byte) uint64 { return uint64(p.class) })
+	run("header only", func(p *Page, k []byte) uint64 { return uint64(p.kind) })
 	run("every line", func(p *Page, k []byte) uint64 {
 		if p.touch() {
 			return 1
