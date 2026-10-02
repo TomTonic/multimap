@@ -1,5 +1,26 @@
 # Status
 
+## 2026-10-02 13:06: A/A job a1, gate 0 met
+
+`a1` (the same as a0 with `-minprocs 8 -maxprocs 24`) ran 12:59-13:06, 7 minutes (estimated 20),
+results in `origin/arm-results` (`a1/`). Every scenario was precise with its first 8 processes,
+none needed more.
+
+- **All 32 comparisons are precise** by the harness's criterion (a0: 30). The bounds of their
+  intervals stay within ±1.9 points, except for `valuesBetween` (up to -2.8).
+- **All 32 point estimates lie between 0.98 and 1.01** for identical code (differences -2.5% to
+  +1.5%); 29 of them within ±1%.
+- **`valuesBetween` is the noisy operation** on this machine: `str unique` 0.98 at 4K (-1.7%) and
+  16K (-2.5%) as in a0, `u64 multi 4K` +1.5%, and the other range cells ±0.7%. The harness marks
+  nine cells "resolved" although the code is identical (all of them range scans or within 1%);
+  read an arm64 `valuesBetween` difference below 3%, and any other below 1.5%, as noise.
+- The machine was not at rest again: the runner warned (load 6.6 in the last minute before the
+  build, 7.5 at the end), and I did not ask what else was running. Precision was good anyway; a
+  quieter machine may be better still, and nothing here says it would not.
+
+Gate 0 reading: met. The M1 Pro can measure; its noise floor is about ±1% for point operations,
+`churn` and `build`, and about ±3% for ranges.
+
 ## 2026-10-02 afternoon: A/A job a0 on the M1 Pro
 
 `a0` (same code against itself, 6b06dd2, u64 and str, 4K and 16K, multi and unique, four
@@ -20,8 +41,7 @@ operations) ran in 4.5 minutes, from 12:46 on 2026-10-02, results on `origin/arm
   before the build, waits 30 s after it, and warns at a load of 2;
 - the machine was not at rest (load 3.8, 15-minute average 6.1 at the start).
 
-Gate 0 reading: numerically met (0.97-1.01), with the two caveats above. Job `a1` (queued, not
-pushed yet) repeats a0 with 8 to 24 processes per scenario on a machine at rest.
+Gate 0 reading: numerically met (0.97-1.01), with the two caveats above; `a1` above settled them.
 
 ## 2026-10-02: step 0 done, waiting for gate 0
 
@@ -42,9 +62,7 @@ pushed yet) repeats a0 with 8 to 24 processes per scenario on a machine at rest.
 - 0.3 `bench/remote/` (queue, runner, test); run once end to end on Linux.
 - 0.4 `go test ./... -race` 3.5 minutes instead of more than 20.
 
-**Next action:** the user reviews step 0 and decides about the commit. After that the tools are
-committed and pushed, the A/A job goes into the queue, and the user starts it on the arm64
-machine. Then step 1 (PLAN.md).
+**Next action:** the user decides whether gate 0 is passed. Then step 1 (PLAN.md).
 
 **Open points:**
 
