@@ -187,3 +187,27 @@ func TestRunEntries(t *testing.T) {
 		t.Errorf("only %.1f %% of the entries fit the widest header, want most of them", last)
 	}
 }
+
+// TestRunPages makes sure the tool describes the page tree, which is the
+// experiment of step 3 (docs/redesign/step3-tree-pages.md).
+//
+// A reader who wants to know what the pages of the tree for string values look
+// like asks for the table and the details of the kinds of objects: the pages of
+// the largest key set have several size classes, keys with one value leave no
+// leaf, and the details say how full the pages are and how many ranges a range
+// node has.
+func TestRunPages(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(&out, []string{"-keys", "street", "-values", "unique", "-sizes", "4096", "-pages", "-detail"}); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	for _, want := range []string{"street unique-str 4K", "| page 256 |", "| R8 |", "ranges an object"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "typed leaf") {
+		t.Errorf("a tree with one value per key has no typed leaf:\n%s", s)
+	}
+}

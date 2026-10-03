@@ -63,6 +63,7 @@ func run(w io.Writer, args []string) error {
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
 	entriesF := fs.Bool("entries", false, "print the table of entries with several values (the single-key page statistic) after the object table")
+	detailF := fs.Bool("detail", false, "with -pages: after the table, the objects of each kind of every case: their number, bytes a key, share of a page used, keys per page and ranges per range node")
 	pagesF := fs.Bool("pages", false, "measure the experimental tree with length-header pages for string values (internal/artstr) instead of internal/art; only the -str profiles")
 	maxF := fs.Bool("max", true, "for a kind whose corpus holds fewer keys than a size, measure at the largest size the corpus allows (path, street)")
 	if err := fs.Parse(args); err != nil {
@@ -95,12 +96,15 @@ func run(w io.Writer, args []string) error {
 	if err := emit("| case | objects | block bytes per key | not x64 | not x128 | line overflow | mix |\n|---|--:|--:|--:|--:|--:|---|"); err != nil {
 		return err
 	}
-	var entries []string
+	var entries, details []string
 	for _, kind := range kinds {
 		for _, profile := range profiles {
 			for _, n := range sizesOf(kind, sizes, *maxF) {
 				name := fmt.Sprintf("%s %s %s", kind, profile, human(n))
 				s := measure(kind, profile, n, *pagesF)
+				if *detailF {
+					details = append(details, name+"\n"+s.detailRows(n))
+				}
 				if err := s.verify(name, n); err != nil {
 					return err
 				}
@@ -109,6 +113,11 @@ func run(w io.Writer, args []string) error {
 				}
 				entries = append(entries, s.entryRow(name, n))
 			}
+		}
+	}
+	for _, d := range details {
+		if _, err := fmt.Fprintln(w, "\n"+d); err != nil {
+			return err
 		}
 	}
 	if !*entriesF {
@@ -186,6 +195,54 @@ type stat struct {
 	keysInObjects  int
 	leaves         []leafInfo // the leaves, for the table of -entries
 	valueBytes     int        // the bytes of one value, as the single-key page would store it
+	detail         map[string]*kindStat
+}
+
+// kindStat adds up the objects of one kind of the page tree.
+type kindStat struct{ n, size, used, keys, children int }
+
+// addPages counts one object of the page tree, with what art.Object does not
+// say: the used bytes of a page and the ranges of a range node.
+func (s *stat) addPages(o artstr.Object) {
+	s.add(art.Object{Label: o.Label, Size: o.Size, Pointers: o.Pointers, Keys: o.Keys, Values: o.Values, Remainder: o.Remainder})
+	if s.detail == nil {
+		s.detail = map[string]*kindStat{}
+	}
+	label := o.Label
+	if label == "page" {
+		label = fmt.Sprintf("page %d", o.Size)
+	}
+	k := s.detail[label]
+	if k == nil {
+		k = &kindStat{}
+		s.detail[label] = k
+	}
+	k.n++
+	k.size += o.Size
+	k.used += o.Used
+	k.keys += o.Keys
+	k.children += o.Children
+}
+
+// detailRows formats the objects of each kind of a case of n keys.
+func (s *stat) detailRows(n int) string {
+	labels := make([]string, 0, len(s.detail))
+	for l := range s.detail {
+		labels = append(labels, l)
+	}
+	sort.Strings(labels)
+	var b strings.Builder
+	b.WriteString("| kind | objects | bytes a key | used | keys an object | ranges an object |\n|---|--:|--:|--:|--:|--:|\n")
+	for _, l := range labels {
+		k := s.detail[l]
+		used := "-"
+		if k.used > 0 {
+			used = fmt.Sprintf("%.0f %%", 100*float64(k.used)/float64(k.size))
+		}
+		fmt.Fprintf(&b, "| %s | %d | %.1f | %s | %.1f | %.1f |\n", l, k.n, float64(k.size)/float64(n), used,
+			float64(k.keys)/float64(k.n), float64(k.children)/float64(k.n))
+	}
+	return b.String()
 }
 
 // leafInfo is what the entry statistic needs of a leaf.
@@ -370,7 +427,7 @@ func (s *stat) entryRow(name string, n int) string {
 }
 
 // buildPages is build for the experimental tree of internal/artstr, with the
-// string values of the strvals bench.
+// string values of the strvals bench (the real names where the corpus has them).
 func buildPages(kind keys.Kind, n int, unique bool) *stat {
 	if r, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && r >= 0 {
 		artstr.CrowdedRatio = r
@@ -394,13 +451,15 @@ func buildPages(kind keys.Kind, n int, unique bool) *stat {
 			vs = vs[:1]
 		}
 		for _, v := range vs {
-			m.Add(key, fmt.Sprintf("%016x", v))
+			s := fmt.Sprintf("%016x", v)
+			if c.Names != nil && v >= 1 && v <= uint64(len(c.Names)) {
+				s = c.Names[v-1] // the real name of a street's locality or a directory's file, as the strvals bench has it
+			}
+			m.Add(key, s)
 		}
 	}
 	var s stat
-	m.Objects(func(o artstr.Object) {
-		s.add(art.Object{Label: o.Label, Size: o.Size, Pointers: o.Pointers, Keys: o.Keys, Values: o.Values, Remainder: o.Remainder})
-	})
+	m.Objects(s.addPages)
 	s.valueBytes = 16
 	return &s
 }

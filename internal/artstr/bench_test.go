@@ -141,3 +141,47 @@ func BenchmarkPairs(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkSmall is BenchmarkPairs on a tree that fits the caches: the cost of the
+// code, not of the memory.
+func BenchmarkSmall(b *testing.B) {
+	const n = 4096
+	keys, vals := benchKeys(n)
+	for _, mode := range []struct {
+		name string
+		m    func() *Map[string]
+	}{
+		{"single", func() *Map[string] { return &Map[string]{} }},
+		{"pairs", func() *Map[string] { return &Map[string]{Pairs: true} }},
+	} {
+		fill := func(m *Map[string]) {
+			for i, k := range keys {
+				m.Add(k, vals[i])
+				if i%5 == 0 {
+					m.Add(k, vals[(i+1)%n]+"x")
+				}
+			}
+		}
+		b.Run("build/"+mode.name, func(b *testing.B) {
+			for range b.N {
+				fill(mode.m())
+			}
+		})
+		m := mode.m()
+		fill(m)
+		b.Run("churn/"+mode.name, func(b *testing.B) {
+			for i := range b.N {
+				j := i % n
+				m.Remove(keys[j], vals[j])
+				m.Add(keys[j], vals[j])
+			}
+		})
+		b.Run("get/"+mode.name, func(b *testing.B) {
+			var sink int
+			for i := range b.N {
+				m.Each(keys[i%n], func(v string) bool { sink += len(v); return true })
+			}
+			_ = sink
+		})
+	}
+}

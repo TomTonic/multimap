@@ -227,9 +227,16 @@ func (p *Page) span() (kend, used int) {
 
 // remSum returns the bytes the remainders of the entries with lengths r take: the
 // lengths without the marks of entries that repeat the key before them, and
-// without the 0 behind the last entry.
+// without the 0 behind the last entry. It works a word at a time: the sum of the
+// bytes less 255 for each byte that is 255.
 func remSum(r []byte) int {
 	s := 0
+	for ; len(r) >= 8; r = r[8:] {
+		x := binary.LittleEndian.Uint64(r)
+		eq := ^(((^x & 0x7F7F7F7F7F7F7F7F) + 0x7F7F7F7F7F7F7F7F) | ^x | 0x7F7F7F7F7F7F7F7F) // 0x80 in each byte that is 255
+		x = x&0x00FF00FF00FF00FF + x>>8&0x00FF00FF00FF00FF
+		s += int(x*0x0001000100010001>>48) - 255*bits.OnesCount64(eq)
+	}
 	for _, x := range r {
 		if x != cont {
 			s += int(x)

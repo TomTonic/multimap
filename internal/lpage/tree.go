@@ -69,11 +69,17 @@ func (p *Page) offsets(i int) (koff, voff int) {
 	return koff + remSum(r[:i]), p.voffset(v, kend, i)
 }
 
+// valueOffset returns where the value of entry i starts.
+func (p *Page) valueOffset(i int) int {
+	r, v := p.lens()
+	return p.voffset(v, p.hdr()+int(p.cp)+remSum(r), i)
+}
+
 // ValueAt returns the value of entry i. The slice aliases the page and is valid
 // until the page changes.
 func (p *Page) ValueAt(i int) []byte {
 	_, v := p.lens()
-	_, voff := p.offsets(i)
+	voff := p.valueOffset(i)
 	return p.mem()[voff : voff+p.vlen(v, i)]
 }
 
@@ -100,7 +106,7 @@ func (p *Page) ValueIs(i int, val string) bool {
 func (p *Page) EachValue(i, j int, fn func(val []byte) bool) bool {
 	m := p.mem()
 	_, v := p.lens()
-	_, off := p.offsets(i)
+	off := p.valueOffset(i)
 	for k := i; k < j; k++ {
 		x := p.vlen(v, k)
 		if !fn(m[off : off+x]) {
@@ -122,7 +128,7 @@ func (p *Page) EachString(i, j int, alias bool, fn func(val string) bool) bool {
 		return true
 	}
 	_, v := p.lens()
-	_, off := p.offsets(i)
+	off := p.valueOffset(i)
 	end := off
 	for k := i; k < j; k++ {
 		end += p.vlen(v, k)

@@ -139,6 +139,26 @@ shape only, `objstat -pages`): `street` 111 bytes a key against 84.
 | scannable B/key | 111 | 55 | 139 | 72 |
 | GC CPU per cycle | +56 ms | +20 ms | +27 ms | +12 ms |
 
+### The shape of the page tree (`objstat -pages -detail`, corpus size, header 32, 384-byte class)
+
+Bytes a key by kind of object, strings included for the pages; "used" is the share of a page's bytes
+that hold something.
+
+| | street unique | street multi (pairs) | dirs unique | dirs multi (pairs) |
+|---|--:|--:|--:|--:|
+| pages 128 / 256 / 384 / 512 (bytes a key) | 5.0 / 14.3 / 9.6 / 0.2 | 15.0 / 21.2 / 5.3 / 0.1 | 5.6 / 9.4 / 14.9 / 15.5 | 12.6 / 21.3 / 20.9 / 12.6 |
+| keys a page (128 / 256 / 384 / 512) | 3.2 / 9.5 / 13.5 / 14.6 | 2.3 / 6.6 / 11.4 / 13.8 | 1.9 / 6.1 / 9.0 / 11.2 | 1.6 / 3.7 / 5.7 / 7.3 |
+| used | 51 / 76 / 77 / 80 % | 46 / 73 / 75 / 79 % | 48 / 76 / 83 / 87 % | 52 / 74 / 82 / 86 % |
+| range nodes R8 (bytes a key; ranges each) | 4.9; 3.1 | 11.4; 2.9 | 8.0; 2.7 | 16.3; 2.6 |
+| leaves (set + typed, bytes a key) | 0.1 | 2.1 | 0.1 | 4.4 |
+| total bytes a key | 34.9 | 56.4 | 60.2 | 99 |
+
+Two things stand out. The pages are 46 to 87 % full (a B-tree's 69 % is the expectation for random
+inserts), and **an R8 node, which is 128 bytes and holds 2.6 to 3.1 ranges, costs 5 to 16 bytes a key, 14 to
+20 % of the tree**: the routing layer is as heavy as the pages' slack. A range node for few children
+(a 64-byte class with the start bytes in an array instead of a bitmap) is what step 4 of the plan is about;
+it would save about 7 to 10 % of the total.
+
 ## What follows from it
 
 1. **The decision "no page holds entries with different numbers of values" cannot be kept for the

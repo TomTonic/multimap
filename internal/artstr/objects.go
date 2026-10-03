@@ -25,6 +25,9 @@ type Object struct {
 	// key remainder it stores (the key from its base on); both are 0 for pages
 	// and nodes.
 	Values, Remainder int
+	// Used is the bytes of a page that hold something, and Children the ranges
+	// of a range node; 0 for other objects.
+	Used, Children int
 }
 
 // goClasses are the size classes of Go's allocator up to 8 KiB
@@ -133,14 +136,18 @@ func (m *Map[T]) object(n *header) Object {
 		return m.leafObject(asLeaf(n))
 	case isPage(n.kind):
 		p := asPage(n)
-		return Object{Label: "page", Size: p.Size(), Keys: p.Keys()}
+		return Object{Label: "page", Size: p.Size(), Keys: p.Keys(), Used: p.Used()}
 	}
 	size, label := int(fixedSize[n.kind&kindMask]), kindLabels[n.kind]
 	if tc := tailClass(n.pathLen()); tc != tailNone {
 		size += [...]int{tail16: 16, tail48: 48, tail112: 112, tailStr: 16}[tc]
 		label += "+tail"
 	}
-	return Object{Label: label, Size: size, Pointers: true}
+	o := Object{Label: label, Size: size, Pointers: true}
+	if isRange(n.kind) {
+		o.Children = int(asR(n).n)
+	}
+	return o
 }
 
 // objects reports the subtree n.
