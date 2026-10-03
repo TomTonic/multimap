@@ -406,14 +406,14 @@ func (p *Page) insert(s, val []byte, replace, cow bool) (*Page, Result, int, err
 	h, cp := p.hdr(), int(p.cp)
 	if w := p.width(); (w == 0 || len(val) == w) && len(s) > cp && bytes.Equal(m[h:h+cp], s[:cp]) {
 		i, koff, found := p.locate(s)
-		n := p.Len()
+		if found && !replace {
+			return p, Present, i, nil
+		}
 		r, v := p.lens()
+		n := p.Len()
 		kend, used := p.span()
 		voff := p.voffset(v, kend, i)
 		if found {
-			if !replace {
-				return p, Present, i, nil
-			}
 			if p.vlen(v, i) == len(val) {
 				copy(m[voff:], val)
 				return p, Updated, i, nil

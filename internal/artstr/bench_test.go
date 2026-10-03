@@ -103,3 +103,41 @@ func BenchmarkTree(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkPairs compares the modes of the page tree on keys with several values:
+// build and churn with one value per key and with up to four.
+func BenchmarkPairs(b *testing.B) {
+	const n = 50000
+	keys, vals := benchKeys(n)
+	for _, mode := range []struct {
+		name string
+		m    func() *Map[string]
+	}{
+		{"single", func() *Map[string] { return &Map[string]{} }},
+		{"pairs", func() *Map[string] { return &Map[string]{Pairs: true} }},
+		{"pairs-zc", func() *Map[string] { return &Map[string]{Pairs: true, ZeroCopy: true} }},
+	} {
+		fill := func(m *Map[string]) {
+			for i, k := range keys {
+				m.Add(k, vals[i])
+				if i%5 == 0 {
+					m.Add(k, vals[(i+1)%n]+"x")
+				}
+			}
+		}
+		b.Run("build/"+mode.name, func(b *testing.B) {
+			for range b.N {
+				fill(mode.m())
+			}
+		})
+		m := mode.m()
+		fill(m)
+		b.Run("churn/"+mode.name, func(b *testing.B) {
+			for i := range b.N {
+				j := i % n
+				m.Remove(keys[j], vals[j])
+				m.Add(keys[j], vals[j])
+			}
+		})
+	}
+}
