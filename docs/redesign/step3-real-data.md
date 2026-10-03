@@ -48,7 +48,7 @@ Range over all sizes and both machines, `uint64` and string values alike:
 |---|--:|--:|
 | point lookup | 1.82 - 2.60 | 1.61 - 1.92 |
 | range (100 keys) | 1.54 - 2.38 | 1.58 - 2.13 |
-| prefix | 1.63 - 2.50 | 1.63 - 2.68 |
+| prefix | 1.86 - 2.50 | 1.63 - 2.68 |
 | churn | 1.33 - 1.95 | 1.23 - 1.62 |
 | build | 1.83 - 1.97 | 1.42 - 1.51 |
 
@@ -61,8 +61,8 @@ churn of `dirs` at 86,215 keys (1.23 - 1.33). `dirs` is the harder data set: mor
 - **Ranges and prefix searches:** `ordered` is 14 - 230 times as fast as `hashed` and `map-sets`
   (`street` 20 - 230, `dirs` 14 - 68). That is the reason to have an ordered multimap.
 - **Point lookups:** `hashed` is 2 - 3.5 times as fast (`ordered` 0.29 - 0.50). Against `map-sets`
-  `ordered` is level on `street` (0.87 - 1.27) and 13 - 37% slower on `dirs` (0.63 - 1.04).
-- **Churn and build:** the hash maps are 1.4 - 2.8 times as fast (`ordered` 0.36 - 0.73 for churn, 0.40 -
+  `ordered` is level on `street` (0.87 - 1.27) and mostly 13 - 37% slower on `dirs` (0.63 - 0.87; level at the largest size on the PC).
+- **Churn and build:** the hash maps are 1.4 - 2.8 times as fast (`ordered` 0.36 - 0.73 for churn, 0.36 -
   0.79 for build, `dirs` the lower ones).
 
 ### Memory (same on both machines; 212,449 keys of `street`, 86,215 of `dirs`)
