@@ -132,6 +132,17 @@ func writeMem(c config, rows []memResult) error {
 			}
 		}
 	}
+	var notes []string
+	for _, profile := range c.profiles {
+		for _, kind := range c.kinds {
+			if g := groups[key{profile + valueTag, kind, ordered}]; len(g) > 0 && g[0].ValueBytes > 0 {
+				notes = append(notes, fmt.Sprintf("- %s %s%s: the values are %.0f bytes of string per key. Only ordered-lpage holds them in its heap; every other candidate holds 16-byte headers that point into one shared buffer (see toVs), so its heap figure does not count them.", profile+valueTag, kind, "", g[0].ValueBytes))
+			}
+		}
+	}
+	if len(notes) > 0 {
+		b.WriteString("\n" + strings.Join(notes, "\n") + "\n")
+	}
 	b.WriteString("\nn: keys per candidate. Heap figures exclude the key corpus. GC CPU is per full cycle minus a process that holds only the corpus. After removing every second key, bytes are still per key of the full corpus.\n")
 	return os.WriteFile(filepath.Join(c.out, "mem-summary.md"), []byte(b.String()), 0o644)
 }

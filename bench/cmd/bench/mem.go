@@ -17,6 +17,7 @@ import (
 // baseline subtracted.
 type memResult struct {
 	Impl           string  `json:"impl"`
+	ValueBytes     float64 `json:"value_bytes_per_key"`
 	Keys           string  `json:"keys"`
 	Values         string  `json:"values"`
 	N              int     `json:"n"`
@@ -61,6 +62,9 @@ func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, seed
 	case btreeMapC:
 		m := buildBtreeMap(c.Keys.S, vals, offs)
 		keep, remove = m, func(i int) { m.Delete(c.Keys.S[i]) }
+	case orderedLP:
+		m := buildLP(c.Keys.B, vals, offs)
+		keep, remove = m, func(i int) { m.RemoveKey(c.Keys.B[i]) }
 	case baseline:
 		m := baseKit.build(c.Keys.B, vals, offs)
 		rm := baseKit.removeKey(m)
@@ -81,7 +85,7 @@ func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, seed
 	runtime.KeepAlive(vals)
 	perKey := func(after, before uint64) float64 { return float64(int64(after-before)) / float64(n) }
 	return json.NewEncoder(out).Encode(memResult{
-		Impl: impl, Keys: string(kind), Values: profile + valueTag, N: n, Seed: seed,
+		Impl: impl, ValueBytes: float64(valueBytes(vals[:offs[n]])) / float64(n), Keys: string(kind), Values: profile + valueTag, N: n, Seed: seed,
 		HeapPerKey: perKey(full.heap, before.heap), ScanPerKey: perKey(full.scan, before.scan),
 		GCCPUMs: cpu, HalfHeapPerKey: perKey(half.heap, before.heap),
 	})

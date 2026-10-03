@@ -82,3 +82,29 @@ func toNamed(u []uint64, names []string) []V {
 // the same headers (see toVs), the sums of two candidates agree exactly when
 // they hold the same values.
 func weigh(v V) uint64 { return uint64(uintptr(unsafe.Pointer(unsafe.StringData(v)))) }
+
+// checkWeigh is weigh for the checks that candidates hold the same values: a
+// hash of the bytes, since a candidate that keeps the bytes in its own pages
+// hands out strings at other addresses (see hasPages). The timed loops do not
+// use it; they read only the header, as weigh does.
+func checkWeigh(v V) uint64 {
+	h := uint64(14695981039346656037)
+	for i := range len(v) {
+		h = (h ^ uint64(v[i])) * 1099511628211
+	}
+	return h ^ uint64(len(v))
+}
+
+// hasPages says whether the bench has the candidate with pages for string
+// values (ordered-lpage).
+const hasPages = true
+
+// valueBytes returns the bytes of the string values vals: what a candidate
+// that owns its values holds besides the headers.
+func valueBytes(vals []V) int {
+	n := 0
+	for _, v := range vals {
+		n += len(v)
+	}
+	return n
+}

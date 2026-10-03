@@ -1,0 +1,327 @@
+package artstr
+
+import (
+	"bytes"
+	"math/bits"
+	"runtime"
+	"unsafe"
+
+	"github.com/TomTonic/multimap/internal/lpage"
+	"github.com/TomTonic/multimap/internal/swar"
+)
+
+// Bounds selects a key range. A bound that is not set leaves that side open.
+type Bounds struct {
+	From, To         []byte
+	HasFrom, HasTo   bool
+	FromIncl, ToIncl bool
+}
+
+// scan calls fn for every leaf within b (with i, j = 0, 1) and for every run of
+// positions [i, j) of a page within b, in ascending key order, until fn returns
+// false. leafTail is the offset of the last byte of a leaf, which the scan
+// touches ahead (see touchChildren). If kb is not nil, kb.key holds the key of
+// the leaf fn is called for.
+func (t *Tree) scan(b *Bounds, leafTail uintptr, kb *keyBuf, fn func(n *header, i, j int) bool) {
+	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, kb, fn)
+}
+
+// keyBuf assembles the keys of a scan that reports them: a leaf holds only
+// the end of its key, the rest is the path to it.
+type keyBuf struct {
+	path  []byte // the path of the current descent
+	key   []byte // the key of the leaf reached last
+	depth int    // the depth of the page reached last
+}
+
+// reach sets kb.key to the key of leaf l, whose path is in kb.path.
+func (kb *keyBuf) reach(l *leafHead) {
+	kb.key = append(append(kb.key[:0], kb.path[:l.base()]...), l.stored()...)
+}
+
+// pageKey returns key i of page p, whose path is in kb.path, in kb.key.
+func (kb *keyBuf) pageKey(p *lpage.Page, i int) []byte {
+	kb.key = p.AppendKey(append(kb.key[:0], kb.path[:kb.depth]...), i)
+	return kb.key
+}
+
+// scanRange visits the leaves of the subtree n within b in order and returns
+// false once the scan is over (fn stopped it, or the upper bound was passed).
+//
+// lo and hi say whether n lies on the path of b.From and of b.To. The bounds
+// are checked structurally: a node's path and child bytes are compared with a
+// bound only while on its path, so a subtree strictly inside the range is
+// visited without reading a single key.
+func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+	if n == nil {
+		return true
+	}
+	if n.kind <= kLastPage {
+		if isLeaf(n.kind) {
+			return scanLeaf(asLeaf(n), b, depth, lo, hi, kb, fn)
+		}
+		return scanPage(asPage(n), b, depth, lo, hi, kb, fn)
+	}
+	pl := n.pathLen()
+	if (lo || hi) && pl > 0 {
+		if lo {
+			rest := b.From[depth:]
+			if m, c := pathLcp(n, pl, rest); m < pl {
+				if m < len(rest) && c < rest[m] {
+					return true // the whole subtree lies below From
+				}
+				lo = false // the whole subtree lies above From
+			}
+		}
+		if hi {
+			rest := b.To[depth:]
+			if m, c := pathLcp(n, pl, rest); m < pl {
+				if m == len(rest) || c > rest[m] {
+					return false // the whole subtree lies above To: done
+				}
+				hi = false // the whole subtree lies below To
+			}
+		}
+	}
+	if kb != nil {
+		kb.path = appendPath(kb.path[:depth], n)
+	}
+	depth += pl
+	// The term leaf's key is the path to n. On From's path it is below From
+	// unless the path is From itself; on To's path it is below To unless the
+	// path is To itself, in which case it is the last key in range.
+	termIsFrom := lo && depth == len(b.From)
+	termIsTo := hi && depth == len(b.To)
+	if termIsFrom {
+		lo = false
+	}
+	if t := termOf(n); t != nil && !lo && (!termIsFrom || b.FromIncl) && (!termIsTo || b.ToIncl) {
+		if kb != nil {
+			kb.reach(t)
+		}
+		if !fn(leafHdr(t), 0, 1) {
+			return false
+		}
+	}
+	if termIsTo {
+		return false
+	}
+	var loB, hiB byte = 0, 255
+	if lo {
+		loB = b.From[depth]
+	}
+	if hi {
+		hiB = b.To[depth]
+	}
+	touchChildren(n, loB, hiB, leafTail)
+	if !scanChildren(n, b, depth, lo, hi, loB, hiB, leafTail, kb, fn) {
+		return false
+	}
+	return !hi // on To's path, everything after the child for hiB is above To
+}
+
+// scanLeaf calls fn for leaf l at depth if it lies within b. On a bound's
+// path the key agrees with the bound up to depth, so comparing the rest
+// decides.
+func scanLeaf(l *leafHead, b *Bounds, depth int, lo, hi bool, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+	if lo {
+		if c := bytes.Compare(l.from(depth), b.From[depth:]); c < 0 || (c == 0 && !b.FromIncl) {
+			return true
+		}
+	}
+	if hi {
+		if c := bytes.Compare(l.from(depth), b.To[depth:]); c > 0 || (c == 0 && !b.ToIncl) {
+			return false
+		}
+	}
+	if kb != nil {
+		kb.reach(l)
+	}
+	return fn(leafHdr(l), 0, 1)
+}
+
+// scanPage hands fn the run of the page's keys within b. The page's keys start
+// at its base, below the path to it, which on a bound's path agrees with the
+// bound: so the parts of the keys are compared with the part of the bound below
+// the base, and only on the bounds' paths.
+func scanPage(p *lpage.Page, b *Bounds, depth int, lo, hi bool, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+	i, j := 0, p.Len()
+	if lo {
+		i = seek(p, b.From[depth:], !b.FromIncl)
+	}
+	if hi {
+		j = max(i, seek(p, b.To[depth:], b.ToIncl))
+	}
+	if kb != nil {
+		kb.depth = depth
+	}
+	if i < j && !fn(pageHdr(p), i, j) {
+		return false
+	}
+	return !hi // on To's path, everything after the page is above To
+}
+
+// seek returns how many keys of p are below bound, or at most bound with
+// orEqual.
+func seek(p *lpage.Page, bound []byte, orEqual bool) int {
+	i, found := p.Seek(bound)
+	if found && orEqual {
+		i++
+	}
+	return i
+}
+
+// scanChildren visits the children with byte in [loB, hiB] in order. Only the
+// child for loB stays on From's path, only the one for hiB on To's.
+func scanChildren(n *header, b *Bounds, depth int, lo, hi bool, loB, hiB byte, leafTail uintptr, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+	visit := func(c *header, k byte) bool {
+		if kb != nil {
+			kb.path = append(kb.path[:depth], k)
+		}
+		return scanRange(c, b, depth+1, lo && k == loB, hi && k == hiB, leafTail, kb, fn)
+	}
+	switch n.kind {
+	case kR8, kR24, kR56, kR256:
+		// The children of a range node start at its depth; only the ranges
+		// holding loB and hiB lie on the bounds' paths.
+		r := asR(n)
+		ch := r.children()
+		i0, i1 := r.index(loB), r.index(hiB)
+		for i := i0; i <= i1; i++ {
+			if !scanRange(ch[i], b, depth, lo && i == i0, hi && i == i1, leafTail, kb, fn) {
+				return false
+			}
+		}
+		return true
+	case kN26, kN58:
+		bm, child := bitmapOf(n)
+		i := swar.Rank(bm, loB)
+		for w := int(loB >> 6); w < 4; w++ {
+			set := bm[w]
+			if w == int(loB>>6) {
+				set &= ^uint64(0) << (loB & 63)
+			}
+			for ; set != 0; set &= set - 1 {
+				k := byte(w<<6 + bits.TrailingZeros64(set))
+				if k > hiB {
+					return true
+				}
+				if !visit(child[i], k) {
+					return false
+				}
+				i++
+			}
+		}
+		return true
+	case kN256:
+		x := asN256(n)
+		for k := int(loB); k <= int(hiB); k++ {
+			if x.child[k] != nil && !visit(x.child[k], byte(k)) {
+				return false
+			}
+		}
+		return true
+	}
+	keys, child := sorted(n)
+	for i, k := range keys {
+		if k < loB {
+			continue
+		}
+		if k > hiB {
+			break
+		}
+		if !visit(child[i], k) {
+			return false
+		}
+	}
+	return true
+}
+
+// touchChildren reads one byte from the start of every child of n with byte in
+// [loB, hiB], and from leaves also the byte at leafTail, the last one of the
+// smallest leaf, which lies in or near the value set. The scan would otherwise take the cache misses for these objects
+// one after another, each only once it has finished the previous child's
+// subtree. These loads do not depend on each other, so the CPU keeps all their
+// misses in flight at once. A node with fewer than two children in range has
+// nothing to overlap and is skipped.
+//
+// Touching is unconditional: once a tree no longer fits in the cache it makes
+// range scans up to 20% faster, while a tree that stays in the cache loses at
+// most about 4% (bench/README.md). Where that line lies depends on the cache
+// size and on what else the program keeps in it, so no fixed tree size could
+// draw it.
+func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
+	if loB >= hiB { // at most one child in range
+		return
+	}
+	var acc uint8
+	touch := func(c *header) {
+		acc += uint8(c.kind)
+		if isLeaf(c.kind) {
+			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTail))
+		}
+	}
+	switch n.kind {
+	case kR8, kR24, kR56, kR256:
+		r := asR(n)
+		i0, i1 := r.index(loB), r.index(hiB)
+		if i1 == i0 {
+			return
+		}
+		for _, c := range r.children()[i0 : i1+1] {
+			touch(c)
+		}
+	case kN26, kN58:
+		bm, child := bitmapOf(n)
+		end := swar.Rank(bm, hiB)
+		if swar.Has(bm, hiB) {
+			end++
+		}
+		start := swar.Rank(bm, loB)
+		if end-start < 2 {
+			return
+		}
+		for _, c := range child[start:end] {
+			touch(c)
+		}
+	case kN256:
+		x := asN256(n)
+		for k := int(loB); k <= int(hiB); k++ {
+			if c := x.child[k]; c != nil {
+				touch(c)
+			}
+		}
+	default:
+		keys, child := sorted(n)
+		start, end := 0, len(keys)
+		for start < end && keys[start] < loB {
+			start++
+		}
+		for end > start && keys[end-1] > hiB {
+			end--
+		}
+		if end-start < 2 {
+			return
+		}
+		for _, c := range child[start:end] {
+			touch(c)
+		}
+	}
+	runtime.KeepAlive(acc) // keeps the loads from being optimized away
+}
+
+// Contains reports whether key lies within b. Unordered structures use it to
+// filter their keys with exactly the semantics of an ordered scan.
+func (b *Bounds) Contains(key []byte) bool {
+	if b.HasFrom {
+		if c := bytes.Compare(key, b.From); c < 0 || (c == 0 && !b.FromIncl) {
+			return false
+		}
+	}
+	if b.HasTo {
+		if c := bytes.Compare(key, b.To); c > 0 || (c == 0 && !b.ToIncl) {
+			return false
+		}
+	}
+	return true
+}

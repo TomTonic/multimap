@@ -23,6 +23,9 @@ const (
 	btreeSets = "btree-sets"
 	mapSets   = "map-sets"
 	btreeMapC = "btree-map"
+	// orderedLP is the experiment of step 3: the tree with length-header pages
+	// for string values (see lp.go). It is built only on request (-vs).
+	orderedLP = "ordered-lpage"
 )
 
 // The value profiles: multi gives keys a skewed number of values (see
@@ -46,6 +49,9 @@ func implsFor(profile string) []string {
 	}
 	if baseKit != nil {
 		others = append(others, baseline)
+	}
+	if hasPages && slices.Contains(vsOnly, orderedLP) {
+		others = append(others, orderedLP)
 	}
 	out := []string{ordered}
 	for _, b := range others {
@@ -73,6 +79,7 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
+	lp      *lpMap
 	base    any      // the baseline, see kit.go
 	others  []string // the candidates built besides ordered
 	// ranges of rangeKeys consecutive keys, as []byte and string views, and
@@ -104,6 +111,7 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream
 		btreeSets: func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
 		mapSets:   func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
 		btreeMapC: func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
+		orderedLP: func() { f.lp = buildLP(f.c.Keys.B, f.vals, f.offs) },
 		baseline:  func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
 	}
 	f.others = slices.DeleteFunc(slices.Clone(impls), func(s string) bool { return s == ordered })

@@ -138,6 +138,18 @@ func (f *fixture) structure(impl string) workload.Structure[any] {
 				}
 			}
 		}
+	case orderedLP:
+		s.New = func() any { return newLP() }
+		s.Apply = func(a any, run []workload.Op) {
+			m := a.(*lpMap)
+			for _, op := range run {
+				if op.Kind == workload.Insert {
+					m.AddValue(kb[p.key[op.ID]], p.val[op.ID])
+				} else {
+					m.RemoveValue(kb[p.key[op.ID]], p.val[op.ID])
+				}
+			}
+		}
 	case btreeMapC:
 		s.New = func() any { return &btreeMap{} }
 		s.Apply = func(a any, run []workload.Op) {

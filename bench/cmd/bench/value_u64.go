@@ -18,3 +18,14 @@ func toVs(u []uint64, _ []string) []V { return u }
 // weigh returns what the timed loops and the checks add up per value: for
 // uint64, the value itself.
 func weigh(v V) uint64 { return v }
+
+// checkWeigh is weigh for the checks that candidates hold the same values:
+// the value itself.
+func checkWeigh(v V) uint64 { return v }
+
+// hasPages says whether the bench has the candidate with pages for string
+// values (ordered-lpage); it needs strings.
+const hasPages = false
+
+// valueBytes returns the bytes of the string values vals; none for uint64.
+func valueBytes(_ []V) int { return 0 }

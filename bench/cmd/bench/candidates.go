@@ -47,6 +47,20 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			}
 			sink += acc
 		}
+	case orderedLP:
+		m := f.lp
+		return func(n uint64) {
+			var acc uint64
+			for range n {
+				for v := range m.ValuesForSeq(p.B[j]) {
+					acc += weigh(v)
+				}
+				if j++; j == len(p.B) {
+					j = 0
+				}
+			}
+			sink += acc
+		}
 	case baseline:
 		return baseKit.valuesFor(f.base, p)
 	case hashed:
@@ -119,6 +133,20 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 	switch impl {
 	case ordered:
 		m := f.ord
+		return func(n uint64) {
+			var acc uint64
+			for range n {
+				for v := range m.ValuesBetweenInclusiveSeq(from.B[j], to.B[j]) {
+					acc += weigh(v)
+				}
+				if j++; j == len(from.B) {
+					j = 0
+				}
+			}
+			sink += acc
+		}
+	case orderedLP:
+		m := f.lp
 		return func(n uint64) {
 			var acc uint64
 			for range n {

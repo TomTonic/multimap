@@ -32,7 +32,9 @@ package lpage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"math/bits"
 	"unsafe"
 )
 
@@ -48,6 +50,11 @@ var widths = [...]int{0, 1, 2, 4, 8, 16, 32, 64}
 // MaxHeader is the largest header in bytes (a multiple of 8, at most 32); it
 // limits the entries of a page. Experiments may change it.
 var MaxHeader = 24
+
+// MinHeader is the smallest header in bytes a page gets, a multiple of 8: a
+// larger one costs every page its bytes but leaves room for entries to come
+// in place, instead of laying the page out anew each time its header is full.
+var MinHeader = 8
 
 // ShrinkFill is how full a page may be in the next smaller class for it to move
 // there after a removal, in percent.
@@ -68,21 +75,32 @@ const (
 	Inserted Result = iota
 	Updated
 	Full // the page is of the largest class or has the most entries: split it
+	// Present is the result of TryInsert for a suffix that is already there:
+	// nothing changed.
+	Present
 )
+
+// KindBase is added to the code byte of every page, so that a tree whose objects
+// tell their kind by their first byte can give the pages the kinds
+// KindBase to KindBase+Kinds-1. A package that uses pages standalone leaves it 0.
+var KindBase uint8
+
+// Kinds is the number of different first bytes of a page.
+const Kinds = 128
 
 // Page is the first two bytes of a page; the page is the object they start.
 type Page struct {
-	code uint8 // bits 0-1 the class, 2-3 the header's size in 8-byte steps minus one, 4-6 the width code
+	code uint8 // KindBase plus: bits 0-1 the class, 2-3 the header's size in 8-byte steps minus one, 4-6 the width code
 	cp   uint8 // length of the common prefix
 }
 
-func (p *Page) class() int { return int(p.code & 3) }
+func (p *Page) class() int { return int(p.code-KindBase) & 3 }
 
 // hdr returns the size of the header in bytes.
-func (p *Page) hdr() int { return 8 * (1 + int(p.code>>2&3)) }
+func (p *Page) hdr() int { return 8 * (1 + int((p.code-KindBase)>>2&3)) }
 
 // width returns the length of every value, or 0 if they differ.
-func (p *Page) width() int { return widths[p.code>>4&7] }
+func (p *Page) width() int { return widths[(p.code-KindBase)>>4&7] }
 
 // capacity returns how many entries the header has room for.
 func (p *Page) capacity() int { return capacityOf(p.hdr(), p.width()) }
@@ -127,7 +145,7 @@ func alloc(c int) *Page {
 // headerFor returns the smallest header in bytes that has room for n entries
 // with values of width w, or 0 if there is none.
 func headerFor(n, w int) int {
-	for h := 8; h <= MaxHeader; h += 8 {
+	for h := max(8, MinHeader); h <= MaxHeader; h += 8 {
 		if n <= capacityOf(h, w) {
 			return h
 		}
@@ -137,12 +155,35 @@ func headerFor(n, w int) int {
 
 // Len returns the number of entries.
 func (p *Page) Len() int {
-	m := p.mem()
-	c := p.capacity()
-	if i := bytes.IndexByte(m[2:2+c], 0); i >= 0 {
-		return i
+	r := p.mem()[2 : 2+p.capacity()]
+	off := 0
+	for ; off+8 <= len(r); off += 8 {
+		x := binary.LittleEndian.Uint64(r[off:])
+		if z := (x - 0x0101010101010101) &^ x & 0x8080808080808080; z != 0 {
+			return off + bits.TrailingZeros64(z)/8
+		}
 	}
-	return c
+	for ; off < len(r); off++ {
+		if r[off] == 0 {
+			return off
+		}
+	}
+	return len(r)
+}
+
+// sumBytes returns the sum of the bytes of b, a word at a time: the lengths in
+// a header are a few bytes and add up to the offsets of the entries.
+func sumBytes(b []byte) int {
+	s := 0
+	for ; len(b) >= 8; b = b[8:] {
+		x := binary.LittleEndian.Uint64(b)
+		x = x&0x00FF00FF00FF00FF + x>>8&0x00FF00FF00FF00FF
+		s += int(x * 0x0001000100010001 >> 48)
+	}
+	for _, c := range b {
+		s += int(c)
+	}
+	return s
 }
 
 // lens returns the length arrays of the page: the remainders and, for values of
@@ -169,19 +210,11 @@ func (p *Page) vlen(v []byte, i int) int {
 // span returns the offsets where the remainders end and the used bytes end.
 func (p *Page) span() (kend, used int) {
 	r, v := p.lens()
-	n := p.Len()
-	kend = p.hdr() + int(p.cp)
-	for _, x := range r[:n] {
-		kend += int(x)
-	}
-	used = kend
+	kend = p.hdr() + int(p.cp) + sumBytes(r) // the lengths behind the last entry are 0
 	if v == nil {
-		return kend, used + n*p.width()
+		return kend, kend + p.Len()*p.width()
 	}
-	for _, x := range v[:n] {
-		used += int(x)
-	}
-	return kend, used
+	return kend, kend + sumBytes(v)
 }
 
 // voffset returns the offset of the value of entry i, given where the remainders
@@ -190,60 +223,13 @@ func (p *Page) voffset(v []byte, kend, i int) int {
 	if v == nil {
 		return kend + i*p.width()
 	}
-	for _, x := range v[:i] {
-		kend += int(x)
-	}
-	return kend
+	return kend + sumBytes(v[:i])
 }
 
 // Used returns the bytes of the page that hold something.
 func (p *Page) Used() int {
 	_, used := p.span()
 	return used
-}
-
-// plan chooses the prefix and the sizes for sorted suffixes keys with values of
-// the lengths vlen: the code byte of the page, the prefix length and the bytes
-// needed. ok is false if there are too many entries, a remainder or a value is
-// too long, or the largest class is too small. Values of one length that is a
-// width of a page (1, 2, 4, 8, 16, 32 or 64) go into a page of that width.
-func plan(keys [][]byte, vlen []int) (code uint8, cp, need int, ok bool) {
-	n := len(keys)
-	wcode := 0
-	for i := 1; i < len(widths); i++ {
-		if widths[i] == vlen[0] {
-			wcode = i
-		}
-	}
-	for _, x := range vlen {
-		if x != vlen[0] {
-			wcode = 0
-		}
-	}
-	h := headerFor(n, widths[wcode])
-	if h == 0 {
-		return 0, 0, 0, false
-	}
-	if n > 1 {
-		shortest := len(keys[0])
-		for _, k := range keys {
-			shortest = min(shortest, len(k))
-		}
-		cp = min(lcp(keys[0], keys[n-1]), shortest-1, maxField)
-	}
-	need = h + cp
-	for i, k := range keys {
-		if r := len(k) - cp; r < 1 || r > maxField || vlen[i] > maxField {
-			return 0, 0, 0, false
-		}
-		need += len(k) - cp + vlen[i]
-	}
-	for c, s := range sizes {
-		if need <= s {
-			return uint8(c) | uint8(h/8-1)<<2 | uint8(wcode)<<4, cp, need, true
-		}
-	}
-	return 0, 0, 0, false
 }
 
 // tooBig reports whether suffix s and value val do not fit a page of the
@@ -262,48 +248,23 @@ func lcp(a, b []byte) int {
 	return n
 }
 
-func lengths(vals [][]byte) []int {
-	out := make([]int, len(vals))
-	for i, v := range vals {
-		out[i] = len(v)
-	}
-	return out
-}
-
 // Build returns a page that holds the sorted, distinct suffixes keys with
 // their values, or an error if they do not fit one. keys must not be empty.
 func Build(keys, vals [][]byte) (*Page, error) {
-	for _, k := range keys {
+	if len(keys) > maxEnts {
+		return nil, ErrTooLong
+	}
+	var es [maxEnts]ent
+	for i, k := range keys {
 		if len(k) == 0 {
 			return nil, ErrEmpty
 		}
+		es[i] = ent{k1: k, v: vals[i]}
 	}
-	code, cp, _, ok := plan(keys, lengths(vals))
-	if !ok {
-		return nil, ErrTooLong
+	if p := buildEnts(es[:len(keys)]); p != nil {
+		return p, nil
 	}
-	return write(code, cp, keys, vals), nil
-}
-
-// write lays out the page chosen by plan.
-func write(code uint8, cp int, keys, vals [][]byte) *Page {
-	p := alloc(int(code & 3))
-	p.code, p.cp = code, uint8(cp)
-	m := p.mem()
-	r, v := p.lens()
-	off := p.hdr()
-	off += copy(m[off:], keys[0][:cp])
-	for i, k := range keys {
-		r[i] = byte(len(k) - cp)
-		off += copy(m[off:], k[cp:])
-	}
-	for i, val := range vals {
-		if v != nil {
-			v[i] = byte(len(val))
-		}
-		off += copy(m[off:], val)
-	}
-	return p
+	return nil, ErrTooLong
 }
 
 // Get returns the value of suffix s. The slice aliases the page and is valid
@@ -387,11 +348,25 @@ func (p *Page) Entries() (keys, vals [][]byte) {
 // page of values of one width takes a value of another length by laying its
 // entries out anew.
 func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
+	q, res, _, err := p.insert(s, val, true)
+	return q, res, err
+}
+
+// TryInsert adds suffix s with value val if it is not there, and returns the
+// page that holds the result. If s is there it changes nothing and returns
+// Present and the position of s; the position of a new entry is not reported. It
+// serves a tree that keeps one value per key in its pages and moves a key with a
+// second value elsewhere. Full and errors are as for Insert.
+func (p *Page) TryInsert(s, val []byte) (*Page, Result, int, error) {
+	return p.insert(s, val, false)
+}
+
+func (p *Page) insert(s, val []byte, replace bool) (*Page, Result, int, error) {
 	switch {
 	case len(s) == 0:
-		return p, Inserted, ErrEmpty
+		return p, Inserted, 0, ErrEmpty
 	case tooBig(s, val):
-		return p, Inserted, ErrTooLong
+		return p, Inserted, 0, ErrTooLong
 	}
 	m := p.mem()
 	h, cp := p.hdr(), int(p.cp)
@@ -402,11 +377,15 @@ func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
 		kend, used := p.span()
 		voff := p.voffset(v, kend, i)
 		if found {
+			if !replace {
+				return p, Present, i, nil
+			}
 			if p.vlen(v, i) == len(val) {
 				copy(m[voff:], val)
-				return p, Updated, nil
+				return p, Updated, i, nil
 			}
-			return p.insertSlow(s, val) // another length moves the values behind it
+			q, res, err := p.insertSlow(s, val) // another length moves the values behind it
+			return q, res, i, err
 		}
 		x := len(s) - cp
 		if n < len(r) && used+x+len(val) <= len(m) {
@@ -420,32 +399,86 @@ func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
 				copy(v[i+1:], v[i:n])
 				v[i] = byte(len(val))
 			}
-			return p, Inserted, nil
+			return p, Inserted, i, nil
+		}
+		q, res, err := p.insertCopy(i, koff, voff, used, s, val)
+		return q, res, i, err
+	}
+	if !replace {
+		if i, ok := p.Find(s); ok {
+			return p, Present, i, nil
 		}
 	}
-	return p.insertSlow(s, val)
+	q, res, err := p.insertSlow(s, val)
+	return q, res, 0, err
+}
+
+// insertCopy lays out the page that holds the entries of p and the new entry
+// (s, val) at position i, in the prefix p has: the entry's remainder goes to koff
+// and its value to voff of p's bytes, which end at used. The header may get
+// longer and the page bigger; it is Full if the entry fits no page. It is Insert's
+// way to grow a page without laying all its entries out anew.
+func (p *Page) insertCopy(i, koff, voff, used int, s, val []byte) (*Page, Result, error) {
+	m := p.mem()
+	h, cp := p.hdr(), int(p.cp)
+	r, v := p.lens()
+	n := p.Len()
+	h2 := headerFor(n+1, p.width())
+	if h2 == 0 {
+		return p, Full, nil
+	}
+	x := len(s) - cp
+	need := used - h + h2 + x + len(val)
+	c := 0
+	for c < len(sizes) && need > sizes[c] {
+		c++
+	}
+	if c == len(sizes) {
+		return p, Full, nil
+	}
+	q := alloc(c)
+	q.code = uint8(c) | uint8(h2/8-1)<<2 | (p.code-KindBase)&0x70 + KindBase
+	q.cp = p.cp
+	m2 := q.mem()
+	r2, v2 := q.lens()
+	copy(r2, r[:i])
+	r2[i] = byte(x)
+	copy(r2[i+1:], r[i:n])
+	if v != nil {
+		copy(v2, v[:i])
+		v2[i] = byte(len(val))
+		copy(v2[i+1:], v[i:n])
+	}
+	off := h2
+	off += copy(m2[off:], m[h:koff])
+	off += copy(m2[off:], s[cp:])
+	off += copy(m2[off:], m[koff:voff])
+	off += copy(m2[off:], val)
+	copy(m2[off:], m[voff:used])
+	return q, Inserted, nil
 }
 
 // insertSlow lays the entries out anew with s among them: the prefix may get
 // shorter, the header longer, the page bigger, or a value change its length.
 func (p *Page) insertSlow(s, val []byte) (*Page, Result, error) {
-	keys, vals := p.Entries()
-	i := 0
-	for i < len(keys) && bytes.Compare(keys[i], s) < 0 {
-		i++
-	}
+	var es [maxEnts]ent
+	n := p.load(es[:])
+	i, found := position(es[:n], s)
 	res := Inserted
-	if i < len(keys) && bytes.Equal(keys[i], s) {
-		vals[i], res = val, Updated
+	if found {
+		es[i].v, res = val, Updated
 	} else {
-		keys = append(keys[:i], append([][]byte{s}, keys[i:]...)...)
-		vals = append(vals[:i], append([][]byte{val}, vals[i:]...)...)
+		if n == maxEnts-1 {
+			return p, Full, nil
+		}
+		copy(es[i+1:n+1], es[i:n])
+		es[i] = ent{k1: s, v: val}
+		n++
 	}
-	code, cp, _, ok := plan(keys, lengths(vals))
-	if !ok {
-		return p, Full, nil
+	if q := buildEnts(es[:n]); q != nil {
+		return q, res, nil
 	}
-	return write(code, cp, keys, vals), res, nil
+	return p, Full, nil
 }
 
 // Delete removes suffix s and returns the page that holds the rest, nil if it
@@ -461,6 +494,19 @@ func (p *Page) Delete(s []byte) (*Page, bool) {
 	if !found {
 		return p, false
 	}
+	q, _ := p.deleteEntry(i, koff)
+	return q, true
+}
+
+// deleteAt removes entry i; see Delete.
+func (p *Page) deleteAt(i int) (*Page, bool) {
+	koff, _ := p.offsets(i)
+	return p.deleteEntry(i, koff)
+}
+
+// deleteEntry removes entry i, whose remainder starts at offset koff.
+func (p *Page) deleteEntry(i, koff int) (*Page, bool) {
+	m := p.mem()
 	n := p.Len()
 	if n == 1 {
 		return nil, true
@@ -479,9 +525,9 @@ func (p *Page) Delete(s []byte) (*Page, bool) {
 		v[n-1] = 0
 	}
 	if c := p.class(); c > 0 && p.Used()*100 <= ShrinkFill*sizes[c-1] {
-		keys, vals := p.Entries()
-		if code, cp, need, ok := plan(keys, lengths(vals)); ok && need*100 <= ShrinkFill*sizes[c-1] {
-			return write(code, cp, keys, vals), true
+		var es [maxEnts]ent
+		if q := fitEnts(es[:p.load(es[:])], c, ShrinkFill); q != nil {
+			return q, true
 		}
 	}
 	return p, true
@@ -490,9 +536,5 @@ func (p *Page) Delete(s []byte) (*Page, bool) {
 // Split divides a page of at least two entries in the middle by count and
 // returns the two halves, each in the smallest class that holds it.
 func (p *Page) Split() (left, right *Page) {
-	keys, vals := p.Entries()
-	m := len(keys) / 2
-	left, _ = Build(keys[:m], vals[:m])
-	right, _ = Build(keys[m:], vals[m:])
-	return left, right
+	return p.SplitAt(p.Len() / 2)
 }

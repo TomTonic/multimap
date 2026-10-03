@@ -236,7 +236,9 @@ func (f *fixture) pointSum(impl string, i int) uint64 {
 		return mapSum(f.gm, s)
 	case btreeMapC:
 		v, _ := f.bm.Get(s)
-		return weigh(v)
+		return checkWeigh(v)
+	case orderedLP:
+		return sum(f.lp.ValuesForSeq(k))
 	}
 	return baseKit.sum(f.base, k)
 }
@@ -253,6 +255,8 @@ func (f *fixture) rangeSum(impl string, from, to keys.Set, i int) uint64 {
 		return mapRangeSum(f.gm, from.S[i], to.S[i])
 	case btreeMapC:
 		return btreeMapRangeSum(f.bm, from.S[i], to.S[i])
+	case orderedLP:
+		return sum(f.lp.ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
 	}
 	return baseKit.rangeSum(f.base, from.B[i], to.B[i])
 }
@@ -276,7 +280,7 @@ func (f *fixture) verifyBuild(impls ...string) error {
 		for i := range n {
 			var want uint64
 			for _, v := range f.vals[f.offs[i]:f.offs[i+1]] {
-				want += weigh(v)
+				want += checkWeigh(v)
 			}
 			if got(i) != want {
 				return fmt.Errorf("build stream leaves %s with wrong values for %q", impl, f.c.Keys.S[i])
@@ -305,7 +309,10 @@ func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
 		return len(g), func(i int) uint64 { return mapSum(g, ks[i]) }
 	case btreeMapC:
 		b := m.(*btreeMap)
-		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return weigh(v) }
+		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return checkWeigh(v) }
+	case orderedLP:
+		l := m.(*lpMap)
+		return l.NumberOfKeys(), func(i int) uint64 { return sum(l.ValuesForSeq(kb[i])) }
 	}
 	return baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, kb[i]) }
 }
@@ -313,7 +320,7 @@ func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
 func sum(s func(func(V) bool)) uint64 {
 	var a uint64
 	for v := range s {
-		a += weigh(v)
+		a += checkWeigh(v)
 	}
 	return a
 }
@@ -322,7 +329,7 @@ func btreeSum(m *btreeMM, k string) uint64 {
 	var a uint64
 	if s, ok := m.Get(k); ok {
 		for v := range s {
-			a += weigh(v)
+			a += checkWeigh(v)
 		}
 	}
 	return a
@@ -331,7 +338,7 @@ func btreeSum(m *btreeMM, k string) uint64 {
 func mapSum(m mapMM, k string) uint64 {
 	var a uint64
 	for v := range m[k] {
-		a += weigh(v)
+		a += checkWeigh(v)
 	}
 	return a
 }
@@ -343,7 +350,7 @@ func btreeRangeSum(m *btreeMM, from, to string) uint64 {
 			return false
 		}
 		for v := range s {
-			a += weigh(v)
+			a += checkWeigh(v)
 		}
 		return true
 	})
@@ -355,7 +362,7 @@ func mapRangeSum(m mapMM, from, to string) uint64 {
 	for k, s := range m {
 		if k >= from && k <= to {
 			for v := range s {
-				a += weigh(v)
+				a += checkWeigh(v)
 			}
 		}
 	}
@@ -368,7 +375,7 @@ func btreeMapRangeSum(m *btreeMap, from, to string) uint64 {
 		if k > to {
 			return false
 		}
-		a += weigh(v)
+		a += checkWeigh(v)
 		return true
 	})
 	return a
