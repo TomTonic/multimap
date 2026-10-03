@@ -1,5 +1,29 @@
 # Status
 
+## 2026-10-04 night: the multi-key page hangs in the tree (strings), measured; the user's rule does not hold up on real data
+
+The user asked (2026-10-03, evening) for the multi-key page for strings in the tree, measured against
+today's tree, SKMV afterwards. Done on the PC, report in [step3-tree-pages.md](step3-tree-pages.md), raw
+results in `bench/results-layout/step3-tree/`:
+
+- `internal/artstr` (experiment, a copy of `internal/art` for `Map[string]`) with pages of `internal/lpage`;
+  candidates `ordered-lpage`, `-zc` (immutable pages, strings that are views), `-mv` (several values per
+  key inside the page), `-mvzc` in the bench (`-tags strvals -vs ...`).
+- One value per key: memory per key 67 to 40 bytes (street), scanned bytes 63 to 8, ranges 1.1 to 1.7 times as
+  fast as today's tree (up to 2.6 with zero-copy); `build` 1.6 to 2.9 times and `churn` 1.1 to 2.5 times
+  slower, lookups on small trees 1.4 to 1.7 times slower.
+- **The natural mix (`multi`) with one value per entry in the pages, as decided: the tree is today's tree.**
+  One entry in five with several values (street: 21 %) is enough for the fall back to take every page away.
+- With several values per key inside the page (an option, not the decision): memory -27 to -29 % (strings
+  counted for both sides), scanned bytes half, GC cycle 2 to 3 times cheaper; speed mixed (see the
+  document), `build` 0.4 to 0.5 and `churn` 0.4 to 0.8 of today's tree.
+- M1: jobs `l1` to `l4` are in the queue (pushed), the user runs them in the morning.
+- Open for the user: give up the rule "no page holds entries with different numbers of values" (the data
+  says it empties the idea on the real mix); then SKMV is only for what does not fit a page.
+- Housekeeping to tell the user: seven unpushed local commits were rewritten with `git filter-branch` to
+  drop a 5.6 MB test binary (`internal/artstr/artstr.test`) that went into a commit by accident; the local
+  branch `backup-before-filter` still holds the old state. `.gitignore` now ignores `*.test`.
+
 ## 2026-10-03 late: unique runs and r4 are in
 
 The PC unique runs (both data sets, `uint64` and strings) finished at 21:29, the M1 job r4 at 21:30; both

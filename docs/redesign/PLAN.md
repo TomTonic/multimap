@@ -151,6 +151,12 @@ numbers of values for now. The leaf kinds go; what they did moves into the singl
   that with a page that holds entries of different value counts (STRATEGY 4.2) is decided after
   this step, by what the multi profile shows.
 - Look at multi `churn` at 1M u64 (0.82 since `node-layout`) with the new structure.
+- **First tree measurement (2026-10-04, [step3-tree-pages.md](step3-tree-pages.md)):** the multi-key page for
+  string values is in the tree as an experiment (`internal/artstr`). On the natural mix of `street` and
+  `dirs` the rule "a page holds entries with one value" leaves no page standing; a page that holds a key
+  with several values (key once, values behind it) gives -27 to -29 % memory and half the scanned bytes at
+  the price of slower mutation. The decision on mixed value counts (STRATEGY 4.2) is due now, before the
+  single-key page is built.
 
 **Gate 3:**
 - Multi against `node-layout` (all key kinds, 4K-256K, 1M spot check): no cell below 0.85.

@@ -12,6 +12,9 @@ Start here when you resume the work.
    [step1-results.md](step1-results.md): the results of the page prototype (step 1);
    [step2-design.md](step2-design.md) and [step2-results.md](step2-results.md): the pages in the tree
    (step 2) and their measurements.
+5a. Step 3 so far: [step3-layout.md](step3-layout.md) (the two page layouts compared),
+   [step3-real-data.md](step3-real-data.md) (the two real data sets, the tree of today),
+   [step3-tree-pages.md](step3-tree-pages.md) (the multi-key page in the tree, for strings).
 6. The tools: `bench/cmd/objstat` (the object statistic), `bench/cmd/pagefill` (bytes per key of
    the page prototype `internal/vpage`), `bench/remote/` (the arm64 job queue and its runner, see
    MEASURING.md).
