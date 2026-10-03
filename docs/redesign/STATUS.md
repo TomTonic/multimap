@@ -9,10 +9,12 @@ redesigned step 3 in [PLAN.md](PLAN.md). The user's decisions:
   set leaves. No page holds entries with different numbers of values for now.
 - A remainder too long for the page stays inline in an **oversized object**, exempt from R1: no pointer
   to a key any more, one random cache miss less.
-- Values are byte strings of any length in the layouts under design; fixed-size values get a
-  specialized variant later. No fixed limit on the number or size of values: "what fits".
-- The common prefix of a page should decide most mismatches within its first 64 or 128 bytes. Pages of
-  `4m-1` entries with a header of `8m` bytes (3, 7, 11, 15, ...) are conceivable.
+- Values are byte strings in the layouts under design, at most 255 bytes each while one length byte is
+  used (a longer value needs an escape, open); fixed-size values get a specialized variant later. The
+  number of values per entry is "what fits", not capped by the header.
+- The common prefix of a page should, if possible, decide a mismatch within its first 64 or 128 bytes;
+  the threshold is found by measuring. The entry count per multi-key page is not fixed: 3, 7, 11, 15 in
+  the first sketch, 2, 6, 10 if another header byte is needed, or other with four size classes.
 - Words: *path*, *remainder*, *common prefix*, *byte node*, *range node*, *end page*; `leaf` no longer
   names an object.
 

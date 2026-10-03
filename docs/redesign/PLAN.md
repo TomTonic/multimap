@@ -123,9 +123,10 @@ Decided with the user on 2026-10-03: a page may hold **one multi-value entry** (
 SKMV in [whataleafneedstostore.md](whataleafneedstostore.md)). No page holds entries with different
 numbers of values for now. The leaf kinds go; what they did moves into the single-key page.
 
-- **Single-key page.** One entry with all its values inline, whatever fits: any number of values,
-  any length (the layouts take lengths; fixed-size values get a specialized variant later, which
-  swaps instead of shifting when it compacts). It replaces flat leaves, typed leaves and the inline
+- **Single-key page.** One entry with all its values inline, as many as fit; each value up to 255 bytes
+  as long as its length is one byte, longer ones need an escape (open). The number of values is not
+  to be capped by the header, as the 6 or 7 of the first sketch are. Fixed-size values get a
+  specialized variant later, which swaps instead of shifting when it compacts. It replaces flat leaves, typed leaves and the inline
   part of set leaves. The end page of a node (today the term leaf) is a single-key page.
 - **Long remainders stay inline.** A remainder that does not fit the largest class goes into an
   *oversized object* of the size Go gives it. It is exempt from R1 and counted separately in the
@@ -133,12 +134,13 @@ numbers of values for now. The leaf kinds go; what they did moves into the singl
 - **Value overflow.** Only when the values do not fit, the page holds a pointer to a value set
   (array, then hash set) at a fixed offset. A page without that pointer stays pointer-free. Measure
   whether the value set still needs an inline stage.
-- **Layout of the multi-key page.** The sketch of the user (header of lengths, `4m-1` entries per
-  `8m` header bytes, common prefix first, so that its first 64 or 128 bytes decide most
-  mismatches) and the layout of step 2 (directory of tags, slots, heap) are compared by
+- **Layout of the multi-key page.** The sketch of the user (header of lengths, common prefix first so
+  that, if possible, its first 64 or 128 bytes decide a mismatch; how many entries a page holds
+  follows from the header: `4m-1` for `8m` bytes in the sketch, 2, 6 or 10 if another byte is needed,
+  or fewer with four size classes) and the layout of step 2 (directory of tags, slots, heap) are compared by
   measurement. Both are for variable-length values; the one of step 2 holds one word per value.
-  Do not commit to the 3 or 7 entries per page of the sketch before the memory per key is measured
-  (a 512-byte page holds up to 29 `uint64` keys today).
+  Do not commit to any entry count per page before the memory per key is measured (a 512-byte
+  page holds up to 29 `uint64` keys today).
 - **Fall back stays** as long as a single-key page cuts a multi-key page in two. Whether to lift
   that with a page that holds entries of different value counts (STRATEGY 4.2) is decided after
   this step, by what the multi profile shows.

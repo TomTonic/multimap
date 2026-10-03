@@ -11,8 +11,9 @@ complicated. Such places are collected at the end ("Where the vocabulary is stil
 ## Keys, values, entries
 
 - **key**: a byte string. The tree orders its entries by key, bytewise.
-- **value**: what a key maps to. *Planned:* a byte string of any length (the layouts under design,
-  [whataleafneedstostore.md](whataleafneedstostore.md), store lengths); for fixed-size values a
+- **value**: what a key maps to. *Planned:* a byte string. The layouts under design
+  ([whataleafneedstostore.md](whataleafneedstostore.md)) store its length in one byte, so a value is
+  at most 255 bytes there; a longer one needs an escape, which is open. For fixed-size values a
   specialized variant follows later. *Today:* a fixed-size `T`, held as a word of 8 bytes in a page.
 - **entry**: a key with all its values. The unit that objects store.
 - **single-value entry**, **multi-value entry**: an entry with exactly one value, or with two or
@@ -47,8 +48,9 @@ Every object that stores entries stores only the end of their keys. The tree spe
   - **multi-key page**: many entries with one value each, in key order. This is the page of
     `internal/vpage`, and the object steps 1 and 2 built. (Before: `vpage`, `page`, leaf-page,
     U8 page. In the sketches: MKSV.)
-  - **single-key page** *(planned)*: exactly one entry with all its values inline, whatever fits:
-    any number of values of any length. (Before: *flat leaf*, *typed leaf*, and the inline part of
+  - **single-key page** *(planned)*: exactly one entry with all its values inline, as many as fit (the
+    sketch's limit of 6 or 7 values comes from its header and is to be redesigned); each value up to
+    255 bytes while a value's length is one byte. (Before: *flat leaf*, *typed leaf*, and the inline part of
     the *set leaf*. In the sketches: SKMV; SKSV is the case of one value.) An entry with a second
     value leaves its multi-key page for a single-key page (*promote*).
   - **end page**: the page that a node holds for the entry whose key ends exactly at the node,
