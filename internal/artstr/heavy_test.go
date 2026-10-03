@@ -4,9 +4,14 @@ import (
 	"os"
 	"strconv"
 	"testing"
+
+	"github.com/TomTonic/multimap/internal/lpage"
 )
 
 func TestMain(m *testing.M) {
+	if s := os.Getenv("LPAGE_MAXHEADER"); s != "" {
+		lpage.MaxHeader, _ = strconv.Atoi(s)
+	}
 	if s := os.Getenv("ARTSTR_CROWDED"); s != "" {
 		CrowdedRatio, _ = strconv.Atoi(s)
 	}

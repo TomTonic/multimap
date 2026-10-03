@@ -288,8 +288,8 @@ func Build(keys, vals [][]byte) (*Page, error) {
 	return nil, ErrTooLong
 }
 
-// Get returns the value of suffix s. The slice aliases the page and is valid
-// until the page changes.
+// Get returns the value of suffix s, the first one if it has several. The slice
+// aliases the page and is valid until the page changes.
 func (p *Page) Get(s []byte) ([]byte, bool) {
 	m := p.mem()
 	h, cp := p.hdr(), int(p.cp)
@@ -584,9 +584,9 @@ func (p *Page) insertSlow(s, val []byte) (*Page, Result, error) {
 	return p, Full, nil
 }
 
-// Delete removes suffix s and returns the page that holds the rest, nil if it
-// is empty, and whether s was there. A page that has become thin moves to a
-// smaller class.
+// Delete removes suffix s, its first entry if it has several values, and returns
+// the page that holds the rest, nil if it is empty, and whether s was there. A
+// page that has become thin moves to a smaller class.
 func (p *Page) Delete(s []byte) (*Page, bool) {
 	m := p.mem()
 	h, cp := p.hdr(), int(p.cp)
