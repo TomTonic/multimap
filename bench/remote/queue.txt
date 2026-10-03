@@ -17,3 +17,13 @@ a0 6b06dd2 6b06dd2 5 -suite dev -keys u64,str -sizes 4096,16384 -ops valuesFor,v
 # scenario: precise in 30 of 32 comparisons, see docs/redesign/STATUS.md. The same again with more
 # processes, to settle the two imprecise cells, with the machine at rest.
 a1 6b06dd2 6b06dd2 20 -suite dev -keys u64,str -sizes 4096,16384 -ops valuesFor,valuesBetween,churn,build -vs baseline -minprocs 8 -maxprocs 24 -skipmem
+
+# The two real datasets with natural values (2026-10-03): street names with their localities and
+# directories with their file names, ordered against the competitors of the multi profile, once with
+# uint64 values (the value numbers) and once with strings (the real names, tags=strvals). Same
+# commit and flags as the runs on the Windows PC (docs/redesign/step3-real-data.md). The estimates
+# are guesses until the first job has run; the machine must be at rest.
+r1 9847a43 - 60 -suite dev -keys street -values multi -sizes 4096,16384,212449 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3
+r2 9847a43 - 60 -suite dev -keys dirs -values multi -sizes 4096,16384,86215 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3
+r3 9847a43 - 60 tags=strvals -suite dev -keys street -values multi -sizes 4096,16384,212449 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3
+r4 9847a43 - 60 tags=strvals -suite dev -keys dirs -values multi -sizes 4096,16384,86215 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3
