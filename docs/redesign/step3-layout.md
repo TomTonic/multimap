@@ -12,6 +12,20 @@ microbenchmarks against `vpage`. It does not wire the prototype into the tree; t
 decision. The names are those of [GLOSSARY.md](GLOSSARY.md); in this document **A** is the page of
 `internal/vpage` and **B** the length-header page of `internal/lpage`.
 
+> **Correction, 2026-10-03 (user).** This comparison is not a fair test of B, and the recommendation
+> to drop B that an earlier version of this document gave is withdrawn.
+> - B was designed for values of variable length (strings and the like). Everything below measures
+>   8-byte scalar values, the case A is built for (its slot has one word for the value), and the
+>   "fixed values" variant of B is the scalar specialization the user wants later, not B itself.
+> - The keys of the microbenchmarks (`u64`, `uuid`, `path`) are synthetic generators, and the
+>   value counts of the model are the synthetic skew of the bench. The only valid data we have is
+>   `street`: real names and real locality counts.
+> - A has no counterpart for values of variable length, so there is no comparison for B's own case yet.
+> A special case for `u64` and other scalars is fine; rejecting B on the strength of `u64` is not.
+> Valid so far, `street` only, memory model (bytes per key, pages plus routers): A 35.7; B with a
+> length byte per value 30.8 (header 16, 7 entries) and 29.9 (header 24, 11 entries); B with fixed
+> values 29.0 and 27.9. The microbenchmarks have no `street` yet.
+
 ## The two layouts
 
 | | A: `vpage` (step 2) | B: `lpage` (the sketch) |
@@ -144,33 +158,21 @@ cold lookup is a property of the layout (or of my loop), not of the Ryzen.**
   both, so they cancel; a branch that depends on a missing line may stop the CPU from running ahead
   to the next lookup. The M1 shows the same gap (above), so it is not this CPU.
 
-## Conclusion so far
+## Conclusion so far (corrected)
 
-Memory per key and the speed of lookups point in opposite directions, and only the first is
-solid:
+What the numbers support, and nothing more:
 
-- **B is smaller than A by 1-21% in the model, for every kind of key.** It is not the prefix policy
-  (A with a prefix threshold of 4 bytes instead of 48 gains 0.1-2.4%); it is that B has no directory and a
-  fuller page.
-- **B is not faster for the short keys that gate 2 missed.** Gate 2's deficits were small maps and `u64`: B's
-  lookups for `u64` are 28-69% slower and absent keys 2.4 times, with the prototype's loop. B pays back
-  for long keys (`path`, `url` presumably), where A's gap to `btree-map` was.
-- **Nothing is known about the tree.** The tree adds routing, scans and the end entries; a layout
-  that wins on a microbenchmark has lost to one that loses it before (the first page of step 1).
+- **For scalar values** (8 bytes) A is faster than B for short keys and for absent keys (Ryzen and M1), B is
+  smaller everywhere in the model and faster for the long synthetic keys. That is a case for a
+  scalar specialization, not a verdict on B.
+- **For `street`**, the one real corpus, B is 16-22% smaller in the model (above). Its lookups and changes
+  have not been measured on `street`.
+- **For values of variable length** nothing has been measured. The prototype stores 8-byte values only.
+  A comparison needs a real benchmark: `street` offers one, since its corpus has the names of
+  the localities (10,199, variable length) next to the indexes, so a street can map to the real names
+  of its localities.
 
-What I would do, in this order (the user decides):
-
-1. **Do not wire B into the tree yet.** It lacks the operations the tree needs (range scan from a
-   bound, merge, a cut at a byte boundary, rebase), and the evidence so far is a model and
-   microbenchmarks.
-2. **Find out why the cold lookups of B are slow for `u64`**, on the M1 the user offered and on
-   this machine with `perf` or the like: 23 ns for the first line, 71 for all lines, 250 for `Get` is
-   unexplained. If it is a property of the loop (a branch on missing data), a different loop or a
-   tag byte per entry (which makes B the A with a better memory layout) might fix it; if it is a property of
-   the layout, B stays for long keys.
-3. **Consider one layout per kind of key, as the user suggested for fixed-size values**: A's uniform page
-   for keys of at most 8 bytes (`u64`, where A is at 26.5 and B at 24.9-26.2, and the lookup is
-   faster), a length-header page for longer keys. That is two page layouts to maintain; the glossary
-   already names the second as a candidate.
-4. **Do not expect to get B's memory into A by policy.** A lower prefix threshold gains 0.1-2.4%; the rest
-   of B's advantage is the missing directory and the fuller pages, that is, the layout.
+What to do next (the user decides): add values of variable length to the prototype (a length byte per
+value, as in the sketch); build the `street` benchmark with the locality names as string values and
+run the microbenchmarks and the model on it; compare B with what the tree does today for string values
+(typed and set leaves, `strvals`); only then choose.

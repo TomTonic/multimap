@@ -11,9 +11,12 @@ by 1-21% for every kind of key, but its lookups of short keys are 28-69% slower 
 absent keys 2.4 times; for long keys (`path`) it is faster. The prototype's cold lookups for `u64`
 are not understood; the user offered a run on the M1 for that. Nothing is wired into the tree.
 
-**Next, if the user agrees:** find out why B's cold lookups are slow (M1 and `perf`); decide whether
-one layout per kind of key (A's uniform page for keys up to 8 bytes, B for longer ones) is worth
-two layouts; only then put a page into the tree.
+**Correction (user, same evening):** B was made for values of variable length, and the comparison above
+measured 8-byte scalars on synthetic keys only, so it does not decide against B; the recommendation
+to drop B is withdrawn. Valid data: `street` (real keys, real locality counts; B is 16-22% smaller in the
+model). **Next:** variable-length values in `internal/lpage`, a `street` benchmark with the real
+locality names as string values, microbenchmarks on `street`, and a comparison with what the tree
+does today for string values; a scalar special case for `u64` is accepted.
 
 ## 2026-10-03: vocabulary agreed, single-key page decided, step 2 gate still open
 
