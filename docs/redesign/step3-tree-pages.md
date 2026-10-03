@@ -171,7 +171,7 @@ Why that is so many bytes: the values are not spread evenly over the keys.
 | 65 and more | 0.35 % | 33.5 % | 0.5 % | 27.0 % |
 
 (212,449 street names with 579,000 values, 86,215 directories with 296,800.) **A page of up to 15 entries
-holds the keys with up to a handful of values, and with them half of the values (54 % on `street`, 54 % on
+holds the keys with up to a handful of values, and with them half of the values (54 % on `street`, 56 % on
 `dirs`); the other half of the values belongs to 1.5 and 2.5 % of the keys, which need the value overflow.**
 
 Two things stand out. The pages are 46 to 87 % full (a B-tree's 69 % is the expectation for random
