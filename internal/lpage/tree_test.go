@@ -2,9 +2,11 @@ package lpage
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
+	"unsafe"
 )
 
 // randomPage returns a page of random entries of one shape together with its
@@ -128,7 +130,7 @@ func checkAccess(t *testing.T, p *Page, keys, vals [][]byte, r *rand.Rand) {
 	// DeleteAt removes the entry and keeps the others
 	k := r.IntN(n)
 	cp, _ := Build(keys, vals) // DeleteAt works in place
-	q := cp.DeleteAt(k)
+	q := cp.DeleteAt(k, false)
 	if n == 1 {
 		if q != nil {
 			t.Fatal("DeleteAt of the only entry leaves a page")
@@ -181,4 +183,196 @@ func TestTreeMoves(t *testing.T) {
 	if !Fits([]byte("a"), nil) || Fits(nil, nil) || Fits(make([]byte, 300), nil) || !FitsLen(1, 255) || FitsLen(0, 1) || FitsLen(300, 1) || FitsLen(255, 255) {
 		t.Error("Fits and FitsLen decide wrongly")
 	}
+}
+
+// TestTryInsert checks the insertion of a tree that keeps one value per key.
+//
+// A tree puts a key with its first value into a page and moves it elsewhere when
+// it gets a second one, so the page must not replace a value that is there: it
+// reports the key as present, with its position, and leaves the page alone, for
+// every form of page (values of one width or of different lengths, a new value
+// of another length), and it grows the page in place, with a longer header or in a
+// bigger class, or says Full.
+func TestTryInsert(t *testing.T) {
+	var model []struct{ k, v []byte }
+	var p *Page
+	r := rand.New(rand.NewPCG(9, 9))
+	full := false
+	for round := 0; round < 400 && !full; round++ {
+		k := []byte(fmt.Sprintf("key-%03d", r.IntN(60)))
+		v := rbytes(r, r.IntN(5), 256)
+		if round%7 == 0 {
+			v = []byte("12345678") // a run of equal widths now and then
+		}
+		if p == nil {
+			var err error
+			if p, err = Build([][]byte{k}, [][]byte{v}); err != nil {
+				t.Fatal(err)
+			}
+			model = append(model, struct{ k, v []byte }{k, v})
+			continue
+		}
+		before, _ := p.Entries()
+		q, res, at, err := p.TryInsert(k, v, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch res {
+		case Present:
+			if q != p || !bytes.Equal(before[at], k) {
+				t.Fatalf("Present at %d for %q", at, k)
+			}
+		case Inserted:
+			p = q
+			model = append(model, struct{ k, v []byte }{k, v})
+		case Full:
+			full = true
+			if q != p {
+				t.Fatal("Full returns another page")
+			}
+		default:
+			t.Fatalf("TryInsert result %v", res)
+		}
+	}
+	slices.SortFunc(model, func(a, b struct{ k, v []byte }) int { return bytes.Compare(a.k, b.k) })
+	keys, vals := p.Entries()
+	for i, e := range model {
+		if !bytes.Equal(keys[i], e.k) || !bytes.Equal(vals[i], e.v) {
+			t.Fatalf("entry %d is %q=%q, want %q=%q", i, keys[i], vals[i], e.k, e.v)
+		}
+	}
+	if !full {
+		t.Fatal("the page never got full")
+	}
+	if _, _, _, err := p.TryInsert(nil, nil, false); err != ErrEmpty {
+		t.Errorf("empty suffix: %v", err)
+	}
+	if _, _, _, err := p.TryInsert(make([]byte, 300), nil, false); err != ErrTooLong {
+		t.Errorf("long suffix: %v", err)
+	}
+	// a page of values of one width, and a key that is there with a value of
+	// another length: present, not replaced
+	w, _ := Build([][]byte{[]byte("a"), []byte("b")}, [][]byte{[]byte("1234"), []byte("5678")})
+	if q, res, at, _ := w.TryInsert([]byte("b"), []byte("x"), false); res != Present || at != 1 || q != w || !w.ValueIs(1, "5678") {
+		t.Errorf("another length replaces a value: %v at %d", res, at)
+	}
+	if q, res, _, _ := w.TryInsert([]byte("zzzz"), []byte("x"), false); res != Inserted || q.Len() != 3 {
+		t.Errorf("new key with another length: %v", res)
+	}
+	if MaxEntries() != MaxHeader-2 {
+		t.Errorf("MaxEntries = %d with header %d", MaxEntries(), MaxHeader)
+	}
+}
+
+// TestEachString checks the strings a scan hands out.
+//
+// A scan over many entries of a page copies their values in one piece; each
+// string must still be its own value, and stopping early must work.
+func TestEachString(t *testing.T) {
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d")}
+	vals := [][]byte{[]byte("one"), nil, []byte("three"), []byte("4")}
+	p, err := Build(keys, vals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	if !p.EachString(1, 4, false, func(s string) bool { got = append(got, s); return true }) || !slices.Equal(got, []string{"", "three", "4"}) {
+		t.Fatalf("EachString(1, 4) = %q", got)
+	}
+	n := 0
+	if p.EachString(0, 4, false, func(string) bool { n++; return n < 2 }) {
+		t.Error("EachString does not stop")
+	}
+	if !p.EachString(2, 2, false, func(string) bool { t.Fatal("called for an empty run"); return true }) {
+		t.Error("an empty run is not complete")
+	}
+}
+
+// TestMergeRefuses checks the quick refusals of Merge.
+//
+// A tree tries to merge a thin page with its neighbours after almost every delete,
+// so most tries must fail without laying anything out: too many bytes, too many
+// entries for any header.
+func TestMergeRefuses(t *testing.T) {
+	var ka, kb [][]byte
+	var va, vb [][]byte
+	for i := range 7 {
+		ka = append(ka, []byte{'a', byte('a' + i)})
+		kb = append(kb, []byte{'b', byte('a' + i)})
+		va = append(va, rbytes(rand.New(rand.NewPCG(1, 1)), i, 256))
+		vb = append(vb, nil)
+	}
+	a, err := Build(ka, va)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Build(kb, vb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Merge(a, b) != nil {
+		t.Error("14 entries merge into a page of variable values")
+	}
+	one, _ := Build([][]byte{[]byte("c")}, [][]byte{[]byte("1")})
+	if m := Merge(a, one); m == nil || m.Len() != 8 {
+		t.Error("a page and one more entry do not merge")
+	}
+}
+
+// TestImmutablePages checks the mode of a tree whose pages are never changed.
+//
+// A tree that hands out strings which alias its pages must never modify a page
+// after building it, or a string a user holds would change. In this mode an
+// insertion or deletion leaves the old page exactly as it was, produces the
+// same entries as the in-place one, and the aliased strings are the page's own
+// bytes.
+func TestImmutablePages(t *testing.T) {
+	r := rand.New(rand.NewPCG(3, 4))
+	for range 300 {
+		p, keys, vals := randomPage(r, "path", 1+r.IntN(8))
+		if p == nil {
+			continue
+		}
+		snapshot := bytes.Clone(p.mem())
+		k := []byte(fmt.Sprintf("name %d", r.IntN(1000)))
+		v := rbytes(r, r.IntN(9), 256)
+		q, res, _, err := p.TryInsert(k, v, true)
+		if err != nil || !bytes.Equal(snapshot, p.mem()) {
+			t.Fatalf("TryInsert with cow changes the page or fails: %v", err)
+		}
+		if res == Inserted {
+			if q == p {
+				t.Fatal("TryInsert with cow returns the same page")
+			}
+			ks, vs := q.Entries()
+			if len(ks) != len(keys)+1 || !has2(ks, k) || len(vs) != len(vals)+1 {
+				t.Fatalf("TryInsert with cow lost entries: %q", ks)
+			}
+		}
+		if p.Len() > 1 {
+			i := r.IntN(p.Len())
+			d := p.DeleteAt(i, true)
+			if !bytes.Equal(snapshot, p.mem()) || d == p || d.Len() != p.Len()-1 {
+				t.Fatal("DeleteAt with cow changes the page")
+			}
+			rest := slices.Delete(slices.Clone(keys), i, i+1)
+			if dk, _ := d.Entries(); !slices.EqualFunc(dk, rest, bytes.Equal) {
+				t.Fatalf("DeleteAt(%d) with cow left %q", i, dk)
+			}
+		}
+		if len(vals[0]) > 0 {
+			s := p.StringAt(0, true)
+			if unsafe.StringData(s) != &p.ValueAt(0)[0] {
+				t.Fatal("StringAt with alias copies")
+			}
+			p.EachString(0, p.Len(), true, func(s string) bool { return true })
+		}
+		if s := p.StringAt(0, false); s != string(vals[0]) {
+			t.Fatalf("StringAt = %q, want %q", s, vals[0])
+		}
+	}
+}
+
+func has2(keys [][]byte, k []byte) bool {
+	return slices.ContainsFunc(keys, func(x []byte) bool { return bytes.Equal(x, k) })
 }

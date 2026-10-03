@@ -182,45 +182,66 @@ func rangeCheck(t *testing.T, m *Map[string], want model, keys []string, b *Boun
 // page. After every few operations the tree must hold exactly the keys and
 // values of the model, find them all and list them in order within any bounds.
 func TestMapAgainstModel(t *testing.T) {
-	for kn, kf := range keyShapes {
-		for vn, vf := range valueShapes {
-			t.Run(kn+"/"+vn, func(t *testing.T) {
-				r := rand.New(rand.NewPCG(uint64(len(kn))+seedBase, uint64(len(vn))+7))
-				var m Map[string]
-				want := model{}
-				var added [][2]string
-				for step := 1; step <= mapSteps; step++ {
-					switch op := r.IntN(10); {
-					case op < 6:
-						k, v := kf(r), vf(r)
-						m.Add([]byte(k), v)
-						want.add(k, v)
-						added = append(added, [2]string{k, v})
-					case op < 9 && len(added) > 0:
-						kv := added[r.IntN(len(added))]
-						m.Remove([]byte(kv[0]), kv[1])
-						want.remove(kv[0], kv[1])
-					case len(added) > 0:
-						kv := added[r.IntN(len(added))]
-						m.RemoveKey([]byte(kv[0]))
-						delete(want, kv[0])
-					}
-					if step%250 == 0 {
-						verify(t, &m, want, r, step)
-					}
-				}
-				verify(t, &m, want, r, -1)
-				for _, k := range want.sorted() {
-					if !m.Has([]byte(k)) {
-						t.Fatalf("Has(%q) is false", k)
-					}
-				}
-				m.Clear()
-				if m.Len() != 0 || m.Has([]byte("a")) {
-					t.Fatal("Clear leaves keys")
-				}
+	for _, zc := range []bool{false, true} {
+		for kn, kf := range keyShapes {
+			for vn, vf := range valueShapes {
+				t.Run(fmt.Sprintf("zerocopy %v/%s/%s", zc, kn, vn), func(t *testing.T) {
+					testModel(t, zc, kf, vf, uint64(len(kn))+seedBase, uint64(len(vn))+7)
+				})
+			}
+		}
+	}
+}
+
+// testModel runs one workload of TestMapAgainstModel.
+func testModel(t *testing.T, zeroCopy bool, kf, vf func(*rand.Rand) string, seed1, seed2 uint64) {
+	r := rand.New(rand.NewPCG(seed1, seed2))
+	m := Map[string]{ZeroCopy: zeroCopy}
+	want := model{}
+	var held []string // strings a user holds on to while the map changes
+	var heldBytes []string
+	var added [][2]string
+	for step := 1; step <= mapSteps; step++ {
+		switch op := r.IntN(10); {
+		case op < 6:
+			k, v := kf(r), vf(r)
+			m.Add([]byte(k), v)
+			want.add(k, v)
+			added = append(added, [2]string{k, v})
+		case op < 9 && len(added) > 0:
+			kv := added[r.IntN(len(added))]
+			m.Remove([]byte(kv[0]), kv[1])
+			want.remove(kv[0], kv[1])
+		case len(added) > 0:
+			kv := added[r.IntN(len(added))]
+			m.RemoveKey([]byte(kv[0]))
+			delete(want, kv[0])
+		}
+		if step%250 == 0 {
+			verify(t, &m, want, r, step)
+		}
+		if step%50 == 0 && len(added) > 0 {
+			kv := added[r.IntN(len(added))]
+			m.Each([]byte(kv[0]), func(v string) bool {
+				held, heldBytes = append(held, v), append(heldBytes, strings.Clone(v))
+				return false
 			})
 		}
+	}
+	verify(t, &m, want, r, -1)
+	for _, k := range want.sorted() {
+		if !m.Has([]byte(k)) {
+			t.Fatalf("Has(%q) is false", k)
+		}
+	}
+	for i, s := range held {
+		if s != heldBytes[i] {
+			t.Fatalf("a string handed out changed from %q to %q", heldBytes[i], s)
+		}
+	}
+	m.Clear()
+	if m.Len() != 0 || m.Has([]byte("a")) {
+		t.Fatal("Clear leaves keys")
 	}
 }
 

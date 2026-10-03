@@ -125,9 +125,6 @@ func writeEnts(code uint8, cp int, es []ent) *Page {
 
 // buildEnts returns the page of es, or nil if they do not fit one.
 func buildEnts(es []ent) *Page {
-	if len(es) == 0 || len(es) > maxEnts {
-		return nil
-	}
 	code, cp, _, ok := planEnts(es)
 	if !ok {
 		return nil

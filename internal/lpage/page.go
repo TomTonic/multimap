@@ -348,7 +348,7 @@ func (p *Page) Entries() (keys, vals [][]byte) {
 // page of values of one width takes a value of another length by laying its
 // entries out anew.
 func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
-	q, res, _, err := p.insert(s, val, true)
+	q, res, _, err := p.insert(s, val, true, false)
 	return q, res, err
 }
 
@@ -356,12 +356,14 @@ func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
 // page that holds the result. If s is there it changes nothing and returns
 // Present and the position of s; the position of a new entry is not reported. It
 // serves a tree that keeps one value per key in its pages and moves a key with a
-// second value elsewhere. Full and errors are as for Insert.
-func (p *Page) TryInsert(s, val []byte) (*Page, Result, int, error) {
-	return p.insert(s, val, false)
+// second value elsewhere. Full and errors are as for Insert. With cow the page
+// is never changed in place: the result is always another page, as in a tree
+// whose pages are immutable (see StringAt).
+func (p *Page) TryInsert(s, val []byte, cow bool) (*Page, Result, int, error) {
+	return p.insert(s, val, false, cow)
 }
 
-func (p *Page) insert(s, val []byte, replace bool) (*Page, Result, int, error) {
+func (p *Page) insert(s, val []byte, replace, cow bool) (*Page, Result, int, error) {
 	switch {
 	case len(s) == 0:
 		return p, Inserted, 0, ErrEmpty
@@ -388,7 +390,7 @@ func (p *Page) insert(s, val []byte, replace bool) (*Page, Result, int, error) {
 			return q, res, i, err
 		}
 		x := len(s) - cp
-		if n < len(r) && used+x+len(val) <= len(m) {
+		if !cow && n < len(r) && used+x+len(val) <= len(m) {
 			copy(m[voff+len(val):], m[voff:used])
 			copy(m[voff:], val)
 			copy(m[koff+x:], m[koff:used+len(val)])
@@ -494,19 +496,19 @@ func (p *Page) Delete(s []byte) (*Page, bool) {
 	if !found {
 		return p, false
 	}
-	q, _ := p.deleteEntry(i, koff)
+	q, _ := p.deleteEntry(i, koff, false)
 	return q, true
 }
 
-// deleteAt removes entry i; see Delete.
-func (p *Page) deleteAt(i int) (*Page, bool) {
+// deleteAt removes entry i; see Delete. With cow the page is not changed in
+// place.
+func (p *Page) deleteAt(i int, cow bool) (*Page, bool) {
 	koff, _ := p.offsets(i)
-	return p.deleteEntry(i, koff)
+	return p.deleteEntry(i, koff, cow)
 }
 
 // deleteEntry removes entry i, whose remainder starts at offset koff.
-func (p *Page) deleteEntry(i, koff int) (*Page, bool) {
-	m := p.mem()
+func (p *Page) deleteEntry(i, koff int, cow bool) (*Page, bool) {
 	n := p.Len()
 	if n == 1 {
 		return nil, true
@@ -515,14 +517,19 @@ func (p *Page) deleteEntry(i, koff int) (*Page, bool) {
 	kend, used := p.span()
 	voff := p.voffset(v, kend, i)
 	x, vl := int(r[i]), p.vlen(v, i)
-	copy(m[voff:], m[voff+vl:used])
-	copy(m[koff:], m[koff+x:used-vl])
-	clear(m[used-x-vl : used])
-	copy(r[i:], r[i+1:n])
-	r[n-1] = 0
-	if v != nil {
-		copy(v[i:], v[i+1:n])
-		v[n-1] = 0
+	if cow {
+		p = p.without(i, koff, voff, used)
+	} else {
+		m := p.mem()
+		copy(m[voff:], m[voff+vl:used])
+		copy(m[koff:], m[koff+x:used-vl])
+		clear(m[used-x-vl : used])
+		copy(r[i:], r[i+1:n])
+		r[n-1] = 0
+		if v != nil {
+			copy(v[i:], v[i+1:n])
+			v[n-1] = 0
+		}
 	}
 	if c := p.class(); c > 0 && p.Used()*100 <= ShrinkFill*sizes[c-1] {
 		var es [maxEnts]ent
@@ -531,6 +538,32 @@ func (p *Page) deleteEntry(i, koff int) (*Page, bool) {
 		}
 	}
 	return p, true
+}
+
+// without returns a page of the class and header of p that holds its entries but
+// entry i, whose remainder starts at koff and whose value at voff of the used
+// bytes of p.
+func (p *Page) without(i, koff, voff, used int) *Page {
+	m := p.mem()
+	h := p.hdr()
+	r, v := p.lens()
+	n := p.Len()
+	x, vl := int(r[i]), p.vlen(v, i)
+	q := alloc(p.class())
+	q.code, q.cp = p.code, p.cp
+	m2 := q.mem()
+	r2, v2 := q.lens()
+	copy(r2, r[:i])
+	copy(r2[i:], r[i+1:n])
+	if v != nil {
+		copy(v2, v[:i])
+		copy(v2[i:], v[i+1:n])
+	}
+	off := h
+	off += copy(m2[off:], m[h:koff])
+	off += copy(m2[off:], m[koff+x:voff])
+	copy(m2[off:], m[voff+vl:used])
+	return q
 }
 
 // Split divides a page of at least two entries in the middle by count and

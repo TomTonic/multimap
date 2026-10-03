@@ -1,6 +1,9 @@
 package lpage
 
-import "bytes"
+import (
+	"bytes"
+	"unsafe"
+)
 
 // This file holds what a tree needs from a page beyond Run's Insert, Get and
 // Delete: positions instead of keys, so that a tree can find a key once and
@@ -71,6 +74,18 @@ func (p *Page) ValueAt(i int) []byte {
 	return p.mem()[voff : voff+p.vlen(v, i)]
 }
 
+// StringAt returns the value of entry i as a string: a copy, or with alias the
+// bytes of the page themselves, which is safe only for a page that is never
+// changed after it was built (see TryInsert and DeleteAt with cow) and keeps the
+// whole page alive as long as the string is.
+func (p *Page) StringAt(i int, alias bool) string {
+	b := p.ValueAt(i)
+	if alias && len(b) > 0 {
+		return unsafe.String(&b[0], len(b))
+	}
+	return string(b)
+}
+
 // ValueIs reports whether the value of entry i is val.
 func (p *Page) ValueIs(i int, val string) bool {
 	return string(p.ValueAt(i)) == val
@@ -97,8 +112,9 @@ func (p *Page) EachValue(i, j int, fn func(val []byte) bool) bool {
 // until fn returns false, and reports whether it ran to completion. The strings
 // are copies of the page's bytes, made together: one allocation for the run
 // instead of one for each value, so a string that a caller keeps holds the
-// bytes of its neighbours alive until it is dropped.
-func (p *Page) EachString(i, j int, fn func(val string) bool) bool {
+// bytes of its neighbours alive until it is dropped; with alias they are the
+// page's bytes themselves (see StringAt).
+func (p *Page) EachString(i, j int, alias bool, fn func(val string) bool) bool {
 	if i >= j {
 		return true
 	}
@@ -108,7 +124,12 @@ func (p *Page) EachString(i, j int, fn func(val string) bool) bool {
 	for k := i; k < j; k++ {
 		end += p.vlen(v, k)
 	}
-	run := string(p.mem()[off:end])
+	var run string
+	if alias && end > off {
+		run = unsafe.String(&p.mem()[off], end-off)
+	} else {
+		run = string(p.mem()[off:end])
+	}
 	off = 0
 	for k := i; k < j; k++ {
 		x := p.vlen(v, k)
@@ -160,9 +181,9 @@ func (p *Page) Thin() bool {
 }
 
 // DeleteAt removes entry i and returns the page that holds the rest, nil if it
-// was the only entry.
-func (p *Page) DeleteAt(i int) *Page {
-	q, _ := p.deleteAt(i)
+// was the only entry. With cow it leaves p as it is and returns another page.
+func (p *Page) DeleteAt(i int, cow bool) *Page {
+	q, _ := p.deleteAt(i, cow)
 	return q
 }
 

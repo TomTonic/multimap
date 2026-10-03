@@ -15,7 +15,7 @@ const (
 // remove deletes key and reports whether it was there. rk moves a leaf that
 // takes the place of a node above it (see collapse).
 func (t *Tree) remove(key []byte, rk rekeyFunc) bool {
-	ok := del(&t.root, key, 0, rk, nil) == deleted
+	ok := del(&t.root, key, 0, rk, nil, t.cow) == deleted
 	if ok {
 		t.size--
 	}
@@ -26,7 +26,7 @@ func (t *Tree) remove(key []byte, rk rekeyFunc) bool {
 // reports absent, deleted, keptEntry for another value, or keptLeaf if key has
 // a leaf, which the caller removes values from. rk is as in remove.
 func (t *Tree) removeValue(key []byte, want string, rk rekeyFunc) int8 {
-	r := del(&t.root, key, 0, rk, &want)
+	r := del(&t.root, key, 0, rk, &want, t.cow)
 	if r == deleted {
 		t.size--
 	}
@@ -43,14 +43,14 @@ func (t *Tree) removeValue(key []byte, want string, rk rekeyFunc) int8 {
 //
 // If want is not nil, del deletes only a key that is in a page with the raw
 // value *want (see removeValue).
-func del(loc **header, key []byte, depth int, rk rekeyFunc, want *string) int8 {
+func del(loc **header, key []byte, depth int, rk rekeyFunc, want *string, cow bool) int8 {
 	n := *loc
 	if n == nil {
 		return absent
 	}
 	if n.kind <= kLastPage {
 		if isPage(n.kind) {
-			return delFromPage(loc, key, depth, want)
+			return delFromPage(loc, key, depth, want, cow)
 		}
 		switch {
 		case !asLeaf(n).matches(key):
@@ -80,7 +80,7 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *string) int8 {
 		r := asR(n)
 		i := r.index(key[d])
 		c := &r.children()[i]
-		if r := del(c, key, d, rk, want); r != deleted {
+		if r := del(c, key, d, rk, want, cow); r != deleted {
 			return r
 		}
 		switch {
@@ -97,7 +97,7 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *string) int8 {
 		if c == nil {
 			return absent
 		}
-		if r := del(c, key, d+1, rk, want); r != deleted {
+		if r := del(c, key, d+1, rk, want, cow); r != deleted {
 			return r
 		}
 		if *c == nil {
@@ -110,7 +110,7 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *string) int8 {
 
 // delFromPage deletes key from the page at *loc, unless want is not nil and
 // the key's value is not *want, and reports what it found (see del).
-func delFromPage(loc **header, key []byte, depth int, want *string) int8 {
+func delFromPage(loc **header, key []byte, depth int, want *string, cow bool) int8 {
 	p := asPage(*loc)
 	i, ok := p.Find(key[depth:])
 	switch {
@@ -119,7 +119,7 @@ func delFromPage(loc **header, key []byte, depth int, want *string) int8 {
 	case want != nil && !p.ValueIs(i, *want):
 		return keptEntry
 	}
-	*loc = pageHdr(p.DeleteAt(i))
+	*loc = pageHdr(p.DeleteAt(i, cow))
 	return deleted
 }
 

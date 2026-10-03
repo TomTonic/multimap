@@ -19,6 +19,7 @@ type Tree struct {
 	small bool
 	at    spot // where upsert found a key that was in a page
 	mk    func(key []byte, base int, val string) *leafHead
+	cow   bool // pages are never changed in place (see Map.ZeroCopy)
 }
 
 // Len returns the number of keys.

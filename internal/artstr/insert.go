@@ -135,7 +135,7 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v st
 	p := asPage(*loc)
 	full := false // the key fits the page but for its room
 	if lpage.FitsLen(len(key)-depth, len(v)) {
-		q, res, i, _ := p.TryInsert(key[depth:], bytesOf(v)) // the entry fits a page: checked above
+		q, res, i, _ := p.TryInsert(key[depth:], bytesOf(v), t.cow) // the entry fits a page: checked above
 		switch res {
 		case lpage.Present: // a key in a page stays there whatever its new value
 			t.at = spot{loc: loc, i: i, depth: depth, par: par, pi: pi}
@@ -191,7 +191,7 @@ func (t *Tree) burst(loc **header, p *lpage.Page, key []byte, depth int, v strin
 		// the node's term, and a leaf. The others are longer.
 		whole := append(key[:depth:depth], first...)
 		term = t.mk(whole, d, string(p.ValueAt(0)))
-		p = p.DeleteAt(0) // the page was full: it has more keys
+		p = p.DeleteAt(0, t.cow) // the page was full: it has more keys
 	}
 	*loc = makeR(key[depth:d], term, []rng{{0, pageHdr(p.Skip(d - depth))}})
 	return t.upsert(key, v, nl)

@@ -26,6 +26,9 @@ const (
 	// orderedLP is the experiment of step 3: the tree with length-header pages
 	// for string values (see lp.go). It is built only on request (-vs).
 	orderedLP = "ordered-lpage"
+	// orderedLPZ is orderedLP with immutable pages and strings that are views of
+	// the page, not copies (artstr.Map.ZeroCopy).
+	orderedLPZ = "ordered-lpage-zc"
 )
 
 // The value profiles: multi gives keys a skewed number of values (see
@@ -50,8 +53,10 @@ func implsFor(profile string) []string {
 	if baseKit != nil {
 		others = append(others, baseline)
 	}
-	if hasPages && slices.Contains(vsOnly, orderedLP) {
-		others = append(others, orderedLP)
+	for _, lp := range []string{orderedLP, orderedLPZ} {
+		if hasPages && slices.Contains(vsOnly, lp) {
+			others = append(others, lp)
+		}
 	}
 	out := []string{ordered}
 	for _, b := range others {
@@ -79,7 +84,7 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
-	lp      *lpMap
+	lp, lpz *lpMap
 	base    any      // the baseline, see kit.go
 	others  []string // the candidates built besides ordered
 	// ranges of rangeKeys consecutive keys, as []byte and string views, and
@@ -106,13 +111,14 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream
 	nums, offs := profileValues(f.c, profile, n)
 	f.vals, f.offs = toVs(nums, f.c.Names), offs
 	builds := map[string]func(){
-		ordered:   func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
-		hashed:    func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
-		btreeSets: func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
-		mapSets:   func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
-		btreeMapC: func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
-		orderedLP: func() { f.lp = buildLP(f.c.Keys.B, f.vals, f.offs) },
-		baseline:  func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
+		ordered:    func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
+		hashed:     func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
+		btreeSets:  func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
+		mapSets:    func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
+		btreeMapC:  func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
+		orderedLP:  func() { f.lp = buildLP(f.c.Keys.B, f.vals, f.offs, false) },
+		orderedLPZ: func() { f.lpz = buildLP(f.c.Keys.B, f.vals, f.offs, true) },
+		baseline:   func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
 	}
 	f.others = slices.DeleteFunc(slices.Clone(impls), func(s string) bool { return s == ordered })
 	order := append([]string(nil), impls...)
@@ -292,4 +298,12 @@ func mapRemove(m mapMM, k string, v V) {
 			delete(m, k)
 		}
 	}
+}
+
+// lpOf returns the built candidate impl, orderedLP or orderedLPZ.
+func (f *fixture) lpOf(impl string) *lpMap {
+	if impl == orderedLPZ {
+		return f.lpz
+	}
+	return f.lp
 }

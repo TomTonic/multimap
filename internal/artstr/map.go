@@ -12,8 +12,13 @@ import (
 // leaf until a key holds more values than a flat leaf of 512 bytes. The zero
 // value is an empty map.
 type Map[T comparable] struct {
-	t    Tree
-	flat int8 // 1: T takes flat leaves, 2: typed leaves, -1: set leaves only, 0: not decided yet
+	// ZeroCopy, set before the first write, makes the pages immutable and
+	// hands out the strings of single-valued keys as views of the page, with
+	// no copy: a lookup costs no allocation. Every change then builds a new
+	// page, and a string a caller keeps holds its page, up to 512 bytes, alive.
+	ZeroCopy bool
+	t        Tree
+	flat     int8 // 1: T takes flat leaves, 2: typed leaves, -1: set leaves only, 0: not decided yet
 }
 
 // newSetLeaf allocates a set leaf that holds key from base on, in the
@@ -155,7 +160,7 @@ func (m *Map[T]) decide() {
 	case typedType[T]():
 		m.flat = 2
 		if stringType[T]() {
-			m.t.small = true
+			m.t.small, m.t.cow = true, m.ZeroCopy
 			m.t.mk = leafWith[T]
 		}
 	default:
@@ -339,7 +344,7 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 	switch {
 	case n == nil:
 	case isPage(n.kind):
-		yield(fromString[T](string(asPage(n).ValueAt(i))))
+		yield(fromString[T](asPage(n).StringAt(i, m.ZeroCopy)))
 	default:
 		eachValue(asLeaf(n), yield)
 	}
@@ -401,6 +406,6 @@ func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 		if isLeaf(n.kind) {
 			return eachValue(asLeaf(n), yield)
 		}
-		return asPage(n).EachString(i, j, func(s string) bool { return yield(fromString[T](s)) })
+		return asPage(n).EachString(i, j, m.ZeroCopy, func(s string) bool { return yield(fromString[T](s)) })
 	})
 }
