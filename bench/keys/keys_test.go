@@ -40,12 +40,12 @@ func TestGenerate(t *testing.T) {
 			if again := Generate(kind, n, 42); !slices.Equal(again.Keys.S, c.Keys.S) {
 				t.Fatal("the same seed gave another corpus")
 			}
-			if (c.Natural != nil) != (kind == Street) {
-				t.Fatalf("natural values: %v", c.Natural != nil)
+			if natural := kind == Street || kind == Dirs; (c.Natural != nil) != natural || (c.Names != nil) != natural {
+				t.Fatalf("natural values: %v, names: %v", c.Natural != nil, c.Names != nil)
 			}
 			for i, vs := range c.Natural {
-				if len(vs) == 0 || slices.Contains(vs, 0) {
-					t.Fatalf("street %q has localities %v; want at least one, none of them 0", c.Keys.S[i], vs)
+				if len(vs) == 0 || slices.Contains(vs, 0) || slices.Max(vs) > uint64(len(c.Names)) {
+					t.Fatalf("key %q has the values %v; want at least one, none of them 0, none beyond the %d names", c.Keys.S[i], vs, len(c.Names))
 				}
 			}
 		})
@@ -60,8 +60,8 @@ func TestCapacity(t *testing.T) {
 	if Capacity(UUID) < 1<<30 {
 		t.Error("synthetic kinds must have no limit")
 	}
-	for _, kind := range []Kind{Path, Street} {
-		if c := Capacity(kind); c < 100_000 || c > 1_000_000 {
+	for _, kind := range []Kind{Path, Street, Dirs} {
+		if c := Capacity(kind); c < 50_000 || c > 1_000_000 {
 			t.Errorf("%s: capacity %d", kind, c)
 		}
 	}
@@ -210,4 +210,46 @@ func TestProbes(t *testing.T) {
 			t.Errorf("%d probes, equal to the hits: %v", len(c.Probes.S), slices.Equal(c.Probes.S, c.Hits.S))
 		}
 	})
+}
+
+// TestDirs makes sure the dirs kind is what its description says: a benchmark of
+// entries with several values of variable length, made of real data. It
+// covers the directory corpus (corpora.go) and Prefix: every key is a directory
+// with a closing slash, every value is the name of a file in it, so that
+// directory and name together are a path of the Debian sample, the names are
+// strings of different lengths, most directories hold one file and a few hold
+// many, and the prefix of a directory is the directory it lies in.
+func TestDirs(t *testing.T) {
+	paths := map[string]bool{}
+	for _, p := range pathCorpus() {
+		paths[p] = true
+	}
+	c := Generate(Dirs, 20_000, 7)
+	single, many, shortest, longest := 0, 0, 1<<30, 0
+	for i, k := range c.Keys.S {
+		if !strings.HasSuffix(k, "/") {
+			t.Fatalf("directory %q has no closing slash", k)
+		}
+		for _, v := range c.Natural[i] {
+			name := c.Names[v-1]
+			if !paths[k+name] {
+				t.Fatalf("%q in %q is no path of the corpus", name, k)
+			}
+			shortest, longest = min(shortest, len(name)), max(longest, len(name))
+		}
+		switch n := len(c.Natural[i]); {
+		case n == 1:
+			single++
+		case n > 100:
+			many++
+		}
+	}
+	if single < len(c.Keys.S)/3 || many == 0 || longest < 3*shortest {
+		t.Errorf("%d of %d directories with one file, %d with more than 100, file names of %d to %d bytes", single, len(c.Keys.S), many, shortest, longest)
+	}
+	for in, want := range map[string]string{"/usr/share/doc/foo/": "/usr/share/doc/", "/bin/": "/", "/": ""} {
+		if got := string(Prefix(Dirs, []byte(in))); got != want {
+			t.Errorf("Prefix(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

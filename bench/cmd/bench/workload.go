@@ -63,7 +63,7 @@ func newPairs(n int, vals []V, offs []int, r float64, unique bool) pairs {
 	}
 	// The corpus elements are the very values the fixture holds, so that
 	// candidates built by the stream and by the fixture agree (see weigh).
-	return pairs{key: key, val: append(slices.Clip(vals), toVs(trans)...)}
+	return pairs{key: key, val: append(slices.Clip(vals), toVs(trans, nil)...)}
 }
 
 // stream is the shape of the churn and build streams of a scenario: the

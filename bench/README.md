@@ -51,16 +51,20 @@ with 262,144 keys, which fit only partly, and in the release suite with
 | `url` | real host names from the Tranco list with synthetic paths shaped like real sites | about 63 B, up to 190 |
 | `path` | real file paths from the packages of Debian 12 | about 65 B, up to 300 |
 | `street` | real German street names from OpenStreetMap | about 14 B |
+| `dirs` | the directories of the same Debian file paths, with the closing slash | about 25 B |
 
-`path`, `street` and the hosts of `url` come from
+`dirs` is derived from `path`'s sample: its keys are the 172,431 directories of the 600,000 paths and
+its natural values the file names in them (see below). `path`, `street` and the hosts of `url` come from
 [`keys/testdata`](keys/testdata/README.md), where their sources and licenses
 are documented. `path` and `street` hold enough keys for 262,144 and 212,000
-keys respectively, and larger scenarios are skipped; `url` has no limit.
+keys respectively, and larger scenarios are skipped; `dirs` holds enough for 86,215; `url` has no limit.
 
 Values are `uint64`, and their number per key is skewed like a real index
 (`-values multi`): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and
 3% hold 17-200. Street names hold their real localities instead: 79% of the
-names have one, "Hauptstr." has 5,913.
+names have one, "Hauptstr." has 5,913. Directories hold the names of the files in them: 62% of the
+directories hold one file, 89% at most four, and the biggest holds 6,372 (the sample thins directories
+out, so real directories hold more).
 
 With `-values unique`, every key holds exactly one value, like an index on a
 unique column, and `ordered` is compared with `btree-map`. In `churn` and
@@ -69,7 +73,9 @@ the value and disappears with it; there are as many such keys as corpus
 keys, so `-ratio` is at most 2 with unique values.
 
 Built with the tag `strvals`, the bench uses `string` values instead: each
-value number as 16 hex digits, like a record ID
+value number as 16 hex digits, like a record ID (for `street` and `dirs` the real names instead: the
+locality, 2 to 33 bytes, and the file name, 1 to 136 bytes, whose lengths vary; the transient values of
+churn and build stay hex)
 (`go run -tags strvals ./cmd/bench`). Values that hold a pointer take other
 paths than integers in some candidates, `ordered` among them, and the
 garbage collector has to scan them. The profiles are then reported as

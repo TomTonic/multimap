@@ -79,7 +79,7 @@ func TestWorkloads(t *testing.T) {
 	}
 	for _, profile := range []string{multi, unique} {
 		nums, offs := profileValues(keys.Corpus{}, profile, n)
-		vals := toVs(nums)
+		vals := toVs(nums, nil)
 		corpus := map[kv]bool{}
 		for i := range n {
 			for _, v := range vals[offs[i]:offs[i+1]] {

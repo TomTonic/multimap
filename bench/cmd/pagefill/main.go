@@ -46,7 +46,7 @@ func main() {
 
 func run(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("pagefill", flag.ContinueOnError)
-	kindsF := fs.String("keys", "u64,str,uuid,email,url,path,street", "key kinds")
+	kindsF := fs.String("keys", "u64,str,uuid,email,url,path,street,dirs", "key kinds")
 	n := fs.Int("n", 262144, "keys per kind (at most what the corpus holds)")
 	chunk := fs.Int("chunk", 256, "keys below a range node")
 	maxClass := fs.Int("maxclass", 2, "largest page class: 2 is 512 bytes, 3 is 1024")

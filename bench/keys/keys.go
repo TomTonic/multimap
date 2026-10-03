@@ -72,10 +72,16 @@ const (
 	// the localities that have a street of that name as their natural values
 	// (testdata/streets.tsv.gz, see cmd/mkcorpora).
 	Street Kind = "street"
+	// Dirs are the directories of the same Debian file paths, with the closing
+	// slash, about 25 bytes, and the names of the files in them as their
+	// natural values: strings of any length, several to a key, from one file in
+	// most directories to thousands in a few (derived from
+	// testdata/paths.txt.gz, so the sample thins the directories out).
+	Dirs Kind = "dirs"
 )
 
 // Kinds lists every key kind, the synthetic ones first.
-var Kinds = []Kind{U64, Str, UUID, Email, URL, Path, Street}
+var Kinds = []Kind{U64, Str, UUID, Email, URL, Path, Street, Dirs}
 
 // Text reports whether the keys of kind are UTF-8 text, which never contains
 // the byte 0xFF, so that [p, p+0xFF...] holds exactly the keys that start
@@ -87,6 +93,10 @@ func Text(kind Kind) bool { return kind != U64 }
 // for other text keys the first four characters, as typed into a search
 // field.
 func Prefix(kind Kind, key []byte) []byte {
+	if kind == Dirs { // the directory a directory lies in
+		parent := bytes.TrimSuffix(key, []byte("/"))
+		return key[:bytes.LastIndexByte(parent, '/')+1]
+	}
 	if kind == Path || kind == URL {
 		if i := bytes.LastIndexByte(key, '/'); i >= 0 {
 			return key[:i+1]
@@ -113,6 +123,8 @@ func Capacity(kind Kind) int {
 		return len(pathCorpus()) / 2
 	case Street:
 		return len(streetCorpus().names) / 2
+	case Dirs:
+		return len(dirCorpus().names) / 2
 	}
 	return math.MaxInt
 }
@@ -130,8 +142,12 @@ type Corpus struct {
 	Probes Set
 	Misses Set // same distribution, none of them present
 	// Natural holds the values each key of Keys has in the real world, for
-	// kinds that have them (Street: its localities, numbered from 1), else nil.
+	// kinds that have them (Street: its localities, Dirs: its file names, numbered from 1), else nil.
 	Natural [][]uint64
+	// Names holds the strings that the natural values stand for: value v is
+	// Names[v-1] (Street: the locality's name; Dirs: the file's name). It is nil
+	// for kinds without natural values.
+	Names []string
 }
 
 // Generate builds a corpus of n keys (and n misses) deterministically from seed.
@@ -140,10 +156,13 @@ func Generate(kind Kind, n int, seed uint64) Corpus {
 	rng := rtcompare.NewDPRNG(seed)
 	switch kind {
 	case Path:
-		return fromList(pathCorpus(), nil, n, &rng)
+		return fromList(pathCorpus(), nil, nil, n, &rng)
 	case Street:
 		c := streetCorpus()
-		return fromList(c.names, c.locs, n, &rng)
+		return fromList(c.names, c.locs, c.places, n, &rng)
+	case Dirs:
+		c := dirCorpus()
+		return fromList(c.names, c.files, c.file, n, &rng)
 	}
 	gen := generator(kind, &rng)
 	seen := make(map[string]struct{}, 2*n)

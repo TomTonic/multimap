@@ -22,12 +22,24 @@ var corpora embed.FS
 // localities that have a street of that name, as their index plus one: the
 // benchmark takes a value sum of zero for a missing key.
 type streets struct {
-	names []string
-	locs  [][]uint64
+	names  []string
+	locs   [][]uint64
+	places []string // the names of the localities: value v is places[v-1]
+}
+
+// dirs is the directory corpus, derived from the file paths: the directories
+// that hold at least one file of the sample, each with the names of its files
+// as their number plus one (an interned file name has one number for every
+// directory it occurs in).
+type dirs struct {
+	names []string   // "/usr/share/doc/foo/", with the closing slash
+	files [][]uint64 // for each directory the numbers of its file names, in path order
+	file  []string   // the file names: name v is file[v-1]
 }
 
 var (
 	pathCorpus   = sync.OnceValue(func() []string { return readLines("testdata/paths.txt.gz") })
+	dirCorpus    = sync.OnceValue(loadDirs)
 	streetCorpus = sync.OnceValue(loadStreets)
 	hostCorpus   = sync.OnceValue(func() []string { return readLines("testdata/hosts.txt.gz") })
 )
@@ -66,7 +78,7 @@ func loadStreets() streets {
 		panic(fmt.Sprintf("streets: %v", err))
 	}
 	rows := lines[1+nl:]
-	s := streets{names: make([]string, len(rows)), locs: make([][]uint64, len(rows))}
+	s := streets{names: make([]string, len(rows)), locs: make([][]uint64, len(rows)), places: lines[1 : 1+nl]}
 	for i, row := range rows {
 		name, ids, ok := strings.Cut(row, "\t")
 		if !ok {
@@ -84,9 +96,41 @@ func loadStreets() streets {
 	return s
 }
 
+// loadDirs groups the file paths of the path corpus by directory. The paths are
+// sorted, so the directories come in the order of their first file, and the
+// result does not depend on anything but the corpus file.
+func loadDirs() dirs {
+	var d dirs
+	index := map[string]int{}
+	number := map[string]uint64{}
+	for _, p := range pathCorpus() {
+		i := strings.LastIndexByte(p, '/')
+		dir, file := p[:i+1], p[i+1:]
+		if file == "" {
+			continue
+		}
+		di, ok := index[dir]
+		if !ok {
+			di = len(d.names)
+			index[dir] = di
+			d.names = append(d.names, dir)
+			d.files = append(d.files, nil)
+		}
+		v, ok := number[file]
+		if !ok {
+			d.file = append(d.file, file)
+			v = uint64(len(d.file))
+			number[file] = v
+		}
+		d.files[di] = append(d.files[di], v)
+	}
+	return d
+}
+
 // fromList draws n keys and n misses from all without repetition; natural,
-// if not nil, holds the natural values of every key of all.
-func fromList(all []string, natural [][]uint64, n int, rng *rtcompare.DPRNG) Corpus {
+// if not nil, holds the natural values of every key of all, and names, if not
+// nil, the strings those values stand for (value v is names[v-1]).
+func fromList(all []string, natural [][]uint64, names []string, n int, rng *rtcompare.DPRNG) Corpus {
 	if 2*n > len(all) {
 		panic(fmt.Sprintf("a corpus of %d keys cannot give %d keys and as many misses", len(all), n))
 	}
@@ -111,5 +155,5 @@ func fromList(all []string, natural [][]uint64, n int, rng *rtcompare.DPRNG) Cor
 	}
 	hits := append([][]byte(nil), keys...)
 	shuffle(hits, rng)
-	return Corpus{Keys: Pack(keys), Hits: Pack(hits), Misses: Pack(misses), Natural: nat}.withProbes(hits, rng)
+	return Corpus{Keys: Pack(keys), Hits: Pack(hits), Misses: Pack(misses), Natural: nat, Names: names}.withProbes(hits, rng)
 }

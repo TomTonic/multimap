@@ -11,8 +11,9 @@ type V = uint64
 const valueTag = ""
 
 // toVs returns the values for the value numbers u; for uint64 they are the
-// numbers themselves.
-func toVs(u []uint64) []V { return u }
+// numbers themselves, and the names that some corpora give them (see
+// keys.Corpus.Names) are not used.
+func toVs(u []uint64, _ []string) []V { return u }
 
 // weigh returns what the timed loops and the checks add up per value: for
 // uint64, the value itself.

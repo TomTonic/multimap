@@ -56,7 +56,7 @@ func main() {
 // run builds the cases the arguments select and writes the table to w.
 func run(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("objstat", flag.ContinueOnError)
-	kindsF := fs.String("keys", "u64,str,uuid,email,url,path,street", "key kinds")
+	kindsF := fs.String("keys", "u64,str,uuid,email,url,path,street,dirs", "key kinds")
 	valuesF := fs.String("values", "multi,unique", "value profiles: multi (a skewed number of values per key) and unique (one value per key)")
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
@@ -137,7 +137,7 @@ func sizesOf(kind keys.Kind, sizes []int, max bool) []int {
 }
 
 func parseKinds(s string) ([]keys.Kind, error) {
-	known := []keys.Kind{keys.U64, keys.Str, keys.UUID, keys.Email, keys.URL, keys.Path, keys.Street}
+	known := []keys.Kind{keys.U64, keys.Str, keys.UUID, keys.Email, keys.URL, keys.Path, keys.Street, keys.Dirs}
 	var out []keys.Kind
 	for _, name := range strings.Split(s, ",") {
 		k := keys.Kind(name)

@@ -97,7 +97,7 @@ const rangeKeys = 100
 func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream, arrange func([]string)) *fixture {
 	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
 	nums, offs := profileValues(f.c, profile, n)
-	f.vals, f.offs = toVs(nums), offs
+	f.vals, f.offs = toVs(nums, f.c.Names), offs
 	builds := map[string]func(){
 		ordered:   func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
 		hashed:    func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },

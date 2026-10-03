@@ -35,7 +35,7 @@ type memResult struct {
 func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, seed uint64, out io.Writer) error {
 	c := keys.Generate(kind, n, 0x5EED)
 	nums, offs := profileValues(c, profile, n)
-	vals := toVs(nums)
+	vals := toVs(nums, c.Names)
 	if seed != 0 {
 		defer rtcompare.PerturbHeap(seed).KeepAlive()
 	}
