@@ -160,6 +160,20 @@ keys with many values. They are **a third of the heap of the pairs tree on `stre
 array or a hash set. That is the part the value overflow of step 3 has to attack (values inline as bytes in
 an oversized object); no page layout above touches it.
 
+Why that is so many bytes: the values are not spread evenly over the keys.
+
+| values of a key | street keys | street values | dirs keys | dirs values |
+|---|--:|--:|--:|--:|
+| 1 | 79.3 % | 29.1 % | 62.1 % | 18.0 % |
+| 2 to 4 | 15.3 % | 13.8 % | 27.2 % | 19.9 % |
+| 5 to 15 | 4.0 % | 11.3 % | 8.1 % | 18.0 % |
+| 16 to 64 | 1.1 % | 12.3 % | 2.0 % | 17.0 % |
+| 65 and more | 0.35 % | 33.5 % | 0.5 % | 27.0 % |
+
+(212,449 street names with 579,000 values, 86,215 directories with 296,800.) **A page of up to 15 entries
+holds the keys with up to a handful of values, and with them half of the values (54 % on `street`, 54 % on
+`dirs`); the other half of the values belongs to 1.5 and 2.5 % of the keys, which need the value overflow.**
+
 Two things stand out. The pages are 46 to 87 % full (a B-tree's 69 % is the expectation for random
 inserts), and **an R8 node, which is 128 bytes and holds 2.6 to 3.1 ranges, costs 5 to 16 bytes a key, 14 to
 20 % of the tree**: the routing layer is as heavy as the pages' slack. A range node for few children
