@@ -93,7 +93,7 @@ most two rounds of cache-line loads (R5; a round is defined in STRATEGY.md secti
 stop and discuss. (Decided 2026-10-02: the criterion was "at most two lines after the head"; step 1
 showed that rounds, not lines, are what a cold lookup pays for, and the user restated it as rounds.)
 
-## Step 2: pages for keys with one value, every key kind (done 2026-10-02, gate 2 not met, see step2-results.md)
+## Step 2: pages for keys with one value, every key kind (done 2026-10-02, gate 2 not met; ticked off as "not met, deficits noted" by the user on 2026-10-03, see step2-results.md)
 
 Wire the page of step 1 into the tree. It replaces the U8 pages.
 - Every key with exactly one value lives in a page below range nodes, whatever its length.

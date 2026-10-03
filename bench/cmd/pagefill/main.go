@@ -55,6 +55,11 @@ func run(w io.Writer, args []string) error {
 	minPrefix := fs.Int("minprefix", vpage.MinPrefix, "shortest prefix a page stores once (above 255: none)")
 	minGain := fs.Int("mingain", vpage.MinGain, "bytes a prefix must save, after what it takes")
 	slack := fs.Int("slack", vpage.PrefixSlack, "bytes a rebuild keeps less than the keys share")
+	layout := fs.String("layout", "vpage", "the page to model: vpage (step 2) or lens (the sketch with a header of lengths, PLAN step 3)")
+	lenFixed := fs.Bool("lenfixed", false, "lens: all values have one length, so the header has no length byte per value")
+	lenValue := fs.Int("lenvalue", 8, "lens: bytes of a value")
+	lenHeader := fs.Int("lenheader", 24, "lens: largest header in bytes, a multiple of 8")
+	lenClasses := fs.String("lenclasses", "128,256,512", "lens: the object sizes, comma separated")
 	timing := fs.Int("timing", 0, "instead of the table, time build and churn (this many operations) with the prefix off and on")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -70,6 +75,9 @@ func run(w io.Writer, args []string) error {
 	}
 	if *timing > 0 {
 		return timings(w, strings.Split(*kindsF, ","), min(*n, 262144), *chunk, *timing)
+	}
+	if *layout == "lens" {
+		return runLens(w, strings.Split(*kindsF, ","), *n, *chunk, *lenFixed, *lenValue, *lenHeader, *lenClasses)
 	}
 	if err := emit("| kind | keys | suffix B | pages | keys/page | fill | uniform | page B/key | router B/key | total B/key | tail B/key | prefix B/page | too long |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|"); err != nil {
 		return err
@@ -255,4 +263,33 @@ func measure(kind keys.Kind, n, chunk int) string {
 	return fmt.Sprintf("| %s | %d | %.1f | %d | %.1f | %.0f %% | %.0f %% | %.1f | %.1f | %.1f | %.1f | %.1f | %d |",
 		kind, keysIn, f(suffixBytes), pages, f(keysIn)*float64(keysIn)/float64(pages), 100*float64(used)/float64(size),
 		100*float64(uniform)/float64(pages), f(size), f(router), f(size+router), f(tails), float64(prefix)/float64(pages), tooLong)
+}
+
+// runLens writes the table of the lens layout (lens.go) for the key kinds.
+func runLens(w io.Writer, kinds []string, n, chunk int, fixed bool, value, maxHeader int, classes string) error {
+	l := lensLayout{fixed: fixed, value: value, maxHeader: maxHeader}
+	for _, f := range strings.Split(classes, ",") {
+		var c int
+		if _, err := fmt.Sscanf(f, "%d", &c); err != nil || c < 64 {
+			return fmt.Errorf("bad object size %q", f)
+		}
+		l.classes = append(l.classes, c)
+	}
+	slices.Sort(l.classes)
+	if maxHeader < 8 || maxHeader%8 != 0 {
+		return fmt.Errorf("the largest header must be a multiple of 8, not %d", maxHeader)
+	}
+	if _, err := fmt.Fprintf(w, "lens layout: fixed values %v, value %d B, largest header %d B (%d entries), classes %v\n\n%s\n", fixed, value, maxHeader, l.capacity(maxHeader), l.classes, lensTableHeader); err != nil {
+		return err
+	}
+	for _, name := range kinds {
+		kind := keys.Kind(name)
+		if !slices.Contains(keys.Kinds, kind) {
+			return fmt.Errorf("unknown key kind %q", name)
+		}
+		if _, err := fmt.Fprintln(w, lensRow(kind, min(n, keys.Capacity(kind)), chunk, l)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

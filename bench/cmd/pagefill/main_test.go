@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -75,5 +76,82 @@ func TestTimings(t *testing.T) {
 	}
 	if err := run(&out, []string{"-keys", "nope", "-timing", "10"}); err == nil {
 		t.Error("an unknown key kind was accepted by the timing run")
+	}
+}
+
+// TestLens makes sure that the model of the length-header page reports sizes a
+// page of that layout can have. It belongs to the comparison of multi-key page
+// layouts (docs/redesign, PLAN step 3): the sketched page holds as many entries as
+// its header has length bytes, so integers with a header of 16 bytes and fixed
+// values come out at 14 entries at most and below 14 on average, the bytes of
+// header, prefix and remainders stay within the object, and bad arguments are
+// reported.
+func TestLens(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(&out, []string{"-layout", "lens", "-lenfixed", "-lenheader", "16", "-keys", "u64,uuid", "-n", "20000"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(rows) != 8 || !strings.HasPrefix(rows[6], "| u64 | 20000 |") || !strings.HasPrefix(rows[7], "| uuid | 20000 |") {
+		t.Fatalf("rows:\n%s", out.String())
+	}
+	for _, row := range rows[6:] {
+		c := strings.Split(row, " | ")
+		var perPage, fill float64
+		if _, err := fmt.Sscanf(c[4], "%f", &perPage); err != nil || perPage <= 1 || perPage > 14 {
+			t.Errorf("%s: %q entries per page, want more than 1 and at most 14", c[0], c[4])
+		}
+		if _, err := fmt.Sscanf(c[5], "%f", &fill); err != nil || fill < 40 || fill > 100 {
+			t.Errorf("%s: fill %q", c[0], c[5])
+		}
+	}
+	for _, args := range [][]string{
+		{"-layout", "lens", "-lenclasses", "x"},
+		{"-layout", "lens", "-lenheader", "12"},
+		{"-layout", "lens", "-keys", "nope"},
+	} {
+		if err := run(&out, args); err == nil {
+			t.Errorf("%v was accepted", args)
+		}
+	}
+}
+
+// TestLensSize makes sure that the size of a page of the length-header layout
+// adds up as the sketch says. It belongs to the comparison of multi-key page
+// layouts (docs/redesign, PLAN step 3): header, common prefix, remainders and
+// values, the prefix one byte shorter than the shortest suffix at most, and a
+// page that does not fit is refused.
+func TestLensSize(t *testing.T) {
+	l := lensLayout{fixed: true, value: 8, maxHeader: 16, classes: []int{128, 256, 512}}
+	for _, tc := range []struct {
+		name string
+		keys []string
+		want lensSize
+		ok   bool
+	}{
+		{"one entry has no prefix", []string{"abc"}, lensSize{8, 0, 3, 8 + 3 + 8}, true},
+		{"entries share their prefix", []string{"abcX", "abcY"}, lensSize{8, 3, 2, 8 + 3 + 2 + 16}, true},
+		{"the prefix leaves one byte of the shortest", []string{"ab", "abc"}, lensSize{8, 1, 3, 8 + 1 + 3 + 16}, true},
+		{"seven entries need a header of 16", []string{"a", "b", "c", "d", "e", "f", "g"}, lensSize{16, 0, 7, 16 + 7 + 56}, true},
+		{"more entries than the largest header", []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, lensSize{}, false},
+		{"an empty suffix", []string{""}, lensSize{}, false},
+		{"a remainder beyond 255 bytes", []string{strings.Repeat("x", 256)}, lensSize{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keys := make([][]byte, len(tc.keys))
+			for i, k := range tc.keys {
+				keys[i] = []byte(k)
+			}
+			got, ok := l.size(keys)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("size = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+	if c := l.class(129); c != 256 {
+		t.Errorf("class of 129 bytes: %d, want 256", c)
+	}
+	if c := l.class(513); c != 0 {
+		t.Errorf("class of 513 bytes: %d, want none", c)
 	}
 }

@@ -1,5 +1,20 @@
 # Status
 
+## 2026-10-03 later: gate 2 ticked off, layout comparison of the multi-key page done, waiting for the user
+
+The user ticked off gate 2 as "not met, deficits noted" and asked to begin step 3 with the layout
+comparison of the multi-key page. Done and pushed: a model of memory per key for the sketched
+length-header page against the page of step 2 (`pagefill -layout lens`), a prototype of it
+(`internal/lpage`, tests 100%, race, fuzz) and microbenchmarks of both on Windows. Report:
+[step3-layout.md](step3-layout.md). Short version: the length-header page (B) is smaller in the model
+by 1-21% for every kind of key, but its lookups of short keys are 28-69% slower hot and cold and of
+absent keys 2.4 times; for long keys (`path`) it is faster. The prototype's cold lookups for `u64`
+are not understood; the user offered a run on the M1 for that. Nothing is wired into the tree.
+
+**Next, if the user agrees:** find out why B's cold lookups are slow (M1 and `perf`); decide whether
+one layout per kind of key (A's uniform page for keys up to 8 bytes, B for longer ones) is worth
+two layouts; only then put a page into the tree.
+
 ## 2026-10-03: vocabulary agreed, single-key page decided, step 2 gate still open
 
 Worked out with the user: [GLOSSARY.md](GLOSSARY.md) (new words and the old ones they replace) and a
