@@ -137,7 +137,10 @@ lengths and no directory, which a measurement has to compare.
    apart for now. The price is that a multi-value entry cuts its multi-key page in two, and
    everything that follows from that stays: the promote, the fall back, and the byte node as the
    routing the fall back needs. If a multi-key page could hold entries with different numbers of
-   values, all of these words would go.
+   values, all of these words would go. **Measured 2026-10-04** ([step3-tree-pages.md](step3-tree-pages.md)):
+   on the natural mix of `street` and `dirs` the rule "a page holds entries with one value" leaves no page
+   standing (the fall back takes them all), and a page that holds a key with several values (the key once,
+   the values behind it; the *experiment* `Map.Pairs`) saves 27 to 29 % of the memory.
 2. **The common prefix of a page and of a node** are one idea with two places to live. They are
    one word on purpose. The exception to the path length (`pageBase`) is a trick that has made it
    into the definition; it should be measured and probably dropped.
