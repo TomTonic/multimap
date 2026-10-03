@@ -1,5 +1,26 @@
 # Status
 
+## 2026-10-03: vocabulary agreed, single-key page decided, step 2 gate still open
+
+Worked out with the user: [GLOSSARY.md](GLOSSARY.md) (new words and the old ones they replace) and a
+redesigned step 3 in [PLAN.md](PLAN.md). The user's decisions:
+
+- A page may hold **one multi-value entry** (single-key page, "SKMV"); it replaces the flat, typed and
+  set leaves. No page holds entries with different numbers of values for now.
+- A remainder too long for the page stays inline in an **oversized object**, exempt from R1: no pointer
+  to a key any more, one random cache miss less.
+- Values are byte strings of any length in the layouts under design; fixed-size values get a
+  specialized variant later. No fixed limit on the number or size of values: "what fits".
+- The common prefix of a page should decide most mismatches within its first 64 or 128 bytes. Pages of
+  `4m-1` entries with a header of `8m` bytes (3, 7, 11, 15, ...) are conceivable.
+- Words: *path*, *remainder*, *common prefix*, *byte node*, *range node*, *end page*; `leaf` no longer
+  names an object.
+
+**Still open:** the decision on gate 2 (the four options of step2-results.md); the layout of the
+multi-key page (sketch against `internal/vpage`); whether the byte node is needed once step 3 is done;
+whether a later step lets a multi-key page hold multi-value entries (it would remove the per-key object,
+the promote and the fall back). R4 is violated knowingly for multi-value entries until then.
+
 ## 2026-10-02 night: step 2 done, gate 2 not met, waiting for the user's decision
 
 The pages of `internal/vpage` hold every key with one value in the tree (`internal/art`), whatever its

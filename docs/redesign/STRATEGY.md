@@ -31,10 +31,10 @@ Rules that follow, binding for every object the tree allocates:
 
 | rule | detail |
 |---|---|
-| R1 sizes | 128, 256 or 512 bytes. Pointer-free objects may also be 1024 or 2048. |
+| R1 sizes | 128, 256 or 512 bytes. Pointer-free objects may also be 1024 or 2048. Exception (2026-10-03): an *oversized object*, a single-key page whose remainder does not fit 512 bytes, keeps the remainder inline and takes the size Go gives it; it saves the cache miss of a pointer to the key. |
 | R2 64 bytes | Only for anomalous inner nodes, such as chains of path bytes in file paths. Never for pages, leaves or the objects of small maps. |
 | R3 alignment | Use Go size classes that are multiples of 128. Up to 512 bytes they are aligned to their size. Objects with pointers above 512 bytes get an 8-byte malloc header and lose alignment, so they are allowed only for the 256-way nodes (N256, R256): rare, at the top of the tree, and always hot. |
-| R4 no object per key | A key never gets an object of its own. Keys live, many to an object, in pages. The only per-key objects are the value sets of keys with many values (R6). |
+| R4 no object per key | A key never gets an object of its own. Keys live, many to an object, in pages. The only per-key objects are the value sets of keys with many values (R6). Deviation accepted for now (2026-10-03): an entry with several values gets a single-key page of its own, as it had a leaf; see 4.2. |
 | R5 rounds per lookup | A lookup inside an object takes at most two rounds of cache-line loads (defined below the table). Round 1 reads only the first 128 bytes of the object (if possible its first 64 bytes), which hold everything that says where the key's data lies. Round 2 reads all of that data at once. |
 | R6 values | A key's few values sit next to it in the page. Many values go to a value object built from 128- or 256-byte blocks. |
 
@@ -129,6 +129,12 @@ What follows from this layout:
   suffixes need it. A page splits by count or by bytes, whichever runs out first.
 
 ### 4.2 Several values per key
+
+**Decision of 2026-10-03 (see PLAN step 3 and GLOSSARY.md).** First step: a *single-key page* holds one
+entry with all its values inline, and replaces the leaf kinds. No page mixes entries with different
+numbers of values yet. The plan below, with values inline next to the key in a multi-key page, is the
+step after: it is what removes the per-key object and the fall back, and is decided by what the
+multi profile shows.
 
 - **Up to about 4 values stay inline**, next to the key's entry. That covers 85% of the keys of
   the multi profile.

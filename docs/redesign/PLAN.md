@@ -117,22 +117,41 @@ Wire the page of step 1 into the tree. It replaces the U8 pages.
 - u64 not worse than `node-pages` beyond noise.
 - Objects of unique cases: at least 95% at multiples of 128 bytes.
 
-## Step 3: several values per key
+## Step 3: several values per key (redesigned 2026-10-03, see GLOSSARY.md)
 
-- Values of a key sit inline in its page entry, up to a threshold found by measuring (start at
-  4).
-- Beyond the threshold: a value object of 128- or 256-byte blocks. Measure a B-tree of value
-  blocks against `vset`.
-- A page kind with a pointer array for those objects; pages without them stay pointer-free.
-- Remove flat and set leaves for maps whose values are small and pointer-free. Remove the
-  fallback if it is no longer needed. Decide that by measuring, not by taste.
+Decided with the user on 2026-10-03: a page may hold **one multi-value entry** (the single-key page,
+SKMV in [whataleafneedstostore.md](whataleafneedstostore.md)). No page holds entries with different
+numbers of values for now. The leaf kinds go; what they did moves into the single-key page.
+
+- **Single-key page.** One entry with all its values inline, whatever fits: any number of values,
+  any length (the layouts take lengths; fixed-size values get a specialized variant later, which
+  swaps instead of shifting when it compacts). It replaces flat leaves, typed leaves and the inline
+  part of set leaves. The end page of a node (today the term leaf) is a single-key page.
+- **Long remainders stay inline.** A remainder that does not fit the largest class goes into an
+  *oversized object* of the size Go gives it. It is exempt from R1 and counted separately in the
+  object statistic. There is no pointer to a key any more.
+- **Value overflow.** Only when the values do not fit, the page holds a pointer to a value set
+  (array, then hash set) at a fixed offset. A page without that pointer stays pointer-free. Measure
+  whether the value set still needs an inline stage.
+- **Layout of the multi-key page.** The sketch of the user (header of lengths, `4m-1` entries per
+  `8m` header bytes, common prefix first, so that its first 64 or 128 bytes decide most
+  mismatches) and the layout of step 2 (directory of tags, slots, heap) are compared by
+  measurement. Both are for variable-length values; the one of step 2 holds one word per value.
+  Do not commit to the 3 or 7 entries per page of the sketch before the memory per key is measured
+  (a 512-byte page holds up to 29 `uint64` keys today).
+- **Fall back stays** as long as a single-key page cuts a multi-key page in two. Whether to lift
+  that with a page that holds entries of different value counts (STRATEGY 4.2) is decided after
+  this step, by what the multi profile shows.
 - Look at multi `churn` at 1M u64 (0.82 since `node-layout`) with the new structure.
 
 **Gate 3:**
 - Multi against `node-layout` (all key kinds, 4K-256K, 1M spot check): no cell below 0.85.
 - Against `hashed`, `btree-sets` and `map-sets`: credo 1.
 - Memory not above `node-layout`.
-- Objects: 100% at multiples of 64, at least 95% at multiples of 128 (value objects included).
+- Objects: 100% at multiples of 64, at least 95% at multiples of 128; oversized objects are
+  listed on their own and do not count against R1.
+- Flat leaves, typed leaves, set leaves and key overflow are gone from the code, or the report says
+  why one of them stays.
 
 ## Step 4: the routing layer
 

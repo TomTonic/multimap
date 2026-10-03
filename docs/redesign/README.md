@@ -4,6 +4,7 @@ Start here when you resume the work.
 
 1. [STRATEGY.md](STRATEGY.md): the goal, the cache-line premise with its binding rules (R1-R6),
    the diagnosis of the current state, the target architecture and the lessons that bind it.
+1a. [GLOSSARY.md](GLOSSARY.md): the vocabulary (page, entry, path, remainder, common prefix, ...) and the names it retires.
 2. [PLAN.md](PLAN.md): the steps, each with its gate, and the working rules.
 3. [STATUS.md](STATUS.md): where the work stands, the next action and the open questions.
 4. [MEASURING.md](MEASURING.md): how to measure on Windows and arm64.
