@@ -295,6 +295,8 @@ func TestEachString(t *testing.T) {
 // so most tries must fail without laying anything out: too many bytes, too many
 // entries for any header.
 func TestMergeRefuses(t *testing.T) {
+	defer func(old int) { MaxHeader = old }(MaxHeader)
+	MaxHeader = 24
 	var ka, kb [][]byte
 	var va, vb [][]byte
 	for i := range 7 {

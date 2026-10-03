@@ -10,14 +10,17 @@ import (
 )
 
 // The environment variable LPAGE_MAXHEADER sets the largest header of a page in
-// bytes (a multiple of 8, 8 to 32; the default is 24: 11 entries with values of
-// different lengths). Child processes inherit it, so a whole run uses one value.
+// bytes (a multiple of 8, 8 to 64; the default is 32: 15 entries with values of
+// different lengths), LPAGE_MINHEADER the smallest (default 8). Child processes inherit it, so a whole run uses one value.
 func init() {
 	if n, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && n >= 0 {
 		artstr.CrowdedRatio = n
 	}
-	if n, err := strconv.Atoi(os.Getenv("LPAGE_MAXHEADER")); err == nil && n >= 8 && n <= 32 && n%8 == 0 {
+	if n, err := strconv.Atoi(os.Getenv("LPAGE_MAXHEADER")); err == nil && n >= 8 && n <= 64 && n%8 == 0 {
 		lpage.MaxHeader = n
+	}
+	if n, err := strconv.Atoi(os.Getenv("LPAGE_MINHEADER")); err == nil && n >= 8 && n <= 64 && n%8 == 0 {
+		lpage.MinHeader = n
 	}
 }
 

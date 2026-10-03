@@ -105,7 +105,7 @@ func planEnts(es []ent) (code uint8, cp, need int, ok bool) {
 	}
 	for c, s := range sizes {
 		if need <= s {
-			return uint8(c) | uint8(h/8-1)<<2 | uint8(wcode)<<4, cp, need, true
+			return uint8(c) | uint8(h/8-1)<<2 | uint8(wcode)<<5, cp, need, true
 		}
 	}
 	return 0, 0, 0, false

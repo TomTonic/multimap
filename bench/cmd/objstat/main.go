@@ -45,6 +45,7 @@ import (
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/internal/art"
 	"github.com/TomTonic/multimap/internal/artstr"
+	"github.com/TomTonic/multimap/internal/lpage"
 )
 
 func main() {
@@ -373,6 +374,9 @@ func (s *stat) entryRow(name string, n int) string {
 func buildPages(kind keys.Kind, n int, unique bool) *stat {
 	if r, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && r >= 0 {
 		artstr.CrowdedRatio = r
+	}
+	if h, err := strconv.Atoi(os.Getenv("LPAGE_MAXHEADER")); err == nil && h >= 8 && h <= 64 && h%8 == 0 {
+		lpage.MaxHeader = h
 	}
 	c := keys.Generate(kind, n, 0x5EED)
 	vals, offs := keys.Values(n, 0xFA11)

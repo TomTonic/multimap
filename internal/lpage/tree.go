@@ -313,4 +313,4 @@ func FitsLen(slen, vlen int) bool {
 
 // MaxEntries returns the most entries any page can hold: the capacity of the
 // largest header for values of one width.
-func MaxEntries() int { return capacityOf(MaxHeader, 1) }
+func MaxEntries() int { return capacityOf(MaxHeader, 4) }

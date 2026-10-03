@@ -6,7 +6,7 @@
 // and in the cost of changes. It is a prototype and not yet part of the tree.
 //
 // A page holds the stripped suffixes of keys, each with one value, in one object
-// of 128, 256 or 512 bytes without pointers:
+// of 128, 256, 384 or 512 bytes without pointers:
 //
 //	header | common prefix | remainder 1 .. remainder n | value 1 .. value n
 //
@@ -14,9 +14,9 @@
 // the width of its values), the length of the common prefix, then one length byte
 // per remainder, in key order, 0 for "no more entries", and, if the values have
 // different lengths, one length byte per value. Its size is the smallest multiple
-// of 8 of 8 to MaxHeader that has room for the entries: with values of different
-// lengths 3, 7, 11 or 15 entries, with values of one width (a scalar
-// specialization) 6, 14, 22 or 30. The common prefix is the part all suffixes of
+// of 8 of 8 to MaxHeader (at most 64) that has room for the entries: with values
+// of different lengths 3, 7, 11, 15 and so on up to 31 entries, with values of one
+// width (4, 8 or 16 bytes; a scalar specialization) 6, 14, 22 or 30 and up to 31. The common prefix is the part all suffixes of
 // the page share, stored once; a remainder is what follows it and is at least one
 // byte long. A value is a string of up to 255 bytes (a longer one needs another
 // form, which the prototype does not have).
@@ -45,15 +45,15 @@ const (
 )
 
 // sizes are the object sizes of the classes.
-var sizes = [...]int{128, 256, 512}
+var sizes = [...]int{128, 256, 384, 512}
 
 // widths are the value widths of the pages with values of one length, by
 // their code; code 0 is a page with values of different lengths.
-var widths = [...]int{0, 1, 2, 4, 8, 16, 32, 64}
+var widths = [...]int{0, 4, 8, 16}
 
-// MaxHeader is the largest header in bytes (a multiple of 8, at most 32); it
+// MaxHeader is the largest header in bytes (a multiple of 8, at most 64); it
 // limits the entries of a page. Experiments may change it.
-var MaxHeader = 24
+var MaxHeader = 32
 
 // MinHeader is the smallest header in bytes a page gets, a multiple of 8: a
 // larger one costs every page its bytes but leaves room for entries to come
@@ -96,17 +96,17 @@ const Kinds = 128
 
 // Page is the first two bytes of a page; the page is the object they start.
 type Page struct {
-	code uint8 // KindBase plus: bits 0-1 the class, 2-3 the header's size in 8-byte steps minus one, 4-6 the width code
+	code uint8 // KindBase plus: bits 0-1 the class, 2-4 the header's size in 8-byte steps minus one, 5-6 the width code
 	cp   uint8 // length of the common prefix
 }
 
 func (p *Page) class() int { return int(p.code-KindBase) & 3 }
 
 // hdr returns the size of the header in bytes.
-func (p *Page) hdr() int { return 8 * (1 + int((p.code-KindBase)>>2&3)) }
+func (p *Page) hdr() int { return 8 * (1 + int((p.code-KindBase)>>2&7)) }
 
 // width returns the length of every value, or 0 if they differ.
-func (p *Page) width() int { return widths[(p.code-KindBase)>>4&7] }
+func (p *Page) width() int { return widths[(p.code-KindBase)>>5&3] }
 
 // capacity returns how many entries the header has room for.
 func (p *Page) capacity() int { return capacityOf(p.hdr(), p.width()) }
@@ -115,9 +115,9 @@ func (p *Page) capacity() int { return capacityOf(p.hdr(), p.width()) }
 // values have the width w (0: they differ).
 func capacityOf(h, w int) int {
 	if w != 0 {
-		return h - 2
+		return min(h-2, maxEnts-1)
 	}
-	return (h - 2) / 2
+	return min((h-2)/2, maxEnts-1)
 }
 
 // Size returns the size of the page's object in bytes.
@@ -144,6 +144,8 @@ func alloc(c int) *Page {
 		return (*Page)(unsafe.Pointer(new([16]uint64)))
 	case 1:
 		return (*Page)(unsafe.Pointer(new([32]uint64)))
+	case 2:
+		return (*Page)(unsafe.Pointer(new([48]uint64)))
 	}
 	return (*Page)(unsafe.Pointer(new([64]uint64)))
 }
@@ -482,7 +484,7 @@ func (p *Page) growBy(i, koff, voff, used int, s, val []byte, isCont bool) (*Pag
 		return p, Full
 	}
 	q := alloc(c)
-	q.code = uint8(c) | uint8(h2/8-1)<<2 | (p.code-KindBase)&0x70 + KindBase
+	q.code = uint8(c) | uint8(h2/8-1)<<2 | (p.code-KindBase)&0x60 + KindBase
 	q.cp = p.cp
 	m2 := q.mem()
 	r2, v2 := q.lens()

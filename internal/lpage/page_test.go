@@ -126,7 +126,7 @@ func has(m map[string][]byte, k []byte) bool { _, ok := m[string(k)]; return ok 
 func TestPageAgainstModel(t *testing.T) {
 	for name, gen := range shapes {
 		for vname, vgen := range values {
-			for _, hdr := range []int{8, 16, 24, 32} {
+			for _, hdr := range []int{8, 16, 24, 32, 48, 64} {
 				t.Run(fmt.Sprintf("%s/%s/header %d", name, vname, hdr), func(t *testing.T) {
 					defer func(old int) { MaxHeader = old }(MaxHeader)
 					MaxHeader = hdr
@@ -333,7 +333,7 @@ func FuzzOperations(f *testing.F) {
 	f.Add(bytes.Repeat([]byte{7}, 300), uint8(2))
 	f.Fuzz(func(t *testing.T, data []byte, hdr uint8) {
 		defer func(old int) { MaxHeader = old }(MaxHeader)
-		MaxHeader = 8 * (1 + int(hdr)%4)
+		MaxHeader = 8 * (1 + int(hdr)%8)
 		var run Run
 		want := map[string][]byte{}
 		for i := 0; i+2 <= len(data); i += 2 {
