@@ -9,7 +9,7 @@ their natural values, once with `uint64` values (the value numbers, `u64`) and o
 - `pc/<values>-<kind>/`: Ryzen 9 7900, Windows, native; `-suite dev -values multi -minprocs 6 -maxprocs 12
   -memn 262144 -memrounds 3`, sizes 4,096, 16,384 and the corpus maximum.
 - `m1/r1..r3/`: Apple M1 Pro, 16 GB, jobs of `bench/remote/queue.txt` (`-minprocs 8 -maxprocs 24`); r4
-  (`dirs`, strings) had not run when this was written. The load average before r1-r3 was 3.8 to 7.9,
+  (`dirs`, strings) ran at 20:53 to 21:30. The load average before r1-r4 was 3.8 to 7.9 (r4: 5.9),
   so the machine was not at rest (see each `env.txt`).
 
 Every cell: how many times as fast `ordered` is as the competitor (above 1 it is faster), from the pooled
@@ -80,23 +80,23 @@ the hash maps, and `build`, at the largest size).
 
 ## dirs, string values
 
-| operation | against | PC 4096 | PC 16384 | PC 86215 |
-|---|---|--:|--:|--:|
-| valuesFor | btree-sets | 1.89 | 1.87 | 1.83 |
-| valuesFor | hashed | 0.38 | 0.33 | 0.46 |
-| valuesFor | map-sets | 0.87 | 0.75 | 1.00*? |
-| valuesBetween | btree-sets | 2.02 | 1.75 | 2.06 |
-| valuesBetween | hashed | 19.84 | 57.81 | - |
-| valuesBetween | map-sets | 20.05 | 55.41 | - |
-| prefix | btree-sets | 2.65 | 2.10 | 2.26 |
-| prefix | hashed | 18.71 | 14.88 | - |
-| prefix | map-sets | 19.86 | 14.77 | - |
-| churn | btree-sets | 1.42 | 1.49 | 1.24 |
-| churn | hashed | 0.44 | 0.45 | 0.53 |
-| churn | map-sets | 0.50 | 0.56 | 0.65 |
-| build | btree-sets | 1.48 | 1.48 | - |
-| build | hashed | 0.47 | 0.47 | - |
-| build | map-sets | 0.58 | 0.59 | - |
+| operation | against | PC 4096 | PC 16384 | PC 86215 | M1 4096 | M1 16384 | M1 86215 |
+|---|---|--:|--:|--:|--:|--:|--:|
+| valuesFor | btree-sets | 1.89 | 1.87 | 1.83 | 1.60 | 1.66 | 1.62 |
+| valuesFor | hashed | 0.38 | 0.33 | 0.46 | 0.33 | 0.31 | 0.36 |
+| valuesFor | map-sets | 0.87 | 0.75 | 1.00*? | 0.68 | 0.70 | 0.69 |
+| valuesBetween | btree-sets | 2.02 | 1.75 | 2.06 | 1.63 | 1.65 | 1.85 |
+| valuesBetween | hashed | 19.84 | 57.81 | - | 20.37 | 67.03 | - |
+| valuesBetween | map-sets | 20.05 | 55.41 | - | 19.70 | 59.30 | - |
+| prefix | btree-sets | 2.65 | 2.10 | 2.26 | 1.89 | 1.67 | 2.10 |
+| prefix | hashed | 18.71 | 14.88 | - | 17.48 | 14.54 | - |
+| prefix | map-sets | 19.86 | 14.77 | - | 17.29 | 14.61 | - |
+| churn | btree-sets | 1.42 | 1.49 | 1.24 | 1.33 | 1.29 | 1.18 |
+| churn | hashed | 0.44 | 0.45 | 0.53 | 0.38 | 0.42 | 0.37 |
+| churn | map-sets | 0.50 | 0.56 | 0.65 | 0.41 | 0.49 | 0.46 |
+| build | btree-sets | 1.48 | 1.48 | - | 1.37 | 1.41 | - |
+| build | hashed | 0.47 | 0.47 | - | 0.43 | 0.42 | - |
+| build | map-sets | 0.58 | 0.59 | - | 0.49 | 0.53 | - |
 
 ## Memory (identical on both machines, except the GC figures)
 
@@ -114,7 +114,40 @@ the hash maps, and `build`, at the largest size).
 | street string | hashed | 153 | 141 / 141 | +49 ms / +36 ms | 90 |
 | street string | btree-sets | 359 | 336 / 301 | +90 ms / +67 ms | 177 |
 | street string | map-sets | 356 | 343 / 298 | +65 ms / +42 ms | 192 |
-| dirs string | ordered | 141 | 139 / - | +27 ms / - | 67 |
-| dirs string | hashed | 216 | 164 / - | +21 ms / - | 123 |
-| dirs string | btree-sets | 413 | 353 / - | +31 ms / - | 202 |
-| dirs string | map-sets | 417 | 362 / - | +28 ms / - | 223 |
+| dirs string | ordered | 141 | 139 / 135 | +27 ms / +20 ms | 67 |
+| dirs string | hashed | 216 | 164 / 163 | +21 ms / +16 ms | 123 |
+| dirs string | btree-sets | 413 | 353 / 315 | +31 ms / +25 ms | 202 |
+| dirs string | map-sets | 417 | 362 / 318 | +28 ms / +18 ms | 223 |
+
+
+## The unique profile (single-value entries, PC only)
+
+`pc/uni-<values>-<kind>/`: the same tree against `btree-map` (one value per key; the competitor is the
+plain B-tree) with `-values unique`, sizes 4,096, 16,384 and the corpus maximum, `-minprocs 6 -maxprocs 12`,
+run 21:12 to 21:29. Entries are `ordered` speed against `btree-map`; `*` interval wider than asked, `?`
+difference within the noise floor.
+
+| operation | street u64 4096 | 16384 | 212449 | street str 4096 | 16384 | 212449 |
+|---|--:|--:|--:|--:|--:|--:|
+| valuesFor | 1.89 | 2.06 | 1.70 | 1.96 | 1.95 | 1.05*  |
+| valuesBetween | 1.23 | 1.26 | 1.37* | **0.28** | **0.28** | **0.39** |
+| prefix | 1.27 | 1.54 | 1.75 | **0.68** | **0.45** | **0.31** |
+| churn | 1.33 | 1.48 | 1.24 | 1.14 | 1.22 | 1.05 |
+| build | 1.14* | 1.24 | - | 1.27 | 1.32 | - |
+
+| operation | dirs u64 4096 | 16384 | 86215 | dirs str 4096 | 16384 | 86215 |
+|---|--:|--:|--:|--:|--:|--:|
+| valuesFor | 1.21* | 1.40 | 1.44 | 1.45 | 1.53 | 1.24* |
+| valuesBetween | 0.81* | 0.86 | 0.99*? | **0.27** | **0.29** | **0.37** |
+| prefix | 0.93* | 1.08* | 1.04 | **0.29** | **0.26** | **0.24** |
+| churn | 0.90 | 1.01? | 1.08 | 0.91 | 0.98 | 0.95 |
+| build | 0.74* | 0.82 | - | 0.97 | 1.04 | - |
+
+Memory (bytes per key, heap / scannable), 212,449 and 86,215 keys:
+
+| data | ordered | btree-map |
+|---|--:|--:|
+| street u64 | 32 / 4 | 47 / 37 |
+| street string | 59 / 62 | 58 / 49 |
+| dirs u64 | 54 / 9 | 87 / 37 |
+| dirs string | 69 / 72 | 99 / 49 |

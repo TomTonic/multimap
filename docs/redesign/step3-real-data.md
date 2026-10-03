@@ -38,7 +38,7 @@ All tables (every size, both machines): [bench/results-layout/step3-real/README.
 raw files beside it. Factors are how many times as fast `ordered` is (above 1: faster). The PC and the M1
 Pro agree closely, cell for cell (within about 25%, the M1 mostly a little lower); where one says "faster",
 so does the other. The PC took 1 h 02 min (`street`, `uint64`), 22 min (`dirs`, `uint64`), 1 h 16 min
-(`street`, strings) and 29 min (`dirs`, strings); the M1 50, 33 and 34 minutes for r1 to r3.
+(`street`, strings) and 29 min (`dirs`, strings); the M1 50, 33, 34 and 37 minutes for r1 to r4.
 
 ### Against `btree-sets`, the ordered competitor (credo 1)
 
@@ -90,15 +90,37 @@ the bytes behind it (they are views into one buffer that no candidate owns), so 
 bytes of the values inside its pages would pay for them in this table and the others would not**; a
 comparison with such a layout has to add the bytes to every candidate.
 
+### The unique profile: one value per key (PC)
+
+Against `btree-map`, the reference for single-value entries, which the page layouts of step 3 replace or
+keep. Full table: the README of the results directory (`pc/uni-*`). Factors as above.
+
+- **`uint64` values:** `valuesFor` is 1.2 to 2.1 times as fast, ranges and prefixes 1.2 to 1.8 times on
+  `street`. On `dirs` the ranges and `build` are the weak spot: `valuesBetween` 0.81 to 0.99, `build`
+  0.74 to 0.82, `churn` 0.9 to 1.08. Memory: `street` 32 against 47 bytes a key (4 against 37 scannable),
+  `dirs` 54 against 87.
+- **String values: the range operations collapse.** `valuesFor` stays good (1.0 to 2.0; 1.05 at the
+  largest `street`, within the noise), but `valuesBetween` is **0.27 to 0.39** and `prefix` **0.24 to 0.68**
+  of `btree-map`'s speed, on both data sets and at every size, with intervals that clear the noise by far.
+  With several values per key (multi profile) the same operations were 1.6 to 2.1 times *faster* than
+  `btree-sets`. Memory: 59 against 58 bytes a key (`street`), 69 against 99 (`dirs`), and all of it
+  scannable (62 and 72), as `btree-map` has 49.
+- **Why, in short (not yet traced by a profile):** in a map with string values every key is a typed leaf
+  of its own; a scan of single-value entries goes leaf by leaf, each a separate object with a string
+  header that points to the bytes, which is a random cache miss per entry. `btree-map` keeps header and
+  key in one node array. This is exactly the cost that a page with inline values removes, so it is the
+  strongest argument so far that a page for string values (layout B with variable-length values) belongs
+  into the tree; the scalar pages already show it for `uint64` on `street` (ranges 1.2 to 1.8).
+
 ## Caveats
 
-- **The M1 was not at rest.** The load average before the jobs r1 to r3 was 7.9, 3.8 and 6.2 (see
+- **The M1 was not at rest.** The load average before the jobs r1 to r4 was 7.9, 3.8, 6.2 and 5.9 (see
   `env.txt`). The intervals are narrow and agree with the PC, but the M1 figures are less trustworthy than
-  the PC's. r4 (`dirs`, strings) has not run.
+  the PC's. r4 (`dirs`, strings) agrees with the PC cell by cell, a little lower, as the others do.
 - **Precision.** At 4,096 keys, `build` against `map-sets` was not as precise as asked on the PC (the
   suite says so; the cells are marked `*`); a few other cells of `valuesFor` against `map-sets` are
   marked. None of them changes a conclusion above.
 - **`dirs` comes from a sample.** The 600,000 paths are a random 8% of the files of Debian 12, so its
   directories hold fewer files than real ones; the counts are natural for the sample, not for Debian.
-- **Not measured:** the unique profile of these data sets, 1M keys (the corpora are smaller), and the
+- **Not measured:** the unique profile on the M1, 1M keys (the corpora are smaller), and the
   effect of the layouts of step 3. This is the reference for them: commit `9847a43`.

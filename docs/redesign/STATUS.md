@@ -1,5 +1,14 @@
 # Status
 
+## 2026-10-03 late: unique runs and r4 are in
+
+The PC unique runs (both data sets, `uint64` and strings) finished at 21:29, the M1 job r4 at 21:30; both
+are in [step3-real-data.md](step3-real-data.md). Main finding: with string values and one value per key,
+the tree's range operations are 2.6 to 4.2 times *slower* than `btree-map`'s (`valuesBetween` 0.27 to
+0.39, `prefix` 0.24 to 0.68), while point lookups stay faster; with `uint64` values they are faster
+(`street`) or even (`dirs`). The cause is the leaf per key with a string header; it is what a page with
+inline variable-length values removes. Open on the M1: job p1 (page layouts). Nothing discarded.
+
 ## 2026-10-03 night: real data measured, variable-length values in lpage, waiting for the unique runs
 
 Done and pushed: the two real data sets (`street`, `dirs`) with natural values and real strings, the
