@@ -32,4 +32,73 @@ names): sizes 4,096, 16,384 and the corpus maximum.
 - **M1 Pro**: jobs r1 to r4 of `bench/remote/queue.txt`, started by the user with
   `bench/remote/arm-run.sh r1` and so on.
 
-Results will be added here and in `bench/results-layout/step3-real/`.
+## Results
+
+All tables (every size, both machines): [bench/results-layout/step3-real/README.md](../../bench/results-layout/step3-real/README.md);
+raw files beside it. Factors are how many times as fast `ordered` is (above 1: faster). The PC and the M1
+Pro agree closely, cell for cell (within about 25%, the M1 mostly a little lower); where one says "faster",
+so does the other. The PC took 1 h 02 min (`street`, `uint64`), 22 min (`dirs`, `uint64`), 1 h 16 min
+(`street`, strings) and 29 min (`dirs`, strings); the M1 50, 33 and 34 minutes for r1 to r3.
+
+### Against `btree-sets`, the ordered competitor (credo 1)
+
+Range over all sizes and both machines, `uint64` and string values alike:
+
+| operation | `street` | `dirs` |
+|---|--:|--:|
+| point lookup | 1.82 - 2.60 | 1.61 - 1.92 |
+| range (100 keys) | 1.54 - 2.38 | 1.58 - 2.13 |
+| prefix | 1.63 - 2.50 | 1.63 - 2.68 |
+| churn | 1.33 - 1.95 | 1.23 - 1.62 |
+| build | 1.83 - 1.97 | 1.42 - 1.51 |
+
+`ordered` is faster in every cell, on both machines, with both value types; the smallest advantage is
+churn of `dirs` at 86,215 keys (1.23 - 1.33). `dirs` is the harder data set: more keys have several values
+(38% against 21%), its keys are longer, and each value is a string of its own length.
+
+### Against `hashed` and `map-sets` (credo 2 and what the hash maps win)
+
+- **Ranges and prefix searches:** `ordered` is 14 - 230 times as fast as `hashed` and `map-sets`
+  (`street` 20 - 230, `dirs` 14 - 68). That is the reason to have an ordered multimap.
+- **Point lookups:** `hashed` is 2 - 3.5 times as fast (`ordered` 0.29 - 0.50). Against `map-sets`
+  `ordered` is level on `street` (0.87 - 1.27) and 13 - 37% slower on `dirs` (0.63 - 1.04).
+- **Churn and build:** the hash maps are 1.4 - 2.8 times as fast (`ordered` 0.36 - 0.73 for churn, 0.40 -
+  0.79 for build, `dirs` the lower ones).
+
+### Memory (same on both machines; 212,449 keys of `street`, 86,215 of `dirs`)
+
+| bytes per key | `ordered` | `hashed` | `btree-sets` | `map-sets` |
+|---|--:|--:|--:|--:|
+| `street`, `uint64` | **82** | 114 | 277 | 274 |
+| `dirs`, `uint64` | **98** | 170 | 327 | 331 |
+| `street`, strings | **111** | 153 | 359 | 356 |
+| `dirs`, strings | **141** | 216 | 413 | 417 |
+| `street`, `uint64`, scannable by the GC | **35** | 73 - 81 | 62 - 80 | 58 - 79 |
+| `street`, strings, scannable | 111 | 141 | 301 - 336 | 298 - 343 |
+| after removing half the keys, `street` `uint64` | **38** | 70 | 136 | 150 |
+
+`ordered` is the smallest in every row. With string values everything it holds is scannable (111 and 139
+bytes a key, against 35 and 38 with `uint64`): the typed and set leaves hold pointers, and the GC cycle
+takes about twice as long (`street` +55 ms against +27 ms on the PC).
+
+### Strings against `uint64`
+
+The speeds are the same within about 0.1 in the factors (the string headers are 16 bytes against 8 and
+the comparisons go through the same leaves), but the memory is 35% (`street`) and 44% (`dirs`) higher and
+three times as much of it is scannable. The bench counts the 16-byte header of each string value but not
+the bytes behind it (they are views into one buffer that no candidate owns), so **a layout that stores the
+bytes of the values inside its pages would pay for them in this table and the others would not**; a
+comparison with such a layout has to add the bytes to every candidate.
+
+## Caveats
+
+- **The M1 was not at rest.** The load average before the jobs r1 to r3 was 7.9, 3.8 and 6.2 (see
+  `env.txt`). The intervals are narrow and agree with the PC, but the M1 figures are less trustworthy than
+  the PC's. r4 (`dirs`, strings) has not run.
+- **Precision.** At 4,096 keys, `build` against `map-sets` was not as precise as asked on the PC (the
+  suite says so; the cells are marked `*`); a few other cells of `valuesFor` against `map-sets` are
+  marked. None of them changes a conclusion above.
+- **`dirs` comes from a sample.** The 600,000 paths are a random 8% of the files of Debian 12, so its
+  directories hold fewer files than real ones; the counts are natural for the sample, not for Debian.
+- **Not measured:** the unique profile of these data sets, 1M keys (the corpora are smaller), and the
+  effect of the layouts of step 3. This is the reference for them: commit `9847a43`.
