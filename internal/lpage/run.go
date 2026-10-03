@@ -18,6 +18,15 @@ func (r *Run) page(s []byte) int {
 	return sort.Search(len(r.seps), func(i int) bool { return bytes.Compare(r.seps[i], s) > 0 })
 }
 
+// PageFor returns the page that suffix s belongs to, or nil if the run is empty.
+// Benchmarks use it to take the choice of the page out of the timed part.
+func (r *Run) PageFor(s []byte) *Page {
+	if len(r.pages) == 0 {
+		return nil
+	}
+	return r.pages[r.page(s)]
+}
+
 // Pages returns the pages in order.
 func (r *Run) Pages() []*Page { return r.pages }
 
@@ -31,23 +40,23 @@ func (r *Run) Len() int {
 }
 
 // Get returns the value of suffix s.
-func (r *Run) Get(s []byte) (uint64, bool) {
+func (r *Run) Get(s []byte) ([]byte, bool) {
 	if len(r.pages) == 0 {
-		return 0, false
+		return nil, false
 	}
 	return r.pages[r.page(s)].Get(s)
 }
 
 // Insert sets the value of suffix s.
-func (r *Run) Insert(s []byte, v uint64) error {
+func (r *Run) Insert(s, v []byte) error {
 	switch {
 	case len(s) == 0:
 		return ErrEmpty
-	case len(s) > maxSuffix:
+	case tooBig(s, v):
 		return ErrTooLong
 	}
 	if len(r.pages) == 0 {
-		p, _ := Build([][]byte{s}, []uint64{v}) // one suffix of at most 255 bytes fits
+		p, _ := Build([][]byte{s}, [][]byte{v}) // one suffix and value of at most 255 bytes each fit
 		r.pages = []*Page{p}
 		return nil
 	}
@@ -61,7 +70,7 @@ func (r *Run) Insert(s []byte, v uint64) error {
 	placed := false // s is in one of the new pages already
 	if p.Len() < 2 {
 		// one long suffix fills the page: s goes into a page of its own
-		q, _ := Build([][]byte{s}, []uint64{v})
+		q, _ := Build([][]byte{s}, [][]byte{v})
 		first, _ := p.Entries()
 		left, right, placed = p, q, true
 		if bytes.Compare(s, first[0]) < 0 {

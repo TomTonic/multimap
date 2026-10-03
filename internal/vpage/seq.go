@@ -30,6 +30,15 @@ func (r *Run) Len() int {
 	return n
 }
 
+// PageFor returns the page that suffix s belongs to, or nil if the run is empty.
+// Benchmarks use it to take the choice of the page out of the timed part.
+func (r *Run) PageFor(s []byte) *Page {
+	if len(r.pages) == 0 {
+		return nil
+	}
+	return r.pages[r.page(s)]
+}
+
 // Pages returns the pages in order.
 func (r *Run) Pages() []*Page { return r.pages }
 

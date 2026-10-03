@@ -60,10 +60,16 @@ func TestRunner(t *testing.T) {
 			not:  []string{"bench -tags"},
 		},
 		{
+			name: "runs a tool of the bench module with go run",
+			env:  []string{"ARM_RUN_DONE=t1 t2 t3 t4"},
+			args: []string{"--dry-run"},
+			want: []string{"job:       t5", "go run ./cmd/pagebench -keys street -validation 20  (in bench)"},
+		},
+		{
 			name: "lists the queue with what is done",
 			env:  []string{"ARM_RUN_DONE=t1 t3"},
 			args: []string{"--list"},
-			want: []string{"t1     done", "t2     open", "t3     done", "t4     open"},
+			want: []string{"t1     done", "t2     open", "t3     done", "t4     open", "t5     open"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,7 +102,7 @@ func TestRunnerErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"says that no job is open when all have results", []string{"ARM_RUN_DONE=t1 t2 t3 t4"}, []string{"--dry-run"}, "no open job in the queue"},
+		{"says that no job is open when all have results", []string{"ARM_RUN_DONE=t1 t2 t3 t4 t5"}, []string{"--dry-run"}, "no open job in the queue"},
 		{"says that a job is not in the queue", []string{"ARM_RUN_DONE="}, []string{"--dry-run", "nope"}, "no job nope in the queue"},
 		{"rejects an unknown option", nil, []string{"--nope"}, "unknown option --nope"},
 	} {

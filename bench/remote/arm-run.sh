@@ -23,6 +23,7 @@
 # Queue format, one job per line, # starts a comment:
 #   <id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] [env=A=1,B=2] <arguments of cmd/bench>
 #   <id> <ref> - <duration-minutes> [env=A=1,B=2] gotest <packages> <flags of go test>
+#   <id> <ref> - <duration-minutes> [env=A=1,B=2] gorun <package of the bench module> <arguments>
 # The ref and the baseline ref are commits or branches of the remote. A
 # baseline ref makes the script build the library as of that ref into the
 # bench (cmd/mkbaseline) and run it with the build tag baseline; tags= adds
@@ -30,7 +31,10 @@
 # A job whose arguments start with gotest runs  go test <packages> <flags>  in
 # the commit's worktree instead of cmd/bench (for the microbenchmarks of the
 # internal packages, such as  gotest ./internal/vpage ./internal/lpage -run ^$
-# -bench BenchmarkGet -benchtime 2s ); its output is run.log. The duration is an
+# -bench BenchmarkGet -benchtime 2s ); its output is run.log. A job that starts
+# with gorun runs  go run <package> <arguments>  in the bench directory of the
+# commit's worktree (a tool such as  gorun ./cmd/pagebench -keys street -validation 20 ).
+# The duration is an
 # estimate that the script shows with the expected end.
 #
 # Options: --dry-run (show the plan, run nothing), --no-push (keep the results
@@ -133,8 +137,9 @@ tags=""
 case "$args" in tags=*) tags=${args%% *}; tags=${tags#tags=}; case "$args" in *' '*) args=${args#* } ;; *) args="" ;; esac ;; esac
 envs=""
 case "$args" in env=*) envs=${args%% *}; envs=${envs#env=}; envs=$(echo "$envs" | tr ',' ' '); case "$args" in *' '*) args=${args#* } ;; *) args="" ;; esac ;; esac
-gotest=0 gargs=""
+gotest=0 gargs="" gorun=0
 case "$args" in gotest | gotest\ *) gotest=1; gargs=${args#gotest}; gargs=${gargs# } ;; esac
+case "$args" in gorun | gorun\ *) gotest=1 gorun=1; gargs=${args#gorun}; gargs=${gargs# } ;; esac
 
 # --- the machine -----------------------------------------------------------
 
@@ -184,7 +189,11 @@ if [ -n "$basesha" ]; then build_tags="baseline${build_tags:+,$build_tags}"; fi
 if [ "$dry" = 1 ]; then
 	if [ "$gotest" = 1 ]; then
 		echo "dry run: would check out commit $sha in a temporary worktree,"
-		echo "dry run: run  [caffeinate -i] ${envs:+env $envs }go test $gargs"
+		if [ "$gorun" = 1 ]; then
+			echo "dry run: run  [caffeinate -i] ${envs:+env $envs }go run $gargs  (in bench)"
+		else
+			echo "dry run: run  [caffeinate -i] ${envs:+env $envs }go test $gargs"
+		fi
 	else
 		echo "dry run: would build commit $sha${basesha:+ with the baseline $basesha} in a temporary worktree,"
 		echo "dry run: run  [caffeinate -i] bench -tags '$build_tags' $args -out <dir>"
@@ -215,15 +224,24 @@ out=$tmp/out
 mkdir -p "$out"
 git worktree add -q --detach "$tmp/src" "$sha"
 if [ "$gotest" = 1 ]; then
-	# compile the test binaries now, so that the compiler does not run during the measurement
-	(
-		cd "$tmp/src"
-		set -f
-		for p in $gargs; do
-			case "$p" in -*) break ;; esac
-			go test -c -o /dev/null "$p"
-		done
-	)
+	# compile now, so that the compiler does not run during the measurement
+	if [ "$gorun" = 1 ]; then
+		(
+			cd "$tmp/src/bench"
+			set -f
+			# shellcheck disable=SC2086
+			go build -o "$tmp/gorun.bin" ${gargs%% *}
+		)
+	else
+		(
+			cd "$tmp/src"
+			set -f
+			for p in $gargs; do
+				case "$p" in -*) break ;; esac
+				go test -c -o /dev/null "$p"
+			done
+		)
+	fi
 else
 	(
 		cd "$tmp/src/bench"
@@ -258,7 +276,13 @@ prefix=""
 if command -v caffeinate >/dev/null 2>&1; then prefix="caffeinate -i"; fi
 status=0
 set -f +e
-if [ "$gotest" = 1 ]; then
+if [ "$gorun" = 1 ]; then
+	cd "$tmp/src/bench"
+	rest=${gargs#* }
+	[ "$rest" = "$gargs" ] && rest=""
+	# shellcheck disable=SC2086
+	env $envs $prefix "$tmp/gorun.bin" $rest 2>&1 | tee "$out/run.log"
+elif [ "$gotest" = 1 ]; then
 	cd "$tmp/src"
 	# shellcheck disable=SC2086
 	env $envs $prefix go test $gargs 2>&1 | tee "$out/run.log"

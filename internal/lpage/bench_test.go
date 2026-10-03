@@ -1,6 +1,7 @@
 package lpage
 
 import (
+	"encoding/binary"
 	"math/rand/v2"
 	"os"
 	"strconv"
@@ -37,7 +38,7 @@ func build(n int, gen func(*rand.Rand) []byte) *workload {
 			continue
 		}
 		seen[string(k)] = true
-		_ = run.Insert(k, uint64(len(w.keys)))
+		_ = run.Insert(k, binary.LittleEndian.AppendUint64(nil, uint64(len(w.keys))))
 		w.keys = append(w.keys, k)
 	}
 	w.pages = run.Pages()
@@ -60,6 +61,16 @@ var gens = []struct {
 
 var sink uint64
 
+// val returns the number a value of 8 bytes holds, 0 for no value.
+func val(v []byte) uint64 {
+	if len(v) < 8 {
+		return 0
+	}
+	return binary.LittleEndian.Uint64(v)
+}
+
+var eight = []byte{1, 2, 3, 4, 5, 6, 7, 8}
+
 // BenchmarkGet reads one value per iteration from a random page of a set far
 // bigger than the CPU caches (cold), or from one page (hot); the absent rows
 // look for keys that are not there.
@@ -72,7 +83,7 @@ func BenchmarkGet(b *testing.B) {
 			for i := 0; b.Loop(); i++ {
 				j := order[i%len(order)]
 				v, _ := w.pages[w.page[j]].Get(w.keys[j])
-				acc += v
+				acc += val(v)
 			}
 			sink += acc
 		})
@@ -82,7 +93,7 @@ func BenchmarkGet(b *testing.B) {
 			var acc uint64
 			for i := 0; b.Loop(); i++ {
 				v, _ := p.Get(ks[i%len(ks)])
-				acc += v
+				acc += val(v)
 			}
 			sink += acc
 		})
@@ -100,7 +111,7 @@ func BenchmarkGet(b *testing.B) {
 			for i := 0; b.Loop(); i++ {
 				j := order[i%len(absent)] % len(absent)
 				v, _ := w.pages[absentPage[j]].Get(absent[j])
-				acc += v
+				acc += val(v)
 			}
 			sink += acc
 		})
@@ -111,7 +122,7 @@ func BenchmarkGet(b *testing.B) {
 				k := w.keys[j]
 				miss := append(k[:len(k):len(k)], 0x7f) // another key, with the same head word
 				v, _ := w.pages[w.page[j]].Get(miss)
-				acc += v
+				acc += val(v)
 			}
 			sink += acc
 		})
@@ -132,13 +143,13 @@ func BenchmarkMutate(b *testing.B) {
 			}
 		}
 		b.Run(g.name+"/insert and delete in a page with room", func(b *testing.B) {
-			p, _ := Build(keys[:1], []uint64{1})
+			p, _ := Build(keys[:1], [][]byte{eight})
 			for i := 1; i < 8; i++ { // a page that neither grows nor shrinks by one key
-				p, _, _ = p.Insert(keys[i], 1)
+				p, _, _ = p.Insert(keys[i], eight)
 			}
 			for i := 8; b.Loop(); i++ {
 				k := keys[8+i%(len(keys)-8)]
-				q, res, _ := p.Insert(k, 1)
+				q, res, _ := p.Insert(k, eight)
 				if res == Inserted {
 					p, _ = q.Delete(k)
 				}
@@ -146,9 +157,9 @@ func BenchmarkMutate(b *testing.B) {
 		})
 		b.Run(g.name+"/fill, grow and split", func(b *testing.B) {
 			for i := 0; b.Loop(); i++ {
-				p, _ := Build(keys[(i*31)%len(keys):(i*31)%len(keys)+1], []uint64{1})
+				p, _ := Build(keys[(i*31)%len(keys):(i*31)%len(keys)+1], [][]byte{eight})
 				for j := 1; ; j++ {
-					q, res, _ := p.Insert(keys[(i*31+j)%len(keys)], 1)
+					q, res, _ := p.Insert(keys[(i*31+j)%len(keys)], eight)
 					if res == Full {
 						_, _ = p.Split()
 						break
@@ -158,10 +169,10 @@ func BenchmarkMutate(b *testing.B) {
 			}
 		})
 		b.Run(g.name+"/delete and insert back", func(b *testing.B) {
-			p, _ := Build(keys[:1], []uint64{1})
+			p, _ := Build(keys[:1], [][]byte{eight})
 			in := [][]byte{keys[0]}
 			for _, k := range keys[1:] {
-				q, res, _ := p.Insert(k, 1)
+				q, res, _ := p.Insert(k, eight)
 				if res == Full {
 					break
 				}
@@ -171,7 +182,7 @@ func BenchmarkMutate(b *testing.B) {
 			for i := 0; b.Loop(); i++ {
 				k := in[i%len(in)]
 				q, _ := p.Delete(k)
-				p, _, _ = q.Insert(k, 1)
+				p, _, _ = q.Insert(k, eight)
 			}
 		})
 	}

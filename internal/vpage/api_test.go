@@ -429,3 +429,25 @@ func TestSplitFullPages(t *testing.T) {
 		})
 	}
 }
+
+// TestRunPageFor makes sure that a benchmark can learn which page a suffix
+// belongs to. It belongs to the page prototype (docs/redesign, PLAN step 1) and
+// its run of pages, which stands in for the range nodes: the page of a suffix is
+// the one that holds it, and an empty run has none.
+func TestRunPageFor(t *testing.T) {
+	var r Run
+	if r.PageFor([]byte("a")) != nil {
+		t.Error("an empty run has a page")
+	}
+	for i := range 200 {
+		if err := r.Insert([]byte(fmt.Sprintf("key%04d", i)), uint64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 200 {
+		k := []byte(fmt.Sprintf("key%04d", i))
+		if v, ok := r.PageFor(k).Get(k); !ok || v != uint64(i) {
+			t.Fatalf("the page for %q holds %d, %v", k, v, ok)
+		}
+	}
+}
