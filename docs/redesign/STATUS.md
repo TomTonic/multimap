@@ -20,8 +20,14 @@ redesigned step 3 in [PLAN.md](PLAN.md). The user's decisions:
 
 **Still open:** the decision on gate 2 (the four options of step2-results.md); the layout of the
 multi-key page (sketch against `internal/vpage`); whether the byte node is needed once step 3 is done;
-whether a later step lets a multi-key page hold multi-value entries (it would remove the per-key object,
-the promote and the fall back). R4 is violated knowingly for multi-value entries until then.
+whether a later step lets a multi-key page hold multi-value entries (it would remove the single-key page
+of two-value entries, the promote and the fall back). R4 is struck (it meant: no separate string object
+for a key; the oversized object makes that true).
+
+**Statistic for the header size** ([bench/results-layout/step3-entries](../../bench/results-layout/step3-entries/README.md)):
+among the entries with several values, a header with room for 4 values covers 70% in the skewed bench
+profile, 6 values 74%, 10 values 82%, 14 values 90%; street names (natural counts) 74%, 82%, 89%, 92%.
+No header gets near 98%: about 5% of the multi-value entries have more than 64 values.
 
 ## 2026-10-02 night: step 2 done, gate 2 not met, waiting for the user's decision
 

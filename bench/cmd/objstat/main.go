@@ -12,6 +12,11 @@
 //	go run ./cmd/objstat -keys u64,uuid -values unique    # a subset
 //	go run ./cmd/objstat -sizes 4096,16384 -max=false     # smaller sizes only
 //
+// With -entries it prints a second table: for the entries with several values
+// (the leaves of a tree with pages), how many would fit one object of 512 bytes
+// that holds the entry inline (PLAN step 3, the single-key page), when its
+// header has room for N values; see entryRow.
+//
 // The output is a Markdown table, one row per case. What it counts:
 //
 //   - block: the Go size class an object occupies, with the 8-byte malloc
@@ -55,6 +60,7 @@ func run(w io.Writer, args []string) error {
 	valuesF := fs.String("values", "multi,unique", "value profiles: multi (a skewed number of values per key) and unique (one value per key)")
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
+	entriesF := fs.Bool("entries", false, "print the table of entries with several values (the single-key page statistic) after the object table")
 	maxF := fs.Bool("max", true, "for a kind whose corpus holds fewer keys than a size, measure at the largest size the corpus allows (path, street)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -84,6 +90,7 @@ func run(w io.Writer, args []string) error {
 	if err := emit("| case | objects | block bytes per key | not x64 | not x128 | line overflow | mix |\n|---|--:|--:|--:|--:|--:|---|"); err != nil {
 		return err
 	}
+	var entries []string
 	for _, kind := range kinds {
 		for _, profile := range profiles {
 			for _, n := range sizesOf(kind, sizes, *maxF) {
@@ -95,7 +102,19 @@ func run(w io.Writer, args []string) error {
 				if err := emit(s.row(name, n)); err != nil {
 					return err
 				}
+				entries = append(entries, s.entryRow(name, n))
 			}
+		}
+	}
+	if !*entriesF {
+		return nil
+	}
+	if err := emit("\n" + entryHeader()); err != nil {
+		return err
+	}
+	for _, row := range entries {
+		if err := emit(row); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -160,7 +179,12 @@ type stat struct {
 	overflow       float64 // in objects
 	mix            map[string]int
 	keysInObjects  int
+	leaves         []leafInfo // the leaves, for the table of -entries
+	valueBytes     int        // the bytes of one value, as the single-key page would store it
 }
+
+// leafInfo is what the entry statistic needs of a leaf.
+type leafInfo struct{ remainder, values int }
 
 // add counts one object.
 func (s *stat) add(o art.Object) {
@@ -168,6 +192,9 @@ func (s *stat) add(o art.Object) {
 	s.objects++
 	s.bytes += block
 	s.keysInObjects += o.Keys
+	if o.Values > 0 {
+		s.leaves = append(s.leaves, leafInfo{o.Remainder, o.Values})
+	}
 	if block%64 != 0 {
 		s.not64++
 	}
@@ -258,5 +285,78 @@ func build[T comparable](kind keys.Kind, n int, unique bool, value func(uint64) 
 	}
 	var s stat
 	m.Objects(s.add)
+	s.valueBytes = 8
+	if str, ok := any(value(0)).(string); ok {
+		s.valueBytes = len(str) // the bytes of the string, which a layout of byte strings stores inline
+	}
 	return &s
+}
+
+// entryNs are the numbers of values a header may have room for in the table of
+// -entries.
+var entryNs = []int{3, 4, 5, 6, 7, 8, 10, 12, 14, 16}
+
+// pageBytes is the largest object of the single-key page, as long as it keeps
+// the grid.
+const pageBytes = 512
+
+// entryHeader returns the header of the table of -entries.
+func entryHeader() string {
+	cols := []string{"case", "leaves", "entries with 2+ values (of all keys)", "of them: 2-4 values", "5-16", "17+", "remainder > 503"}
+	for _, n := range entryNs {
+		cols = append(cols, fmt.Sprintf("fits N=%d", n))
+	}
+	return "| " + strings.Join(cols, " | ") + " |\n|---|" + strings.Repeat("--:|", len(cols)-1)
+}
+
+// headerBytes is the size of the header of a single-key page that has room
+// for lengths of n values: two bytes (type, remainder length) and one byte per
+// value, rounded up to a multiple of 8 so that the data starts at a multiple
+// of 8.
+func headerBytes(n int) int { return (2 + n + 7) / 8 * 8 }
+
+// entryRow formats the row of a case in the table of -entries: among the
+// leaves with several values, how many would fit one object of 512 bytes, when
+// the header has room for N values (fits N): the entry has at most N values
+// and header, remainder and values add up to at most 512 bytes. The rest would
+// take the fallback (a value set, or an object of its own beyond the grid).
+// "remainder > 503" counts the entries whose remainder alone does not fit
+// behind a header of 8 bytes: they would be oversized objects. The remainder
+// is the one the leaf of the tree holds now, from its base on.
+func (s *stat) entryRow(name string, n int) string {
+	multi, small, mid, big, long := 0, 0, 0, 0, 0
+	fits := make([]int, len(entryNs))
+	for _, l := range s.leaves {
+		if l.values < 2 {
+			continue
+		}
+		multi++
+		switch {
+		case l.values <= 4:
+			small++
+		case l.values <= 16:
+			mid++
+		default:
+			big++
+		}
+		if l.remainder > pageBytes-8 {
+			long++
+		}
+		for i, w := range entryNs {
+			if l.values <= w && headerBytes(w)+l.remainder+l.values*s.valueBytes <= pageBytes {
+				fits[i]++
+			}
+		}
+	}
+	pct := func(x, of int) string {
+		if of == 0 {
+			return "-"
+		}
+		return strconv.FormatFloat(100*float64(x)/float64(of), 'f', 1, 64) + " %"
+	}
+	cells := []string{name, strconv.Itoa(len(s.leaves)), pct(multi, n), pct(small, multi), pct(mid, multi), pct(big, multi), pct(long, multi)}
+	for _, f := range fits {
+		cells = append(cells, pct(f, multi))
+	}
+	return "| " + strings.Join(cells, " | ") + " |"
 }

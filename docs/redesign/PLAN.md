@@ -141,6 +141,12 @@ numbers of values for now. The leaf kinds go; what they did moves into the singl
   measurement. Both are for variable-length values; the one of step 2 holds one word per value.
   Do not commit to any entry count per page before the memory per key is measured (a 512-byte
   page holds up to 29 `uint64` keys today).
+- **Header room for values.** A header that starts the data at +8 has room for 5 to 7 values; with 16
+  bytes, for 14. [The statistic](../../bench/results-layout/step3-entries/README.md) says what the
+  fallback then catches: among entries with several values, 4 values cover 70%, 6 cover 74%, 10 cover
+  82%, 14 cover 90% (street names with natural counts: 74, 82, 89, 92%). The knee is at 4 to 6. Every
+  header takes the fallback for the 5% of entries with more than 64 values; choose by measuring `multi`
+  lookups and memory, not by the share alone.
 - **Fall back stays** as long as a single-key page cuts a multi-key page in two. Whether to lift
   that with a page that holds entries of different value counts (STRATEGY 4.2) is decided after
   this step, by what the multi profile shows.
@@ -164,6 +170,13 @@ numbers of values for now. The leaf kinds go; what they did moves into the singl
   - Longer shared suffix bytes go into the page's shared-prefix field.
   - Long chains above inner nodes get a path node (128 bytes, R2 allows 64).
 - Check whether range nodes or inner nodes should route where, now that pages hold every key.
+- **Single slots in the range node** (user's idea, 2026-10-03): check exact byte values first, then
+  the ranges, so that an entry with a page of its own does not cut its neighbours' page in two.
+  Today a single slot is a range of width 1; `place` (insert.go) cuts the page around an entry only
+  if the entry is alone with its byte at the node, else it rebuilds the page's keys into a subtree.
+  Singles would save the cut for entries alone with their byte; for entries that share the byte they
+  would not help, since a byte cannot tell them apart. Measure how often each case occurs before
+  building it; an ordered scan has to step through a page with holes.
 
 **Gate 4:**
 - Object statistic: no object outside R1-R3.

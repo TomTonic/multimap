@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -140,5 +141,49 @@ func TestHuman(t *testing.T) {
 		if got := human(n); got != want {
 			t.Errorf("human(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+// TestRunEntries makes sure that the statistic of entries with several values,
+// which the redesign's step 3 needs to size the single-key page, reports for a
+// benchmark case how many entries would fit an object of 512 bytes for
+// headers of different capacity. It belongs to the cache-line analysis
+// (docs/redesign). The skewed value profile has 3% of its keys with 17 or more
+// values: those never fit, the other columns grow with the header's capacity,
+// and with 8-byte values and short integer keys the bytes never decide.
+func TestRunEntries(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(&out, []string{"-keys", "u64", "-values", "multi", "-strvals=false", "-sizes", "16384", "-entries"}); err != nil {
+		t.Fatal(err)
+	}
+	_, table, ok := strings.Cut(out.String(), "\n\n")
+	if !ok {
+		t.Fatalf("no entry table in\n%s", out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(table), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("%d lines in the entry table, want a header, a rule and a row:\n%s", len(lines), table)
+	}
+	head := strings.Split(strings.Trim(lines[0], "| "), " | ")
+	row := strings.Split(strings.Trim(lines[2], "| "), " | ")
+	if len(head) != len(row) || row[0] != "u64 multi 16K" {
+		t.Fatalf("header %v and row %v do not match", head, row)
+	}
+	last := -1.0
+	for i, h := range head {
+		if !strings.HasPrefix(h, "fits N=") {
+			continue
+		}
+		var share float64
+		if _, err := fmt.Sscanf(row[i], "%f %%", &share); err != nil {
+			t.Fatalf("%s: %q: %v", h, row[i], err)
+		}
+		if share < last || share > 100-3 {
+			t.Errorf("%s: %.1f %%, after %.1f %%: should not fall, and the 17+ values never fit", h, share, last)
+		}
+		last = share
+	}
+	if last < 50 {
+		t.Errorf("only %.1f %% of the entries fit the widest header, want most of them", last)
 	}
 }

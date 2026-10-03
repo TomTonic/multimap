@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -184,7 +185,9 @@ func TestObjectSizes(t *testing.T) {
 // silently drop keys from its figures. The test fills maps of every leaf kind
 // with the corpora of the other tests and expects the keys of the objects to
 // add up to the keys of the map, every object to have a label and a size, and
-// an empty map to have no objects.
+// an empty map to have no objects. Every leaf must also report how many values
+// it holds and how long a key remainder, which the single-key page statistic
+// of the bench (PLAN step 3) is made of.
 func TestObjects(t *testing.T) {
 	str := func(v uint64) string { return string(rune('a' + v%26)) }
 	fill := func(t *testing.T, name string, keys [][]byte, second bool, add func(k []byte, v uint64), count func(func(Object)), length func() int) {
@@ -201,6 +204,9 @@ func TestObjects(t *testing.T) {
 			objects++
 			if o.Label == "" || o.Size < 16 || o.Size%8 != 0 {
 				t.Errorf("%s: object %+v is not an object of the tree", name, o)
+			}
+			if leaf := strings.HasSuffix(o.Label, "leaf"); leaf != (o.Values > 0) || !leaf && o.Remainder != 0 {
+				t.Errorf("%s: object %+v: only a leaf has values and a remainder", name, o)
 			}
 		})
 		if total != length() {

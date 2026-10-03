@@ -21,6 +21,10 @@ type Object struct {
 	// Keys is the number of keys the object holds: those of a page, one for a
 	// leaf, none for a node.
 	Keys int
+	// Values is the number of values of a leaf, and Remainder the length of the
+	// key remainder it stores (the key from its base on); both are 0 for pages
+	// and nodes.
+	Values, Remainder int
 }
 
 // goClasses are the size classes of Go's allocator up to 8 KiB
@@ -74,12 +78,28 @@ var kindLabels = [32]string{
 
 // leafObject describes leaf l of a map of T.
 func (m *Map[T]) leafObject(l *leafHead) Object {
+	o := m.leafKind(l)
+	o.Values, o.Remainder = m.leafValues(l), len(l.stored())
+	return o
+}
+
+// leafValues returns the number of values of leaf l.
+func (m *Map[T]) leafValues(l *leafHead) int {
+	if l.kind == kSet {
+		return vals[T](l).Len()
+	}
+	return int(l.n)
+}
+
+// leafKind describes the object of leaf l of a map of T, without its values
+// and remainder.
+func (m *Map[T]) leafKind(l *leafHead) Object {
 	var z T
 	switch {
 	case l.cls() > 0 && m.flat == 1:
-		return Object{"flat leaf", int(flatSizes[l.cls()]), false, 1}
+		return Object{Label: "flat leaf", Size: int(flatSizes[l.cls()]), Keys: 1}
 	case l.cls() > 0 && m.flat == 2:
-		return Object{"typed leaf", int(typedOff(int(l.klen))) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), true, 1}
+		return Object{Label: "typed leaf", Size: int(typedOff(int(l.klen))) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), Pointers: true, Keys: 1}
 	}
 	var size uintptr
 	switch k := l.klen; {
@@ -102,7 +122,7 @@ func (m *Map[T]) leafObject(l *leafHead) Object {
 	default:
 		size = unsafe.Sizeof(leaf[T, string]{})
 	}
-	return Object{"set leaf", int(size), true, 1}
+	return Object{Label: "set leaf", Size: int(size), Pointers: true, Keys: 1}
 }
 
 // object describes the object n, a leaf, page or node, without what is below
@@ -113,14 +133,14 @@ func (m *Map[T]) object(n *header) Object {
 		return m.leafObject(asLeaf(n))
 	case isPage(n.kind):
 		p := asPage(n)
-		return Object{"page", p.Size(), false, p.Len()}
+		return Object{Label: "page", Size: p.Size(), Keys: p.Len()}
 	}
 	size, label := int(fixedSize[n.kind&kindMask]), kindLabels[n.kind]
 	if tc := tailClass(n.pathLen()); tc != tailNone {
 		size += [...]int{tail16: 16, tail48: 48, tail112: 112, tailStr: 16}[tc]
 		label += "+tail"
 	}
-	return Object{label, size, true, 0}
+	return Object{Label: label, Size: size, Pointers: true}
 }
 
 // objects reports the subtree n.
