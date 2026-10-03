@@ -7,7 +7,13 @@ are in [step3-real-data.md](step3-real-data.md). Main finding: with string value
 the tree's range operations are 2.6 to 4.2 times *slower* than `btree-map`'s (`valuesBetween` 0.27 to
 0.39, `prefix` 0.24 to 0.68), while point lookups stay faster; with `uint64` values they are faster
 (`street`) or even (`dirs`). The cause is the leaf per key with a string header; it is what a page with
-inline variable-length values removes. Open on the M1: job p1 (page layouts). Nothing discarded.
+inline variable-length values removes. Job p1 (page layouts, M1, one process, 45 s, noise floors 6-25%) is in
+(`bench/results-layout/step3-pages/m1-p1/`): on `street` A is faster for numbers, 1.63x present and 1.47x
+absent (the PC native run: 1.19x and 1.53x); on `dirs` present keys 1.28x, within the noise, absent keys
+0.92x (B faster, resolved); names against numbers and copy-out against bytes are unresolved on both
+(1.0x and 1.05 to 1.06x, noise floors of 14 to 25%). Page bytes per key as on the PC (46.6 / 55.9 / 59.9
+on `dirs`). One process on 160 MB of data is too coarse for the small differences; the PC result stands.
+Nothing discarded.
 
 ## 2026-10-03 night: real data measured, variable-length values in lpage, waiting for the unique runs
 

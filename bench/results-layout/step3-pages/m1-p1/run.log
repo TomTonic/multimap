@@ -1,0 +1,146 @@
+## street: 212449 keys (0 too big for a page, 212449 absent keys)
+
+### point lookups of present keys: tags against lengths, numbers
+A = directory of tags (vpage), numbers; B = length header (lpage), numbers
+
+A: 72.07 ns per operation (median)
+B: 116.8 ns per operation (median)
+A needs 38.6% less time than B: B takes 1.63 times as long as A.
+With 95% confidence the difference lies between 2.48% and 39.9% less time (B takes between 1.03 and 1.66 times as long as A).
+Noise floor: 22.8%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.95), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 113 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+### point lookups of absent keys: tags against lengths, numbers
+A = directory of tags (vpage), numbers; B = length header (lpage), numbers
+
+A: 38.9 ns per operation (median)
+B: 56.93 ns per operation (median)
+A needs 31.8% less time than B: B takes 1.47 times as long as A.
+With 95% confidence the difference lies between 28.2% and 36.5% less time (B takes between 1.39 and 1.57 times as long as A).
+Noise floor: 6.1%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.85), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 113 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+### point lookups of present keys: numbers against names, both in length-header pages
+A = length header (lpage), numbers; B = length header (lpage), names
+
+A: 109.1 ns per operation (median)
+B: 107.5 ns per operation (median)
+A needs 1.49% more time than B: B takes only 0.99 times as long as A.
+With 95% confidence the difference lies between 34.3% more time and 16.8% less time (B takes between 0.745 and 1.20 times as long as A).
+Noise floor: 25.3%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.96), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of -1.49% does not clear the 25.28% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-34.26%, 16.77%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 113 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+### point lookups of present keys: names as bytes against names copied to strings
+A = length header (lpage), names; B = length header (lpage), names copied to strings
+
+A: 102.9 ns per operation (median)
+B: 109.3 ns per operation (median)
+A needs 5.94% less time than B: B takes 1.06 times as long as A.
+With 95% confidence the difference lies between 20.3% more time and 24.6% less time (B takes between 0.831 and 1.33 times as long as A).
+Noise floor: 21.9%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.95), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 5.94% does not clear the 21.88% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-20.30%, 24.56%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 113 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+| layout | pages | keys per page | page bytes per key |
+|---|--:|--:|--:|
+| directory of tags (vpage), numbers | 14622 | 14.5 | 35.2 |
+| length header (lpage), numbers | 13762 | 15.4 | 27.3 |
+| length header (lpage), names | 27428 | 7.7 | 31.0 |
+
+## dirs: 86215 keys (0 too big for a page, 86215 absent keys)
+
+### point lookups of present keys: tags against lengths, numbers
+A = directory of tags (vpage), numbers; B = length header (lpage), numbers
+
+A: 86.05 ns per operation (median)
+B: 106.2 ns per operation (median)
+A needs 22.1% less time than B: B takes 1.28 times as long as A.
+With 95% confidence the difference lies between 3.07% more time and 23.7% less time (B takes between 0.97 and 1.31 times as long as A).
+Noise floor: 15.4%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.95), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the interval [-3.07%, 23.73%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 161 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+### point lookups of absent keys: tags against lengths, numbers
+A = directory of tags (vpage), numbers; B = length header (lpage), numbers
+
+A: 56.75 ns per operation (median)
+B: 52.08 ns per operation (median)
+A needs 9.27% more time than B: B takes only 0.92 times as long as A.
+With 95% confidence the difference lies between 7.22% and 11.4% more time (B takes between 0.898 and 0.93 times as long as A).
+Noise floor: 1.8%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.39), so they were resampled one by one.
+
+Verdict: RESOLVED. A is slower than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 162 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+### point lookups of present keys: numbers against names, both in length-header pages
+A = length header (lpage), numbers; B = length header (lpage), names
+
+A: 94.93 ns per operation (median)
+B: 107.9 ns per operation (median)
+A needs 14% less time than B: B takes 1.16 times as long as A.
+With 95% confidence the difference lies between 16.6% more time and 15.6% less time (B takes between 0.857 and 1.19 times as long as A).
+Noise floor: 14.5%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.92), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 13.96% does not clear the 14.52% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-16.63%, 15.62%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 162 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+### point lookups of present keys: names as bytes against names copied to strings
+A = length header (lpage), names; B = length header (lpage), names copied to strings
+
+A: 106.5 ns per operation (median)
+B: 111.6 ns per operation (median)
+A needs 4.92% less time than B: B takes 1.05 times as long as A.
+With 95% confidence the difference lies between 12.3% more time and 19% less time (B takes between 0.891 and 1.23 times as long as A).
+Noise floor: 15.4%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.83), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 4.92% does not clear the 15.45% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-12.26%, 18.96%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 162 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+| layout | pages | keys per page | page bytes per key |
+|---|--:|--:|--:|
+| directory of tags (vpage), numbers | 9814 | 8.8 | 55.9 |
+| length header (lpage), numbers | 8697 | 9.9 | 46.6 |
+| length header (lpage), names | 12135 | 7.1 | 59.9 |
+
+checksum 14768119880521210454
