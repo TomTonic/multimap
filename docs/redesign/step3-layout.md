@@ -115,6 +115,23 @@ on one machine: they say where to look, not how fast the tree is.
   prototype builds the halves from scratch with allocations; A's split is tuned. That says little about
   what B could do.
 
+## The same on the M1 Pro (2026-10-03, run by the user by hand)
+
+Raw files: `m1-vpage.txt`, `m1-lpage.txt` in the results directory (the header size of B is
+presumably the 16 bytes the instruction named). ns per lookup; the cache line there is 128 bytes.
+
+| | A | B | B against A |
+|---|--:|--:|--:|
+| cold, present: u64 / uuid / path | 108 / 199 / 235 | 276 / 235 / 200 | **2.55** / 1.18 / 0.85 |
+| hot, present: u64 / uuid / path | 9.5 / 14.0 / 22.3 | 10.7 / 17.0 / 11.1 | 1.13 / 1.21 / 0.50 |
+| cold, absent: u64 / uuid / path | 50 / 83 / 165 | 187 / 199 / 153 | **3.7** / 2.4 / 0.93 |
+| insert and delete in a page: u64 / uuid / path | 52 / 119 / 164 | 88 / 91 / 109 | 1.7 / 0.76 / 0.67 |
+| fill until split: u64 / uuid / path | 1512 / 1081 / 1487 | 2715 / 2946 / 3736 | 1.8 / 2.7 / 2.5 |
+
+The picture is the one of the Ryzen, and for `u64` it is worse: cold lookups of B take 2.5 times
+as long, a cold lookup of A about one memory latency (108 ns) and B's more than two. **So the slow
+cold lookup is a property of the layout (or of my loop), not of the Ryzen.**
+
 ## What did not help B
 
 - Touching every cache line of the page before the comparison, so that the loads overlap, changed
@@ -125,8 +142,7 @@ on one machine: they say where to look, not how fast the tree is.
   71 ns, so the pages themselves load fast; the `Get` of B takes 250 ns. Where the other 180 ns
   are spent is not understood. Candidates: the keys of the benchmark are fetched from memory in
   both, so they cancel; a branch that depends on a missing line may stop the CPU from running ahead
-  to the next lookup. A native measurement on arm64 (the user's M1 offer) can say whether it is
-  a property of the layout or of this CPU.
+  to the next lookup. The M1 shows the same gap (above), so it is not this CPU.
 
 ## Conclusion so far
 

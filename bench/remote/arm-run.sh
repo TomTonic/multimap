@@ -21,12 +21,17 @@
 # arm-results of the remote and pushes it. Nothing else is pushed.
 #
 # Queue format, one job per line, # starts a comment:
-#   <id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] <arguments of cmd/bench>
+#   <id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] [env=A=1,B=2] <arguments of cmd/bench>
+#   <id> <ref> - <duration-minutes> [env=A=1,B=2] gotest <packages> <flags of go test>
 # The ref and the baseline ref are commits or branches of the remote. A
 # baseline ref makes the script build the library as of that ref into the
 # bench (cmd/mkbaseline) and run it with the build tag baseline; tags= adds
-# other build tags, such as strvals. The duration is an estimate that the
-# script shows with the expected end.
+# other build tags, such as strvals; env= sets environment variables for the run.
+# A job whose arguments start with gotest runs  go test <packages> <flags>  in
+# the commit's worktree instead of cmd/bench (for the microbenchmarks of the
+# internal packages, such as  gotest ./internal/vpage ./internal/lpage -run ^$
+# -bench BenchmarkGet -benchtime 2s ); its output is run.log. The duration is an
+# estimate that the script shows with the expected end.
 #
 # Options: --dry-run (show the plan, run nothing), --no-push (keep the results
 # in a temporary directory), --no-fetch, --yes (do not ask about warnings),
@@ -126,6 +131,10 @@ case "$id" in *[!A-Za-z0-9._-]*) echo "arm-run.sh: bad job id $id" >&2; exit 2 ;
 case "$mins" in '' | *[!0-9]*) echo "arm-run.sh: bad duration $mins in job $id" >&2; exit 2 ;; esac
 tags=""
 case "$args" in tags=*) tags=${args%% *}; tags=${tags#tags=}; case "$args" in *' '*) args=${args#* } ;; *) args="" ;; esac ;; esac
+envs=""
+case "$args" in env=*) envs=${args%% *}; envs=${envs#env=}; envs=$(echo "$envs" | tr ',' ' '); case "$args" in *' '*) args=${args#* } ;; *) args="" ;; esac ;; esac
+gotest=0 gargs=""
+case "$args" in gotest | gotest\ *) gotest=1; gargs=${args#gotest}; gargs=${gargs# } ;; esac
 
 # --- the machine -----------------------------------------------------------
 
@@ -159,7 +168,7 @@ if [ "$(load | awk -F'[ ,]+' '{ print ($1 >= 2 || $2 >= 3) ? 1 : 0 }')" = 1 ]; t
 load_before=$(load)
 
 echo "machine:   $machine (cache line $line_size B, $perf performance cores of $cores, power: $power)"
-echo "job:       $id  ref $ref  baseline $base  tags '${tags:-none}'"
+echo "job:       $id  ref $ref  baseline $base  tags '${tags:-none}'  env '${envs:-none}'"
 echo "arguments: $args"
 echo "duration:  about $mins min; now $(date '+%H:%M'), expected end $(when "$mins")"
 echo "load:      $(load)"
@@ -173,8 +182,13 @@ build_tags=$tags
 if [ -n "$basesha" ]; then build_tags="baseline${build_tags:+,$build_tags}"; fi
 
 if [ "$dry" = 1 ]; then
-	echo "dry run: would build commit $sha${basesha:+ with the baseline $basesha} in a temporary worktree,"
-	echo "dry run: run  [caffeinate -i] bench -tags '$build_tags' $args -out <dir>"
+	if [ "$gotest" = 1 ]; then
+		echo "dry run: would check out commit $sha in a temporary worktree,"
+		echo "dry run: run  [caffeinate -i] ${envs:+env $envs }go test $gargs"
+	else
+		echo "dry run: would build commit $sha${basesha:+ with the baseline $basesha} in a temporary worktree,"
+		echo "dry run: run  [caffeinate -i] bench -tags '$build_tags' $args -out <dir>"
+	fi
 	echo "dry run: and push the results of $id to $remote/$rbranch"
 	exit 0
 fi
@@ -200,11 +214,23 @@ trap cleanup EXIT
 out=$tmp/out
 mkdir -p "$out"
 git worktree add -q --detach "$tmp/src" "$sha"
-(
-	cd "$tmp/src/bench"
-	if [ -n "$basesha" ]; then go run ./cmd/mkbaseline -ref "$basesha"; fi
-	go build ${build_tags:+-tags "$build_tags"} -o "$tmp/bench.bin" ./cmd/bench
-)
+if [ "$gotest" = 1 ]; then
+	# compile the test binaries now, so that the compiler does not run during the measurement
+	(
+		cd "$tmp/src"
+		set -f
+		for p in $gargs; do
+			case "$p" in -*) break ;; esac
+			go test -c -o /dev/null "$p"
+		done
+	)
+else
+	(
+		cd "$tmp/src/bench"
+		if [ -n "$basesha" ]; then go run ./cmd/mkbaseline -ref "$basesha"; fi
+		go build ${build_tags:+-tags "$build_tags"} -o "$tmp/bench.bin" ./cmd/bench
+	)
+fi
 # the build has just loaded the machine: let it settle before measuring
 echo "settling for ${ARM_SETTLE:-30} s after the build ..."
 sleep "${ARM_SETTLE:-30}"
@@ -231,10 +257,16 @@ echo "$args" >"$out/args.txt"
 prefix=""
 if command -v caffeinate >/dev/null 2>&1; then prefix="caffeinate -i"; fi
 status=0
-cd "$tmp/src/bench"
 set -f +e
-# shellcheck disable=SC2086
-$prefix "$tmp/bench.bin" $args -out "$out/bench-out" 2>&1 | tee "$out/run.log"
+if [ "$gotest" = 1 ]; then
+	cd "$tmp/src"
+	# shellcheck disable=SC2086
+	env $envs $prefix go test $gargs 2>&1 | tee "$out/run.log"
+else
+	cd "$tmp/src/bench"
+	# shellcheck disable=SC2086
+	env $envs $prefix "$tmp/bench.bin" $args -out "$out/bench-out" 2>&1 | tee "$out/run.log"
+fi
 status=${PIPESTATUS[0]}
 set +f -e
 {

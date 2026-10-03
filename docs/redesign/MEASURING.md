@@ -92,7 +92,11 @@ The user has an arm64 machine: a MacBook with an M1 Pro (8 performance and 2 eff
 jobs by hand. Nothing runs without them. The sync goes through git.
 
 - **Queue:** `bench/remote/queue.txt` on the working branch (`cacheline`). One job per line:
-  `<id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] <arguments of cmd/bench>`, for
+  `<id> <ref> <baseline-ref or -> <duration-minutes> [tags=a,b] [env=A=1,B=2] <arguments of cmd/bench>`,
+  or, for the diagnostic microbenchmarks of the internal packages,
+  `<id> <ref> - <duration-minutes> [env=A=1] gotest <packages> <flags of go test>` (the runner
+  compiles the test binaries first and then runs `go test` in the commit's worktree; the output is
+  `run.log`). Never ask the user to type commands in by hand: add a job. For
   example `a1 <commit> <baseline-commit> 90 -suite dev -keys u64,str -sizes 4096,16384 -vs baseline
   -minprocs 4 -maxprocs 8 -skipmem`. Refs are commits, so that a job means the same thing when it
   is run later. With a baseline ref the runner calls `mkbaseline -ref <baseline-ref>` and builds

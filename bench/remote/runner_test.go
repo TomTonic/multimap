@@ -53,10 +53,17 @@ func TestRunner(t *testing.T) {
 			not:  []string{"# a comment"},
 		},
 		{
+			name: "runs go test for a job of the microbenchmarks, with its environment",
+			env:  []string{"ARM_RUN_DONE=t1 t2 t3"},
+			args: []string{"--dry-run"},
+			want: []string{"job:       t4", "env 'LPAGE_MAXHEADER=16'", "would check out commit", "env LPAGE_MAXHEADER=16 go test ./internal/vpage ./internal/lpage -run ^$ -bench Get|Mutate -benchtime 2s"},
+			not:  []string{"bench -tags"},
+		},
+		{
 			name: "lists the queue with what is done",
 			env:  []string{"ARM_RUN_DONE=t1 t3"},
 			args: []string{"--list"},
-			want: []string{"t1     done", "t2     open", "t3     done"},
+			want: []string{"t1     done", "t2     open", "t3     done", "t4     open"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +96,7 @@ func TestRunnerErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"says that no job is open when all have results", []string{"ARM_RUN_DONE=t1 t2 t3"}, []string{"--dry-run"}, "no open job in the queue"},
+		{"says that no job is open when all have results", []string{"ARM_RUN_DONE=t1 t2 t3 t4"}, []string{"--dry-run"}, "no open job in the queue"},
 		{"says that a job is not in the queue", []string{"ARM_RUN_DONE="}, []string{"--dry-run", "nope"}, "no job nope in the queue"},
 		{"rejects an unknown option", nil, []string{"--nope"}, "unknown option --nope"},
 	} {
