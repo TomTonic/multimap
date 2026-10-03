@@ -1,5 +1,16 @@
 # Status
 
+## 2026-10-03 night: real data measured, variable-length values in lpage, waiting for the unique runs
+
+Done and pushed: the two real data sets (`street`, `dirs`) with natural values and real strings, the
+reference of the tree on them on the PC and the M1 ([step3-real-data.md](step3-real-data.md)); `internal/lpage`
+with values of any length; `bench/cmd/pagebench` and its first results on the real keys
+([step3-layout.md](step3-layout.md)): for numbers A is 16-19% faster per lookup and B 17-22% smaller; for
+names B costs the same per lookup as for numbers. Running on the PC: the unique profile of both data sets
+with `uint64` and with string values (`run-uni.cmd`, ends about 23:00), the reference for single-value
+entries with strings. Waiting for the user on the M1: job r4 (`dirs`, strings) and p1 (the page layouts).
+Nothing is discarded; the single-key page (SKMV) is next, after the unique reference is in.
+
 ## 2026-10-03 later: gate 2 ticked off, layout comparison of the multi-key page done, waiting for the user
 
 The user ticked off gate 2 as "not met, deficits noted" and asked to begin step 3 with the layout

@@ -26,6 +26,41 @@ decision. The names are those of [GLOSSARY.md](GLOSSARY.md); in this document **
 > length byte per value 30.8 (header 16, 7 entries) and 29.9 (header 24, 11 entries); B with fixed
 > values 29.0 and 27.9. The microbenchmarks have no `street` yet.
 
+## On the real data (street and dirs), 2026-10-03 evening
+
+`internal/lpage` now holds values of any length as in the sketch (a length byte per value, all remainders
+then all values, 3 to 15 entries per page; pages of values of one width, the scalar specialization, 6 to
+30). `bench/cmd/pagebench` compares it with the directory page of `vpage` on the real keys, the first
+value of each key (the unique profile) as a number and as the real name, interleaved with rtcompare. Raw
+output: [bench/results-layout/step3-pages/](../../bench/results-layout/step3-pages/) (`pc-native.md`: Windows
+native; `pc-wsl.md`: WSL). A single process each, so a diagnosis of the layouts in isolation; the page
+is looked up directly, the choice of the page is not timed.
+
+**Point lookups, numbers as values** (A = directory of tags, B = length header; Windows native):
+
+| | present keys | absent keys | page bytes per key |
+|---|--:|--:|--:|
+| `street` (212,449 keys) | A 69.0 ns, B 85.6 ns: **B 1.19 x as long** | A 33.5, B 51.3: **B 1.53 x** | A 35.2, **B 27.3 (-22%)** |
+| `dirs` (86,215 keys) | A 62.5, B 73.1: **B 1.18 x** | A 48.3, B 48.2: **level** | A 55.9, **B 46.6 (-17%)** |
+
+WSL gives the same picture (street 1.38 x and 1.59 x, dirs 1.16 x and level).
+
+**What the variable length costs B** (names instead of numbers, both in length-header pages):
+- looking a name up instead of a number costs nothing: street 0.95 x as long (faster), dirs 1.01 x;
+- giving the name out as a string, which has to be copied out of the page (it must not alias a page
+  that changes), costs 7% (street) and 9% (dirs) on top;
+- the pages with the names inside take 31.0 (`street`) and 59.9 (`dirs`) bytes per key, string bytes included
+  (the pages with numbers hold nothing else; today's tree holds 16 bytes of header per string and the
+  bytes elsewhere).
+
+**Reading.** On the real keys A is faster than B for numbers by 16-19% for present keys, and for absent keys
+of `street`; B is 17-22% smaller. Both agree with the synthetic keys, so the earlier verdict stands as a
+finding about **scalar values**, and only about those. For values of variable length A has no counterpart,
+B costs no more per lookup than with numbers, and what is missing is the comparison with what the tree does
+for strings today (a leaf per key with a pointer to the string). The unique profile of `street` and `dirs`
+with string values is being measured on the PC for that (job script `run-uni.cmd`, results to follow), and
+`p1` on the M1 repeats the table above.
+
 ## The two layouts
 
 | | A: `vpage` (step 2) | B: `lpage` (the sketch) |
