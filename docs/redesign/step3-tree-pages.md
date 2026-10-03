@@ -154,8 +154,11 @@ that hold something.
 | total bytes a key (not counting the value sets of set leaves) | 34.9 | 56.6 | 55.0 | 91.5 |
 
 The total is what `objstat` sees: it does not count the arrays and hash sets that set leaves allocate for
-keys with many values, which the bench's heap figure does (street multi: 97 bytes a key measured, header 32,
-against 56.6 here; the difference is those value sets, which today's tree has as well).
+keys with many values. They are **a third of the heap of the pairs tree on `street`**: measured in the process,
+88.5 bytes a key against 56.4 for the objects, and the same 30 to 32 bytes a key in today's tree (111.0 against
+80.5). About 3 % of the keys have more values than a page holds, and each of them keeps 16 bytes a value in an
+array or a hash set. That is the part the value overflow of step 3 has to attack (values inline as bytes in
+an oversized object); no page layout above touches it.
 
 Two things stand out. The pages are 46 to 87 % full (a B-tree's 69 % is the expectation for random
 inserts), and **an R8 node, which is 128 bytes and holds 2.6 to 3.1 ranges, costs 5 to 16 bytes a key, 14 to
