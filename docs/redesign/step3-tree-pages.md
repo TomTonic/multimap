@@ -151,7 +151,11 @@ that hold something.
 | used | 51 / 76 / 77 / 80 % | 46 / 73 / 75 / 79 % | 48 / 76 / 83 / 87 % | 52 / 74 / 82 / 86 % |
 | range nodes R8 (bytes a key; ranges each) | 4.9; 3.1 | 11.4; 2.9 | 8.0; 2.7 | 16.3; 2.6 |
 | leaves (set + typed, bytes a key) | 0.1 | 2.1 | 0.1 | 4.4 |
-| total bytes a key | 34.9 | 56.4 | 60.2 | 99 |
+| total bytes a key (not counting the value sets of set leaves) | 34.9 | 56.6 | 55.0 | 91.5 |
+
+The total is what `objstat` sees: it does not count the arrays and hash sets that set leaves allocate for
+keys with many values, which the bench's heap figure does (street multi: 97 bytes a key measured, header 32,
+against 56.6 here; the difference is those value sets, which today's tree has as well).
 
 Two things stand out. The pages are 46 to 87 % full (a B-tree's 69 % is the expectation for random
 inserts), and **an R8 node, which is 128 bytes and holds 2.6 to 3.1 ranges, costs 5 to 16 bytes a key, 14 to
