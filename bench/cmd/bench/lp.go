@@ -2,9 +2,21 @@ package main
 
 import (
 	"iter"
+	"os"
+	"strconv"
 
 	"github.com/TomTonic/multimap/internal/artstr"
+	"github.com/TomTonic/multimap/internal/lpage"
 )
+
+// The environment variable LPAGE_MAXHEADER sets the largest header of a page in
+// bytes (a multiple of 8, 8 to 32; the default is 24: 11 entries with values of
+// different lengths). Child processes inherit it, so a whole run uses one value.
+func init() {
+	if n, err := strconv.Atoi(os.Getenv("LPAGE_MAXHEADER")); err == nil && n >= 8 && n <= 32 && n%8 == 0 {
+		lpage.MaxHeader = n
+	}
+}
 
 // lpMap is the candidate "ordered-lpage": the multimap of internal/artstr, the
 // tree whose keys with one string value live in length-header pages
