@@ -10,7 +10,7 @@ import (
 )
 
 // The environment variable LPAGE_MAXHEADER sets the largest header of a page in
-// bytes (a multiple of 8, 8 to 64; the default is 32: 15 entries with values of
+// bytes (a multiple of 8, 8 to 64; the default is 48: 23 entries with values of
 // different lengths), LPAGE_MINHEADER the smallest (default 8). Child processes inherit it, so a whole run uses one value.
 func init() {
 	if n, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && n >= 0 {

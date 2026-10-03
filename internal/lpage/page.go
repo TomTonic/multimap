@@ -53,7 +53,7 @@ var widths = [...]int{0, 4, 8, 16}
 
 // MaxHeader is the largest header in bytes (a multiple of 8, at most 64); it
 // limits the entries of a page. Experiments may change it.
-var MaxHeader = 32
+var MaxHeader = 48
 
 // MinHeader is the smallest header in bytes a page gets, a multiple of 8: a
 // larger one costs every page its bytes but leaves room for entries to come

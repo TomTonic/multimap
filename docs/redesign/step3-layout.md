@@ -1,5 +1,9 @@
 # Step 3, first part: two layouts for the multi-key page
 
+*(Note of 2026-10-04: `internal/lpage` has changed since the measurements below, which are from commit
+`b680abf`: a 384-byte class, headers up to 64 bytes with 48 as the default (the tables use 24), value
+widths of 4, 8 and 16 bytes only, and entries with several values. The numbers below need that commit.)*
+
 2026-10-03. The question: which layout should the multi-key page have, the one of step 2 (`internal/vpage`,
 a directory of tags, 16-byte slots, a heap of tails) or the sketch of the user in
 [whataleafneedstostore.md](whataleafneedstostore.md) (MKSV: a header of lengths, a common prefix, the

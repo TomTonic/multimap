@@ -260,7 +260,7 @@ func TestTryInsert(t *testing.T) {
 	if q, res, _, _ := w.TryInsert([]byte("zzzz"), []byte("x"), false); res != Inserted || q.Len() != 3 {
 		t.Errorf("new key with another length: %v", res)
 	}
-	if MaxEntries() != MaxHeader-2 {
+	if MaxEntries() != min(MaxHeader-2, maxEnts-1) {
 		t.Errorf("MaxEntries = %d with header %d", MaxEntries(), MaxHeader)
 	}
 }
