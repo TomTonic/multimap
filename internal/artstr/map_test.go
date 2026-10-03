@@ -303,3 +303,53 @@ var (
 	seedBase uint64
 	mapSteps = 4000
 )
+
+// TestRemoveLastKeyBelowRangeNode checks that a range node whose only page is
+// emptied disappears.
+//
+// When a key is removed and a range node is left with one page below it and no
+// term, the tree moves the page up if its keys still fit a page with the node's
+// path in front of them, and leaves the node standing if they do not (keys of 300
+// bytes and more). Removing the last key of that page then leaves a node with
+// nothing in it, which must vanish and not be treated as a node with a term.
+func TestRemoveLastKeyBelowRangeNode(t *testing.T) {
+	var m Map[string]
+	m.Add([]byte("seed"), "v") // decides the map's kind
+	m.RemoveKey([]byte("seed"))
+	path := bytes.Repeat([]byte{'p'}, 200)
+	key := append(bytes.Clone(path), bytes.Repeat([]byte{'k'}, 100)...)
+	m.t.root = makeR(path, nil, []rng{{0, pageHdr(newPageFor(key, len(path), "value"))}})
+	m.t.size = 1
+	if got := collect(&m, key); !slices.Equal(got, []string{"value"}) {
+		t.Fatalf("the key has %q", got)
+	}
+	m.RemoveKey(key)
+	if m.Len() != 0 || m.Has(key) || m.t.root != nil {
+		t.Fatalf("Len %d, root %v after removing the only key", m.Len(), m.t.root)
+	}
+}
+
+func collect(m *Map[string], key []byte) []string {
+	var out []string
+	m.Each(key, func(v string) bool { out = append(out, v); return true })
+	return out
+}
+
+// TestRemoveLongKeysOneByOne is the same check as in internal/art, through the
+// operations a user has: two keys of 300 bytes with a common beginning, removed one
+// after the other.
+func TestRemoveLongKeysOneByOne(t *testing.T) {
+	for _, pairs := range []bool{false, true} {
+		m := Map[string]{Pairs: pairs}
+		prefix := bytes.Repeat([]byte{'p'}, 100)
+		k1 := append(append(bytes.Clone(prefix), '1'), bytes.Repeat([]byte{'x'}, 199)...)
+		k2 := append(append(bytes.Clone(prefix), '2'), bytes.Repeat([]byte{'x'}, 199)...)
+		m.Add(k1, "1")
+		m.Add(k2, "2")
+		m.RemoveKey(k1)
+		m.RemoveKey(k2)
+		if m.Len() != 0 || m.Has(k1) || m.Has(k2) {
+			t.Fatalf("pairs %v: Len %d after removing both keys", pairs, m.Len())
+		}
+	}
+}

@@ -133,8 +133,11 @@ func delFromPage(loc **header, key []byte, want *uint64) int8 {
 func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 	switch c := childCount(n); {
 	case c == 0:
-		// The node held only its term leaf. A node without a term never gets
-		// here: it collapsed when it fell to one child.
+		// The node held only its term leaf, or nothing: a range node whose only
+		// page could not move up (see pageUp) stays, and its last key may go.
+		if termOf(n) == nil {
+			return nil
+		}
 		return leafHdr(lift(termOf(n), key[:d], depth, rk))
 	case c > 1 || termOf(n) != nil:
 		return n
