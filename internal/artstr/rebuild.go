@@ -122,10 +122,11 @@ func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 // pages, except that a subtree that falls to a single leaf takes new keys in
 // pages again.
 
-// crowdedRatio is how many keys in pages one leaf or inner-node subtree below
+// CrowdedRatio is how many keys in pages one leaf or inner-node subtree below
 // a range node outweighs: a range node falls back once more than about one
-// in crowdedRatio+1 of its keys holds several values.
-const crowdedRatio = 4
+// in CrowdedRatio+1 of its keys holds several values. A variable for
+// experiments: a huge value turns the fall back off.
+var CrowdedRatio = 4
 
 // rpos is a range node on the path of a key: its slot and the key depth its
 // path starts at.
@@ -179,7 +180,7 @@ func crowded(r *rhead, gained int) bool {
 			multi++
 		}
 	}
-	return crowdedRatio*multi > keys+crowdedRatio*ranges
+	return CrowdedRatio*multi > keys+CrowdedRatio*ranges
 }
 
 // walker collects the keys below a node as items.

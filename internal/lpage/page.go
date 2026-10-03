@@ -310,6 +310,13 @@ func (p *Page) locate(s []byte) (i, off int, found bool) {
 		if x == 0 {
 			break
 		}
+		if b := m[off]; b != rem[0] { // most entries differ at the first byte
+			if b > rem[0] {
+				return i, off, false
+			}
+			off += x
+			continue
+		}
 		switch c := bytes.Compare(m[off:off+x], rem); {
 		case c == 0:
 			return i, off, true

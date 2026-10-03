@@ -44,6 +44,7 @@ import (
 
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/internal/art"
+	"github.com/TomTonic/multimap/internal/artstr"
 )
 
 func main() {
@@ -61,6 +62,7 @@ func run(w io.Writer, args []string) error {
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
 	entriesF := fs.Bool("entries", false, "print the table of entries with several values (the single-key page statistic) after the object table")
+	pagesF := fs.Bool("pages", false, "measure the experimental tree with length-header pages for string values (internal/artstr) instead of internal/art; only the -str profiles")
 	maxF := fs.Bool("max", true, "for a kind whose corpus holds fewer keys than a size, measure at the largest size the corpus allows (path, street)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -78,8 +80,10 @@ func run(w io.Writer, args []string) error {
 		if p != "multi" && p != "unique" {
 			return fmt.Errorf("unknown value profile %q (multi or unique)", p)
 		}
-		profiles = append(profiles, p)
-		if *strF {
+		if !*pagesF {
+			profiles = append(profiles, p)
+		}
+		if *strF || *pagesF {
 			profiles = append(profiles, p+"-str")
 		}
 	}
@@ -95,7 +99,7 @@ func run(w io.Writer, args []string) error {
 		for _, profile := range profiles {
 			for _, n := range sizesOf(kind, sizes, *maxF) {
 				name := fmt.Sprintf("%s %s %s", kind, profile, human(n))
-				s := measure(kind, profile, n)
+				s := measure(kind, profile, n, *pagesF)
 				if err := s.verify(name, n); err != nil {
 					return err
 				}
@@ -252,8 +256,11 @@ func (s *stat) row(name string, n int) string {
 }
 
 // measure builds the index of a case, and counts its objects.
-func measure(kind keys.Kind, profile string, n int) *stat {
+func measure(kind keys.Kind, profile string, n int, pages bool) *stat {
 	unique := strings.HasPrefix(profile, "unique")
+	if pages {
+		return buildPages(kind, n, unique)
+	}
 	if strings.HasSuffix(profile, "-str") {
 		return build(kind, n, unique, func(v uint64) string { return fmt.Sprintf("%016x", v) })
 	}
@@ -359,4 +366,34 @@ func (s *stat) entryRow(name string, n int) string {
 		cells = append(cells, pct(f, multi))
 	}
 	return "| " + strings.Join(cells, " | ") + " |"
+}
+
+// buildPages is build for the experimental tree of internal/artstr, with the
+// string values of the strvals bench.
+func buildPages(kind keys.Kind, n int, unique bool) *stat {
+	c := keys.Generate(kind, n, 0x5EED)
+	vals, offs := keys.Values(n, 0xFA11)
+	if c.Natural != nil {
+		vals, offs = nil, make([]int, n+1)
+		for i, vs := range c.Natural[:n] {
+			vals = append(vals, vs...)
+			offs[i+1] = len(vals)
+		}
+	}
+	var m artstr.Map[string]
+	for i, key := range c.Keys.B {
+		vs := vals[offs[i]:offs[i+1]]
+		if unique {
+			vs = vs[:1]
+		}
+		for _, v := range vs {
+			m.Add(key, fmt.Sprintf("%016x", v))
+		}
+	}
+	var s stat
+	m.Objects(func(o artstr.Object) {
+		s.add(art.Object{Label: o.Label, Size: o.Size, Pointers: o.Pointers, Keys: o.Keys, Values: o.Values, Remainder: o.Remainder})
+	})
+	s.valueBytes = 16
+	return &s
 }
