@@ -13,7 +13,7 @@ import (
 // bytes (a multiple of 8, 8 to 32; the default is 24: 11 entries with values of
 // different lengths). Child processes inherit it, so a whole run uses one value.
 func init() {
-	if n, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && n >= 1 {
+	if n, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && n >= 0 {
 		artstr.CrowdedRatio = n
 	}
 	if n, err := strconv.Atoi(os.Getenv("LPAGE_MAXHEADER")); err == nil && n >= 8 && n <= 32 && n%8 == 0 {
@@ -29,10 +29,20 @@ func init() {
 // (hasPages is false) the bench never builds it.
 type lpMap struct{ m artstr.Map[V] }
 
-func newLP(zeroCopy bool) *lpMap {
+func newLP(zeroCopy, pairs bool) *lpMap {
 	l := &lpMap{}
-	l.m.ZeroCopy = zeroCopy
+	l.m.ZeroCopy, l.m.Pairs = zeroCopy, pairs
 	return l
+}
+
+// lpImpls are the candidates with pages for string values.
+var lpImpls = []string{orderedLP, orderedLPZ, orderedLPM, orderedLPMZ}
+
+// lpOptions returns how candidate impl, one of lpImpls, is set up: with
+// immutable pages and views of them as strings, and with multi-value entries in
+// the pages.
+func lpOptions(impl string) (zeroCopy, pairs bool) {
+	return impl == orderedLPZ || impl == orderedLPMZ, impl == orderedLPM || impl == orderedLPMZ
 }
 
 func (l *lpMap) AddValue(key []byte, v V)    { l.m.Add(key, v) }
@@ -50,8 +60,8 @@ func (l *lpMap) ValuesBetweenInclusiveSeq(from, to []byte) iter.Seq[V] {
 	return func(yield func(V) bool) { l.m.RangeValues(&b, yield) }
 }
 
-func buildLP(k [][]byte, vals []V, offs []int, zeroCopy bool) *lpMap {
-	m := newLP(zeroCopy)
+func buildLP(k [][]byte, vals []V, offs []int, impl string) *lpMap {
+	m := newLP(lpOptions(impl))
 	for i, key := range k {
 		for _, v := range vals[offs[i]:offs[i+1]] {
 			m.AddValue(key, v)

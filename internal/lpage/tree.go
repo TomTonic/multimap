@@ -30,6 +30,9 @@ func (p *Page) Find(s []byte) (int, bool) {
 		if x == 0 {
 			break
 		}
+		if x == cont {
+			continue
+		}
 		if int(x) == len(rem) && m[off] == first && bytes.Equal(m[off:off+int(x)], rem) {
 			return i, true
 		}
@@ -62,8 +65,8 @@ func (p *Page) Seek(s []byte) (int, bool) {
 func (p *Page) offsets(i int) (koff, voff int) {
 	r, v := p.lens()
 	koff = p.hdr() + int(p.cp)
-	kend := koff + sumBytes(r)
-	return koff + sumBytes(r[:i]), p.voffset(v, kend, i)
+	kend := koff + remSum(r)
+	return koff + remSum(r[:i]), p.voffset(v, kend, i)
 }
 
 // ValueAt returns the value of entry i. The slice aliases the page and is valid
@@ -144,10 +147,55 @@ func (p *Page) EachString(i, j int, alias bool, fn func(val string) bool) bool {
 // AppendKey appends the remainder of entry i, with the common prefix, to dst.
 func (p *Page) AppendKey(dst []byte, i int) []byte {
 	m := p.mem()
-	r, _ := p.lens()
-	koff, _ := p.offsets(i)
+	koff, x := p.keyAt(i)
 	h, cp := p.hdr(), int(p.cp)
-	return append(append(dst, m[h:h+cp]...), m[koff:koff+int(r[i])]...)
+	return append(append(dst, m[h:h+cp]...), m[koff:koff+x]...)
+}
+
+// keyAt returns where the remainder of the key of entry i starts and how long it
+// is: the entry's own, or that of the first entry of its run.
+func (p *Page) keyAt(i int) (koff, x int) {
+	r, _ := p.lens()
+	koff = p.hdr() + int(p.cp)
+	for _, y := range r[:i+1] {
+		if y != cont {
+			koff += x
+			x = int(y)
+		}
+	}
+	return koff, x
+}
+
+// IsCont reports whether entry i has the key of the entry before it: it is
+// another value of a multi-value entry, whose key the page stores once.
+func (p *Page) IsCont(i int) bool {
+	r, _ := p.lens()
+	return r[i] == cont
+}
+
+// RunEnd returns the position after the last entry of the key that entry i, the
+// first of its run, belongs to.
+func (p *Page) RunEnd(i int) int {
+	r, _ := p.lens()
+	for i++; i < len(r) && r[i] == cont; i++ {
+	}
+	return i
+}
+
+// Keys returns the number of different keys, which is less than Len if some have
+// several values.
+func (p *Page) Keys() int {
+	r, _ := p.lens()
+	n := 0
+	for _, x := range r {
+		if x == 0 {
+			break
+		}
+		if x != cont {
+			n++
+		}
+	}
+	return n
 }
 
 // ByteAt returns byte off of the remainder of entry i, with the common prefix.
@@ -158,7 +206,7 @@ func (p *Page) ByteAt(i, off int) byte {
 	if off < cp {
 		return m[p.hdr()+off]
 	}
-	koff, _ := p.offsets(i)
+	koff, _ := p.keyAt(i)
 	return m[koff+off-cp]
 }
 
@@ -166,7 +214,7 @@ func (p *Page) ByteAt(i, off int) byte {
 // page of one entry, its whole remainder.
 func (p *Page) Shared() int {
 	n := p.Len()
-	if n == 1 {
+	if p.Keys() == 1 {
 		r, _ := p.lens()
 		return int(p.cp) + int(r[0])
 	}
@@ -249,7 +297,7 @@ func (p *Page) Prepend(pre []byte) *Page {
 	n := p.load(es[:])
 	for i := range es[:n] {
 		// the page's own prefix and remainder follow pre
-		es[i] = ent{k0: pre, k1: es[i].k0, k2: es[i].k1, v: es[i].v}
+		es[i] = ent{k0: pre, k1: es[i].k0, k2: es[i].k1, v: es[i].v, cont: es[i].cont}
 	}
 	return buildEnts(es[:n])
 }
@@ -260,7 +308,7 @@ func Fits(s, val []byte) bool { return len(s) > 0 && !tooBig(s, val) }
 
 // FitsLen is Fits for lengths.
 func FitsLen(slen, vlen int) bool {
-	return slen > 0 && slen <= maxField && vlen <= maxField && slen+vlen <= sizes[len(sizes)-1]-8
+	return slen > 0 && slen <= maxRem && vlen <= maxField && slen+vlen <= sizes[len(sizes)-1]-8
 }
 
 // MaxEntries returns the most entries any page can hold: the capacity of the

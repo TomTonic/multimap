@@ -19,6 +19,10 @@ type Tree struct {
 	small bool
 	at    spot // where upsert found a key that was in a page
 	mk    func(key []byte, base int, val string) *leafHead
+	// mkAll is mk for a key with several values; pairs says that keys with several
+	// values stay in their pages (see Map.Pairs).
+	mkAll func(key []byte, base int, vals []string) *leafHead
+	pairs bool
 	cow   bool // pages are never changed in place (see Map.ZeroCopy)
 }
 

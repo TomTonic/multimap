@@ -44,16 +44,21 @@ func newPageFor(key []byte, depth int, v string) *lpage.Page {
 }
 
 // pageItems returns the keys of page p, which stands at depth, as items, in
-// order; pre holds the key bytes before depth.
+// order, a key with several values as one item; pre holds the key bytes before
+// depth.
 func pageItems(p *lpage.Page, pre []byte, depth int) []item {
 	n := p.Len()
-	out := make([]item, n)
+	out := make([]item, 0, n)
 	arena := make([]byte, 0, n*(depth+16))
-	for i := range out {
+	for i := 0; i < n; i++ {
+		if p.IsCont(i) {
+			it := &out[len(out)-1]
+			it.more = append(it.more, string(p.ValueAt(i)))
+			continue
+		}
 		start := len(arena)
 		arena = p.AppendKey(append(arena, pre[:depth]...), i)
-		out[i].key = arena[start:len(arena):len(arena)]
-		out[i].val = string(p.ValueAt(i))
+		out = append(out, item{key: arena[start:len(arena):len(arena)], val: string(p.ValueAt(i))})
 	}
 	return out
 }
@@ -62,15 +67,25 @@ func pageItems(p *lpage.Page, pre []byte, depth int) []item {
 // depth bytes, or nil if they do not fit one: there are too many, one of them has
 // a leaf, or its entry is too big or ends at depth.
 func pageFor(items []item, depth int) *lpage.Page {
-	if len(items) > lpage.MaxEntries() {
+	pairs := 0
+	for _, it := range items {
+		pairs += 1 + len(it.more)
+	}
+	if pairs > lpage.MaxEntries() {
 		return nil
 	}
-	keys, vals := make([][]byte, len(items)), make([][]byte, len(items))
-	for i, it := range items {
+	keys, vals := make([][]byte, 0, pairs), make([][]byte, 0, pairs)
+	for _, it := range items {
 		if it.leaf != nil || !lpage.FitsLen(len(it.key)-depth, len(it.val)) {
 			return nil
 		}
-		keys[i], vals[i] = it.key[depth:], bytesOf(it.val)
+		keys, vals = append(keys, it.key[depth:]), append(vals, bytesOf(it.val))
+		for _, v := range it.more {
+			if len(v) > 255 {
+				return nil
+			}
+			keys, vals = append(keys, it.key[depth:]), append(vals, bytesOf(v))
+		}
 	}
 	p, err := lpage.Build(keys, vals)
 	if err != nil {

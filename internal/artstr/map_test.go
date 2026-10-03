@@ -182,11 +182,11 @@ func rangeCheck(t *testing.T, m *Map[string], want model, keys []string, b *Boun
 // page. After every few operations the tree must hold exactly the keys and
 // values of the model, find them all and list them in order within any bounds.
 func TestMapAgainstModel(t *testing.T) {
-	for _, zc := range []bool{false, true} {
+	for _, mode := range []struct{ zeroCopy, pairs bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 		for kn, kf := range keyShapes {
 			for vn, vf := range valueShapes {
-				t.Run(fmt.Sprintf("zerocopy %v/%s/%s", zc, kn, vn), func(t *testing.T) {
-					testModel(t, zc, kf, vf, uint64(len(kn))+seedBase, uint64(len(vn))+7)
+				t.Run(fmt.Sprintf("zerocopy %v pairs %v/%s/%s", mode.zeroCopy, mode.pairs, kn, vn), func(t *testing.T) {
+					testModel(t, mode.zeroCopy, mode.pairs, kf, vf, uint64(len(kn))+seedBase, uint64(len(vn))+7)
 				})
 			}
 		}
@@ -194,28 +194,35 @@ func TestMapAgainstModel(t *testing.T) {
 }
 
 // testModel runs one workload of TestMapAgainstModel.
-func testModel(t *testing.T, zeroCopy bool, kf, vf func(*rand.Rand) string, seed1, seed2 uint64) {
+func testModel(t *testing.T, zeroCopy, pairs bool, kf, vf func(*rand.Rand) string, seed1, seed2 uint64) {
 	r := rand.New(rand.NewPCG(seed1, seed2))
-	m := Map[string]{ZeroCopy: zeroCopy}
+	m := Map[string]{ZeroCopy: zeroCopy, Pairs: pairs}
 	want := model{}
 	var held []string // strings a user holds on to while the map changes
 	var heldBytes []string
 	var added [][2]string
+	var log []string // the last operations, for a failure
 	for step := 1; step <= mapSteps; step++ {
 		switch op := r.IntN(10); {
 		case op < 6:
 			k, v := kf(r), vf(r)
+			log = append(log, fmt.Sprintf("Add(%q, %q)", k, v))
 			m.Add([]byte(k), v)
 			want.add(k, v)
 			added = append(added, [2]string{k, v})
 		case op < 9 && len(added) > 0:
 			kv := added[r.IntN(len(added))]
+			log = append(log, fmt.Sprintf("Remove(%q, %q)", kv[0], kv[1]))
 			m.Remove([]byte(kv[0]), kv[1])
 			want.remove(kv[0], kv[1])
 		case len(added) > 0:
 			kv := added[r.IntN(len(added))]
+			log = append(log, fmt.Sprintf("RemoveKey(%q)", kv[0]))
 			m.RemoveKey([]byte(kv[0]))
 			delete(want, kv[0])
+		}
+		if m.Len() != len(want) {
+			t.Fatalf("step %d: Len = %d, want %d after %q", step, m.Len(), len(want), log[max(0, len(log)-5):])
 		}
 		if step%250 == 0 {
 			verify(t, &m, want, r, step)

@@ -138,8 +138,8 @@ func (f *fixture) structure(impl string) workload.Structure[any] {
 				}
 			}
 		}
-	case orderedLP, orderedLPZ:
-		s.New = func() any { return newLP(impl == orderedLPZ) }
+	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
+		s.New = func() any { return newLP(lpOptions(impl)) }
 		s.Apply = func(a any, run []workload.Op) {
 			m := a.(*lpMap)
 			for _, op := range run {

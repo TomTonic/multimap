@@ -29,6 +29,11 @@ const (
 	// orderedLPZ is orderedLP with immutable pages and strings that are views of
 	// the page, not copies (artstr.Map.ZeroCopy).
 	orderedLPZ = "ordered-lpage-zc"
+	// orderedLPM is orderedLP with keys of several values kept in their pages
+	// (artstr.Map.Pairs).
+	orderedLPM = "ordered-lpage-mv"
+	// orderedLPMZ has both.
+	orderedLPMZ = "ordered-lpage-mvzc"
 )
 
 // The value profiles: multi gives keys a skewed number of values (see
@@ -53,7 +58,7 @@ func implsFor(profile string) []string {
 	if baseKit != nil {
 		others = append(others, baseline)
 	}
-	for _, lp := range []string{orderedLP, orderedLPZ} {
+	for _, lp := range lpImpls {
 		if hasPages && slices.Contains(vsOnly, lp) {
 			others = append(others, lp)
 		}
@@ -84,9 +89,9 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
-	lp, lpz *lpMap
-	base    any      // the baseline, see kit.go
-	others  []string // the candidates built besides ordered
+	lps     map[string]*lpMap // the candidates with pages, by name
+	base    any               // the baseline, see kit.go
+	others  []string          // the candidates built besides ordered
 	// ranges of rangeKeys consecutive keys, as []byte and string views, and
 	// the ranges of the keys that start with the prefix of a random key (see
 	// keys.Prefix; text keys only)
@@ -107,18 +112,20 @@ const rangeKeys = 100
 // arrange leaves them in. Whichever is built last can be consistently a few
 // percent faster, so the speed processes vary the order (see buildOrder).
 func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream, arrange func([]string)) *fixture {
-	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile}
+	f := &fixture{c: keys.Generate(kind, n, 0x5EED), profile: profile, lps: map[string]*lpMap{}}
 	nums, offs := profileValues(f.c, profile, n)
 	f.vals, f.offs = toVs(nums, f.c.Names), offs
 	builds := map[string]func(){
-		ordered:    func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
-		hashed:     func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
-		btreeSets:  func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
-		mapSets:    func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
-		btreeMapC:  func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
-		orderedLP:  func() { f.lp = buildLP(f.c.Keys.B, f.vals, f.offs, false) },
-		orderedLPZ: func() { f.lpz = buildLP(f.c.Keys.B, f.vals, f.offs, true) },
-		baseline:   func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
+		ordered:     func() { f.ord = buildOrdered(f.c.Keys.B, f.vals, f.offs) },
+		hashed:      func() { f.hsh = buildHashed(f.c.Keys.B, f.vals, f.offs) },
+		btreeSets:   func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
+		mapSets:     func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
+		btreeMapC:   func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
+		orderedLP:   func() { f.lps[orderedLP] = buildLP(f.c.Keys.B, f.vals, f.offs, orderedLP) },
+		orderedLPZ:  func() { f.lps[orderedLPZ] = buildLP(f.c.Keys.B, f.vals, f.offs, orderedLPZ) },
+		orderedLPM:  func() { f.lps[orderedLPM] = buildLP(f.c.Keys.B, f.vals, f.offs, orderedLPM) },
+		orderedLPMZ: func() { f.lps[orderedLPMZ] = buildLP(f.c.Keys.B, f.vals, f.offs, orderedLPMZ) },
+		baseline:    func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
 	}
 	f.others = slices.DeleteFunc(slices.Clone(impls), func(s string) bool { return s == ordered })
 	order := append([]string(nil), impls...)
@@ -300,10 +307,5 @@ func mapRemove(m mapMM, k string, v V) {
 	}
 }
 
-// lpOf returns the built candidate impl, orderedLP or orderedLPZ.
-func (f *fixture) lpOf(impl string) *lpMap {
-	if impl == orderedLPZ {
-		return f.lpz
-	}
-	return f.lp
-}
+// lpOf returns the built candidate impl, one of lpImpls.
+func (f *fixture) lpOf(impl string) *lpMap { return f.lps[impl] }

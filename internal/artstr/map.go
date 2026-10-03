@@ -1,8 +1,11 @@
 package artstr
 
 import (
+	"bytes"
+	"slices"
 	"unsafe"
 
+	"github.com/TomTonic/multimap/internal/lpage"
 	"github.com/TomTonic/multimap/internal/vset"
 )
 
@@ -17,8 +20,12 @@ type Map[T comparable] struct {
 	// no copy: a lookup costs no allocation. Every change then builds a new
 	// page, and a string a caller keeps holds its page, up to 512 bytes, alive.
 	ZeroCopy bool
-	t        Tree
-	flat     int8 // 1: T takes flat leaves, 2: typed leaves, -1: set leaves only, 0: not decided yet
+	// Pairs, set before the first write, keeps a key with several values in its
+	// page: the page stores the key once and a value after it. Without it a key
+	// leaves its page for a leaf when it gets a second value.
+	Pairs bool
+	t     Tree
+	flat  int8 // 1: T takes flat leaves, 2: typed leaves, -1: set leaves only, 0: not decided yet
 }
 
 // newSetLeaf allocates a set leaf that holds key from base on, in the
@@ -160,8 +167,8 @@ func (m *Map[T]) decide() {
 	case typedType[T]():
 		m.flat = 2
 		if stringType[T]() {
-			m.t.small, m.t.cow = true, m.ZeroCopy
-			m.t.mk = leafWith[T]
+			m.t.small, m.t.cow, m.t.pairs = true, m.ZeroCopy, m.Pairs
+			m.t.mk, m.t.mkAll = leafWith[T], leafWithAll[T]
 		}
 	default:
 		m.flat = -1
@@ -190,6 +197,20 @@ func leafWith[T comparable](key []byte, base int, val string) *leafHead {
 		vals[T](l).Add(v)
 	} else {
 		appendTyped(l, v)
+	}
+	return l
+}
+
+// leafWithAll is leafWith for a key with several values. It is the Tree's mkAll.
+func leafWithAll[T comparable](key []byte, base int, svals []string) *leafHead {
+	l := newTypedLeaf[T](key, base)
+	for _, s := range svals {
+		v := fromString[T](s)
+		if l.kind == kSet {
+			vals[T](l).Add(v)
+		} else if nl := typedAdd(l, v); nl != nil {
+			l = nl
+		}
 	}
 	return l
 }
@@ -232,9 +253,14 @@ func (m *Map[T]) Add(key []byte, v T) {
 	case m.t.size != size:
 		// A page took the key and its value.
 	default:
-		// The key has one value in a page; a second one gives it a leaf.
+		// The key has one value in a page; a second one gives it a leaf, or in
+		// pairs mode stays in its page.
 		sp := m.t.at
 		p := asPage(n)
+		if m.t.pairs {
+			m.addToPage(sp, key, sv)
+			return
+		}
 		if p.ValueIs(sp.i, sv) {
 			return
 		}
@@ -243,6 +269,38 @@ func (m *Map[T]) Add(key []byte, v T) {
 		m.addToLeaf(&slot, l, v)
 		m.t.promote(sp, asLeaf(slot), key)
 	}
+}
+
+// addToPage adds the value v to the key at sp, which is in a page and may have
+// values already (pairs mode). A full page splits where its keys differ, and when
+// it cannot, or the value fits no page, the page's keys are laid out anew with the
+// key's values in a leaf if no page holds them.
+func (m *Map[T]) addToPage(sp spot, key []byte, v string) {
+	p := asPage(*sp.loc)
+	if lpage.FitsLen(len(key)-sp.depth, len(v)) {
+		q, res := p.AddValueAt(sp.i, bytesOf(v), m.t.cow)
+		switch res {
+		case lpage.Present:
+			return
+		case lpage.Added:
+			*sp.loc = pageHdr(q)
+			return
+		}
+		if sp.par != nil && splitFull(sp.loc, sp.par, sp.pi, sp.depth) {
+			m.Add(key, fromString[T](v)) // the key's page is smaller now
+			return
+		}
+	}
+	items := pageItems(p, key, sp.depth)
+	for k := range items {
+		if it := &items[k]; bytes.Equal(it.key, key) {
+			if it.val == v || slices.Contains(it.more, v) {
+				return
+			}
+			it.more = append(it.more, v)
+		}
+	}
+	m.t.replace(sp.loc, sp.par, sp.pi, items, sp.depth)
 }
 
 // addToLeaf adds v to the values of leaf l, which sits in slot loc.
@@ -344,7 +402,8 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 	switch {
 	case n == nil:
 	case isPage(n.kind):
-		yield(fromString[T](asPage(n).StringAt(i, m.ZeroCopy)))
+		p := asPage(n)
+		p.EachString(i, p.RunEnd(i), m.ZeroCopy, func(s string) bool { return yield(fromString[T](s)) })
 	default:
 		eachValue(asLeaf(n), yield)
 	}
@@ -391,7 +450,7 @@ func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 		}
 		p := asPage(n)
 		for k := i; k < j; k++ {
-			if !fn(kb.pageKey(p, k)) {
+			if !p.IsCont(k) && !fn(kb.pageKey(p, k)) {
 				return false
 			}
 		}

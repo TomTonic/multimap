@@ -38,7 +38,11 @@ import (
 	"unsafe"
 )
 
-const maxField = 255 // the longest suffix and the longest value
+const (
+	maxField = 255 // the longest value and the longest common prefix
+	maxRem   = 254 // the longest remainder: 255 in the lengths means "same key"
+	cont     = 255 // in the remainder lengths: an entry of the key of the entry before
+)
 
 // sizes are the object sizes of the classes.
 var sizes = [...]int{128, 256, 512}
@@ -75,9 +79,11 @@ const (
 	Inserted Result = iota
 	Updated
 	Full // the page is of the largest class or has the most entries: split it
-	// Present is the result of TryInsert for a suffix that is already there:
-	// nothing changed.
+	// Present is the result of TryInsert for a suffix that is already there, and
+	// of AddValueAt for a value that is already there: nothing changed.
 	Present
+	// Added is the result of AddValueAt that adds a value to a key.
+	Added
 )
 
 // KindBase is added to the code byte of every page, so that a tree whose objects
@@ -210,11 +216,24 @@ func (p *Page) vlen(v []byte, i int) int {
 // span returns the offsets where the remainders end and the used bytes end.
 func (p *Page) span() (kend, used int) {
 	r, v := p.lens()
-	kend = p.hdr() + int(p.cp) + sumBytes(r) // the lengths behind the last entry are 0
+	kend = p.hdr() + int(p.cp) + remSum(r)
 	if v == nil {
 		return kend, kend + p.Len()*p.width()
 	}
 	return kend, kend + sumBytes(v)
+}
+
+// remSum returns the bytes the remainders of the entries with lengths r take: the
+// lengths without the marks of entries that repeat the key before them, and
+// without the 0 behind the last entry.
+func remSum(r []byte) int {
+	s := 0
+	for _, x := range r {
+		if x != cont {
+			s += int(x)
+		}
+	}
+	return s
 }
 
 // voffset returns the offset of the value of entry i, given where the remainders
@@ -235,7 +254,7 @@ func (p *Page) Used() int {
 // tooBig reports whether suffix s and value val do not fit a page of the
 // largest class together, with the smallest header.
 func tooBig(s, val []byte) bool {
-	return len(s) > maxField || len(val) > maxField || len(s)+len(val) > sizes[len(sizes)-1]-8
+	return len(s) > maxRem || len(val) > maxField || len(s)+len(val) > sizes[len(sizes)-1]-8
 }
 
 func lcp(a, b []byte) int {
@@ -259,7 +278,7 @@ func Build(keys, vals [][]byte) (*Page, error) {
 		if len(k) == 0 {
 			return nil, ErrEmpty
 		}
-		es[i] = ent{k1: k, v: vals[i]}
+		es[i] = ent{k1: k, v: vals[i], cont: i > 0 && bytes.Equal(k, keys[i-1])}
 	}
 	if p := buildEnts(es[:len(keys)]); p != nil {
 		return p, nil
@@ -283,12 +302,11 @@ func (p *Page) Get(s []byte) ([]byte, bool) {
 		if x == 0 {
 			break
 		}
+		if x == cont {
+			continue
+		}
 		if int(x) == len(rem) && m[off] == first && bytes.Equal(m[off:off+int(x)], rem) {
-			kend := h + cp
-			for _, y := range r[:p.Len()] {
-				kend += int(y)
-			}
-			voff := p.voffset(v, kend, i)
+			voff := p.voffset(v, h+cp+remSum(r), i)
 			return m[voff : voff+p.vlen(v, i)], true
 		}
 		off += int(x)
@@ -309,6 +327,9 @@ func (p *Page) locate(s []byte) (i, off int, found bool) {
 		x := int(r[i])
 		if x == 0 {
 			break
+		}
+		if x == cont {
+			continue
 		}
 		if b := m[off]; b != rem[0] { // most entries differ at the first byte
 			if b > rem[0] {
@@ -336,14 +357,18 @@ func (p *Page) Entries() (keys, vals [][]byte) {
 	n := p.Len()
 	kend, _ := p.span()
 	off, voff := h+cp, kend
+	var k []byte
 	for i := range n {
 		x := int(r[i])
-		k := make([]byte, 0, cp+x)
-		k = append(append(k, m[h:h+cp]...), m[off:off+x]...)
+		if x != cont {
+			k = make([]byte, 0, cp+x)
+			k = append(append(k, m[h:h+cp]...), m[off:off+x]...)
+			off += x
+		}
 		keys = append(keys, k)
 		vl := p.vlen(v, i)
 		vals = append(vals, bytes.Clone(m[voff:voff+vl]))
-		off, voff = off+x, voff+vl
+		voff += vl
 	}
 	return keys, vals
 }
@@ -428,22 +453,33 @@ func (p *Page) insert(s, val []byte, replace, cow bool) (*Page, Result, int, err
 // longer and the page bigger; it is Full if the entry fits no page. It is Insert's
 // way to grow a page without laying all its entries out anew.
 func (p *Page) insertCopy(i, koff, voff, used int, s, val []byte) (*Page, Result, error) {
+	q, res := p.growBy(i, koff, voff, used, s, val, false)
+	return q, res, nil
+}
+
+// growBy is insertCopy for an entry whose remainder is s, or, with isCont, for a
+// further value of the key of entry i-1 (s is then nil, and koff the end of the
+// remainders).
+func (p *Page) growBy(i, koff, voff, used int, s, val []byte, isCont bool) (*Page, Result) {
 	m := p.mem()
 	h, cp := p.hdr(), int(p.cp)
 	r, v := p.lens()
 	n := p.Len()
 	h2 := headerFor(n+1, p.width())
 	if h2 == 0 {
-		return p, Full, nil
+		return p, Full
 	}
-	x := len(s) - cp
+	x := 0
+	if !isCont {
+		x = len(s) - cp
+	}
 	need := used - h + h2 + x + len(val)
 	c := 0
 	for c < len(sizes) && need > sizes[c] {
 		c++
 	}
 	if c == len(sizes) {
-		return p, Full, nil
+		return p, Full
 	}
 	q := alloc(c)
 	q.code = uint8(c) | uint8(h2/8-1)<<2 | (p.code-KindBase)&0x70 + KindBase
@@ -452,6 +488,9 @@ func (p *Page) insertCopy(i, koff, voff, used int, s, val []byte) (*Page, Result
 	r2, v2 := q.lens()
 	copy(r2, r[:i])
 	r2[i] = byte(x)
+	if isCont {
+		r2[i] = cont
+	}
 	copy(r2[i+1:], r[i:n])
 	if v != nil {
 		copy(v2, v[:i])
@@ -460,11 +499,64 @@ func (p *Page) insertCopy(i, koff, voff, used int, s, val []byte) (*Page, Result
 	}
 	off := h2
 	off += copy(m2[off:], m[h:koff])
-	off += copy(m2[off:], s[cp:])
+	if !isCont {
+		off += copy(m2[off:], s[cp:])
+	}
 	off += copy(m2[off:], m[koff:voff])
 	off += copy(m2[off:], val)
 	copy(m2[off:], m[voff:used])
-	return q, Inserted, nil
+	return q, Inserted
+}
+
+// AddValueAt adds val as a further value to the key whose first entry is at
+// position i, after its other values, unless it has val already (Present). A page
+// stores the key of such a multi-value entry once. The result is Added, or Full
+// if the page has no room (it is then unchanged), and with cow the page is not
+// changed in place. A value of more than 255 bytes is Full too.
+func (p *Page) AddValueAt(i int, val []byte, cow bool) (*Page, Result) {
+	if len(val) > maxField {
+		return p, Full
+	}
+	e := p.RunEnd(i)
+	for j := i; j < e; j++ {
+		if bytes.Equal(p.ValueAt(j), val) {
+			return p, Present
+		}
+	}
+	m := p.mem()
+	r, v := p.lens()
+	n := p.Len()
+	kend, used := p.span()
+	voff := p.voffset(v, kend, e)
+	w := p.width()
+	if w != 0 && len(val) != w { // another length: the form of the page changes
+		var es [maxEnts]ent
+		if n == maxEnts-1 || p.load(es[:]) != n {
+			return p, Full
+		}
+		copy(es[e+1:n+1], es[e:n])
+		es[e] = ent{k0: es[e-1].k0, k1: es[e-1].k1, v: val, cont: true}
+		if q := buildEnts(es[:n+1]); q != nil {
+			return q, Added
+		}
+		return p, Full
+	}
+	if !cow && n < len(r) && used+len(val) <= len(m) {
+		copy(m[voff+len(val):], m[voff:used])
+		copy(m[voff:], val)
+		copy(r[e+1:], r[e:n])
+		r[e] = cont
+		if v != nil {
+			copy(v[e+1:], v[e:n])
+			v[e] = byte(len(val))
+		}
+		return p, Added
+	}
+	q, res := p.growBy(e, kend, voff, used, nil, val, true)
+	if res == Inserted {
+		res = Added
+	}
+	return q, res
 }
 
 // insertSlow lays the entries out anew with s among them: the prefix may get
@@ -514,7 +606,8 @@ func (p *Page) deleteAt(i int, cow bool) (*Page, bool) {
 	return p.deleteEntry(i, koff, cow)
 }
 
-// deleteEntry removes entry i, whose remainder starts at offset koff.
+// deleteEntry removes entry i, whose remainder starts at offset koff. The first
+// entry of a multi-value entry hands its remainder to the next one.
 func (p *Page) deleteEntry(i, koff int, cow bool) (*Page, bool) {
 	n := p.Len()
 	if n == 1 {
@@ -523,14 +616,21 @@ func (p *Page) deleteEntry(i, koff int, cow bool) (*Page, bool) {
 	r, v := p.lens()
 	kend, used := p.span()
 	voff := p.voffset(v, kend, i)
-	x, vl := int(r[i]), p.vlen(v, i)
+	drop, vl := int(r[i]), p.vlen(v, i) // the bytes of the remainder to remove
+	handOver := drop != cont && i+1 < n && r[i+1] == cont
+	if drop == cont || handOver {
+		drop = 0
+	}
 	if cow {
-		p = p.without(i, koff, voff, used)
+		p = p.without(i, koff, voff, used, drop, handOver)
 	} else {
 		m := p.mem()
+		if handOver {
+			r[i+1] = r[i]
+		}
 		copy(m[voff:], m[voff+vl:used])
-		copy(m[koff:], m[koff+x:used-vl])
-		clear(m[used-x-vl : used])
+		copy(m[koff:], m[koff+drop:used-vl])
+		clear(m[used-drop-vl : used])
 		copy(r[i:], r[i+1:n])
 		r[n-1] = 0
 		if v != nil {
@@ -548,27 +648,30 @@ func (p *Page) deleteEntry(i, koff int, cow bool) (*Page, bool) {
 }
 
 // without returns a page of the class and header of p that holds its entries but
-// entry i, whose remainder starts at koff and whose value at voff of the used
-// bytes of p.
-func (p *Page) without(i, koff, voff, used int) *Page {
+// entry i, whose remainder of drop bytes starts at koff and whose value at voff
+// of the used bytes of p. With handOver the next entry takes over the remainder.
+func (p *Page) without(i, koff, voff, used, drop int, handOver bool) *Page {
 	m := p.mem()
 	h := p.hdr()
 	r, v := p.lens()
 	n := p.Len()
-	x, vl := int(r[i]), p.vlen(v, i)
+	vl := p.vlen(v, i)
 	q := alloc(p.class())
 	q.code, q.cp = p.code, p.cp
 	m2 := q.mem()
 	r2, v2 := q.lens()
 	copy(r2, r[:i])
 	copy(r2[i:], r[i+1:n])
+	if handOver {
+		r2[i] = r[i]
+	}
 	if v != nil {
 		copy(v2, v[:i])
 		copy(v2[i:], v[i+1:n])
 	}
 	off := h
 	off += copy(m2[off:], m[h:koff])
-	off += copy(m2[off:], m[koff+x:voff])
+	off += copy(m2[off:], m[koff+drop:voff])
 	copy(m2[off:], m[voff+vl:used])
 	return q
 }

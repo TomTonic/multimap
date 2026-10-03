@@ -371,6 +371,9 @@ func (s *stat) entryRow(name string, n int) string {
 // buildPages is build for the experimental tree of internal/artstr, with the
 // string values of the strvals bench.
 func buildPages(kind keys.Kind, n int, unique bool) *stat {
+	if r, err := strconv.Atoi(os.Getenv("ARTSTR_CROWDED")); err == nil && r >= 0 {
+		artstr.CrowdedRatio = r
+	}
 	c := keys.Generate(kind, n, 0x5EED)
 	vals, offs := keys.Values(n, 0xFA11)
 	if c.Natural != nil {
@@ -380,7 +383,7 @@ func buildPages(kind keys.Kind, n int, unique bool) *stat {
 			offs[i+1] = len(vals)
 		}
 	}
-	var m artstr.Map[string]
+	m := artstr.Map[string]{Pairs: os.Getenv("ARTSTR_PAIRS") != ""}
 	for i, key := range c.Keys.B {
 		vs := vals[offs[i]:offs[i+1]]
 		if unique {

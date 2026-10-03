@@ -12,6 +12,7 @@ import (
 type item struct {
 	key  []byte    // the whole key
 	val  string    // the key's value, if it has no leaf
+	more []string  // its further values, if it has several and no leaf (pairs mode)
 	leaf *leafHead // holds key from a base of some depth on, or nil
 }
 
@@ -23,6 +24,9 @@ type item struct {
 // key shares with another one, so the leaf stood no deeper before.
 func (t *Tree) leafOf(it item, depth int) *leafHead {
 	if it.leaf == nil {
+		if len(it.more) > 0 {
+			return t.mkAll(it.key, depth, append([]string{it.val}, it.more...))
+		}
 		return t.mk(it.key, depth, it.val)
 	}
 	return it.leaf

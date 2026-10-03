@@ -113,13 +113,28 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *string, cow bo
 func delFromPage(loc **header, key []byte, depth int, want *string, cow bool) int8 {
 	p := asPage(*loc)
 	i, ok := p.Find(key[depth:])
-	switch {
-	case !ok:
+	if !ok {
 		return absent
-	case want != nil && !p.ValueIs(i, *want):
-		return keptEntry
 	}
-	*loc = pageHdr(p.DeleteAt(i, cow))
+	e := p.RunEnd(i)
+	if want != nil {
+		j := i
+		for j < e && !p.ValueIs(j, *want) {
+			j++
+		}
+		if j == e {
+			return keptEntry
+		}
+		*loc = pageHdr(p.DeleteAt(j, cow))
+		if e-i > 1 {
+			return keptEntry // the key has other values
+		}
+		return deleted
+	}
+	for k := e - 1; k >= i && p != nil; k-- { // the key and all its values
+		p = p.DeleteAt(k, cow)
+	}
+	*loc = pageHdr(p)
 	return deleted
 }
 

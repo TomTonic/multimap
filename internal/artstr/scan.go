@@ -166,7 +166,7 @@ func scanPage(p *lpage.Page, b *Bounds, depth int, lo, hi bool, kb *keyBuf, fn f
 func seek(p *lpage.Page, bound []byte, orEqual bool) int {
 	i, found := p.Seek(bound)
 	if found && orEqual {
-		i++
+		i = p.RunEnd(i)
 	}
 	return i
 }

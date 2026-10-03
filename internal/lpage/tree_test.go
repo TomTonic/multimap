@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"slices"
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -375,4 +376,156 @@ func TestImmutablePages(t *testing.T) {
 
 func has2(keys [][]byte, k []byte) bool {
 	return slices.ContainsFunc(keys, func(x []byte) bool { return bytes.Equal(x, k) })
+}
+
+// pairModel is the entries of a page as the page must hold them: keys in order,
+// each with its values in the order they were added.
+type pairModel struct {
+	keys []string
+	vals map[string][]string
+}
+
+func (m *pairModel) entries() (keys, vals [][]byte) {
+	for _, k := range m.keys {
+		for _, v := range m.vals[k] {
+			keys, vals = append(keys, []byte(k)), append(vals, []byte(v))
+		}
+	}
+	return keys, vals
+}
+
+// TestMultiValueEntries checks pages that hold keys with several values.
+//
+// A tree for strings keeps every key in a page, also one that has several values;
+// the page stores its key once and a value for each. Adding values to a key,
+// removing them one by one (also the first one, which carries the key's bytes)
+// and reading the entries back must agree with a plain model, in place and
+// with immutable pages, for values of any length and of one width.
+func TestMultiValueEntries(t *testing.T) {
+	for _, cow := range []bool{false, true} {
+		for _, vgen := range []string{"short", "width"} {
+			t.Run(fmt.Sprintf("cow %v/%s", cow, vgen), func(t *testing.T) {
+				r := rand.New(rand.NewPCG(7, 8))
+				for round := range 200 {
+					m := &pairModel{vals: map[string][]string{}}
+					var p *Page
+					for step := 0; step < 60; step++ {
+						k := fmt.Sprintf("key%02d", r.IntN(9))
+						v := strings.Repeat("v", r.IntN(4)) + fmt.Sprint(r.IntN(6))
+						if vgen == "width" {
+							v = fmt.Sprintf("%04d", r.IntN(6))
+							if r.IntN(12) == 0 {
+								v = "x" // another length in a page of one width
+							}
+						}
+						if r.IntN(4) == 0 && p != nil {
+							// remove a random value of a random key
+							var pairs [][2]string
+							for key, vs := range m.vals {
+								for _, x := range vs {
+									pairs = append(pairs, [2]string{key, x})
+								}
+							}
+							if len(pairs) == 0 {
+								continue
+							}
+							slices.SortFunc(pairs, func(a, b [2]string) int { return strings.Compare(a[0]+a[1], b[0]+b[1]) })
+							pr := pairs[r.IntN(len(pairs))]
+							keys, vals := p.Entries()
+							at := -1
+							for i := range keys {
+								if string(keys[i]) == pr[0] && string(vals[i]) == pr[1] {
+									at = i
+								}
+							}
+							if at < 0 {
+								t.Fatalf("round %d: pair %v is not in the page", round, pr)
+							}
+							p = p.DeleteAt(at, cow)
+							m.vals[pr[0]] = slices.DeleteFunc(m.vals[pr[0]], func(x string) bool { return x == pr[1] })
+							if len(m.vals[pr[0]]) == 0 {
+								delete(m.vals, pr[0])
+								m.keys = slices.DeleteFunc(m.keys, func(x string) bool { return x == pr[0] })
+							}
+						} else if p == nil {
+							var err error
+							if p, err = Build([][]byte{[]byte(k)}, [][]byte{[]byte(v)}); err != nil {
+								t.Fatal(err)
+							}
+							m.keys, m.vals[k] = []string{k}, []string{v}
+						} else if i, ok := p.Find([]byte(k)); ok {
+							q, res := p.AddValueAt(i, []byte(v), cow)
+							switch res {
+							case Present:
+								if !slices.Contains(m.vals[k], v) {
+									t.Fatalf("Present for the new value %q of %q", v, k)
+								}
+							case Added:
+								p = q
+								m.vals[k] = append(m.vals[k], v)
+							case Full:
+							default:
+								t.Fatalf("AddValueAt result %v", res)
+							}
+						} else {
+							q, res, _, err := p.TryInsert([]byte(k), []byte(v), cow)
+							if err != nil {
+								t.Fatal(err)
+							}
+							if res == Inserted {
+								p = q
+								m.keys = append(m.keys, k)
+								slices.Sort(m.keys)
+								m.vals[k] = []string{v}
+							}
+						}
+						if p == nil {
+							m = &pairModel{vals: map[string][]string{}}
+							continue
+						}
+						checkPairs(t, p, m)
+					}
+				}
+			})
+		}
+	}
+}
+
+func checkPairs(t *testing.T, p *Page, m *pairModel) {
+	t.Helper()
+	wk, wv := m.entries()
+	gk, gv := p.Entries()
+	if !slices.EqualFunc(gk, wk, bytes.Equal) || !slices.EqualFunc(gv, wv, bytes.Equal) {
+		t.Fatalf("page holds %q=%q, model %q=%q", gk, gv, wk, wv)
+	}
+	if p.Keys() != len(m.keys) || p.Len() != len(wk) {
+		t.Fatalf("Keys %d, Len %d; want %d, %d", p.Keys(), p.Len(), len(m.keys), len(wk))
+	}
+	i := 0
+	for _, k := range m.keys {
+		if got, ok := p.Find([]byte(k)); !ok || got != i || p.IsCont(i) {
+			t.Fatalf("Find(%q) = %d, %v; want %d", k, got, ok, i)
+		}
+		if p.RunEnd(i) != i+len(m.vals[k]) {
+			t.Fatalf("RunEnd(%d) = %d, want %d", i, p.RunEnd(i), i+len(m.vals[k]))
+		}
+		for j, v := range m.vals[k] {
+			if string(p.ValueAt(i+j)) != v || string(p.AppendKey(nil, i+j)) != k || (j > 0) != p.IsCont(i+j) {
+				t.Fatalf("entry %d of %q is wrong", i+j, k)
+			}
+			if p.ByteAt(i+j, 2) != k[2] {
+				t.Fatalf("ByteAt(%d, 2) of %q", i+j, k)
+			}
+		}
+		if got, ok := p.Seek([]byte(k)); !ok || got != i {
+			t.Fatalf("Seek(%q) = %d, %v", k, got, ok)
+		}
+		i += len(m.vals[k])
+	}
+	if p.Shared() > len(m.keys[0]) {
+		t.Fatalf("Shared = %d", p.Shared())
+	}
+	if v, ok := p.Get([]byte(m.keys[0])); !ok || string(v) != m.vals[m.keys[0]][0] {
+		t.Fatalf("Get(first key) = %q, %v", v, ok)
+	}
 }

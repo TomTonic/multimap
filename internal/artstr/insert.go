@@ -190,8 +190,19 @@ func (t *Tree) burst(loc **header, p *lpage.Page, key []byte, depth int, v strin
 		// The first key is the shared bytes: it ends at the range node, so it is
 		// the node's term, and a leaf. The others are longer.
 		whole := append(key[:depth:depth], first...)
-		term = t.mk(whole, d, string(p.ValueAt(0)))
-		p = p.DeleteAt(0, t.cow) // the page was full: it has more keys
+		e := p.RunEnd(0)
+		svals := make([]string, e)
+		for k := range svals {
+			svals[k] = string(p.ValueAt(k))
+		}
+		if e == p.Len() { // one key with several values fills the page: its leaf takes the page's place
+			*loc = leafHdr(t.mkAll(whole, depth, svals))
+			return t.upsert(key, v, nl)
+		}
+		term = t.mkAll(whole, d, svals)
+		for range e {
+			p = p.DeleteAt(0, t.cow) // the page was full: it has more keys
+		}
 	}
 	*loc = makeR(key[depth:d], term, []rng{{0, pageHdr(p.Skip(d - depth))}})
 	return t.upsert(key, v, nl)

@@ -47,7 +47,7 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			}
 			sink += acc
 		}
-	case orderedLP, orderedLPZ:
+	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
 		m := f.lpOf(impl)
 		return func(n uint64) {
 			var acc uint64
@@ -145,7 +145,7 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 			}
 			sink += acc
 		}
-	case orderedLP, orderedLPZ:
+	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
 		m := f.lpOf(impl)
 		return func(n uint64) {
 			var acc uint64

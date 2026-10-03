@@ -21,20 +21,20 @@ func TestOrderedLPAgrees(t *testing.T) {
 	for _, kind := range []keys.Kind{keys.U64, keys.Str, keys.Path, keys.Street} {
 		for _, profile := range []string{multi, unique} {
 			t.Run(string(kind)+"/"+profile, func(t *testing.T) {
-				vsOnly = []string{orderedLP, orderedLPZ}
+				vsOnly = lpImpls
 				defer func() { vsOnly = nil }()
 				impls := implsFor(profile)
-				if len(impls) != 3 || impls[1] != orderedLP || impls[2] != orderedLPZ {
+				if len(impls) != 5 || impls[1] != orderedLP || impls[4] != orderedLPMZ {
 					t.Fatalf("candidates %v", impls)
 				}
 				f := newFixture(kind, 3000, profile, impls, st, func([]string) {})
 				if err := f.verify(); err != nil {
 					t.Fatal(err)
 				}
-				if err := f.verifyBuild(ordered, orderedLP, orderedLPZ); err != nil {
+				if err := f.verifyBuild(append([]string{ordered}, lpImpls...)...); err != nil {
 					t.Fatal(err)
 				}
-				for _, l := range []*lpMap{f.lp, f.lpz} {
+				for _, l := range f.lps {
 					if l.NumberOfKeys() != len(f.c.Keys.B) {
 						t.Fatalf("%d keys, want %d", l.NumberOfKeys(), len(f.c.Keys.B))
 					}
