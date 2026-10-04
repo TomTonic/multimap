@@ -25,3 +25,14 @@ the backlog).
   pages (32, 64, 128 and 256 bytes; key area 18, 50, 114 and 242; a longer remainder as a string): the bytes that the 64-byte `vset.Set` took are
   the key area and not padding. The effect on memory is below 1 B/key (1,090 and 1,380 leaves); the final numbers come with the next measurement.
 - The value of 255 bytes or more and the key of more than 242 bytes are in the tests, not in the benchmark.
+
+## Measurement of 3.4b: the set leaf on the grid and the nine-bit remainder length (`s34b-*`, same runs as above)
+
+Commit 71e386d against 1cf35ec (`s34-*`), PC, same flags. Raw: `bench/results-layout/step3-skmv/pc/s34b-*`.
+
+- **Memory:** unchanged: `street` real 114 B/key, `dirs` real 165 (prediction: the same, at most 1 B).
+- **Lookups and ranges (`valuesFor`, `valuesBetween`, `prefix`):** unchanged, the ratio to `node-layout` within 0.01 to 0.03 (one cell of `prefix` 86,215 on `dirs`: 0.54 to 0.58, one of
+  `valuesFor` 212,449 `street` single-value: 0.85 to 0.88; the ns/op of `ordered` the same). Prediction met.
+- **`build` and `churn`: 2 to 3 % slower, in all four profiles** (`build` at 4,096 keys 0.91 to 0.88 on `street` real, 0.90 to 0.87 single-value; `churn` at 4,096 and 16,384 keys 0.85 to 0.82 and
+  0.86 to 0.83; at the full size 0.91 to 0.90; ns/op of `ordered` +2 to +3 % on `build`). Not predicted ("not measurable"). **Cause not investigated**; the
+  hypothesis is the write paths (`cls()` and `setRem` do more operations than a byte read, and the writes call them per added value). It is the price of the nine bits and of the types in steps of two.
