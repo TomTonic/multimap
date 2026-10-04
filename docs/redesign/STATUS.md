@@ -1,5 +1,13 @@
 # Status
 
+## 2026-10-04 night: rename done, step 3.5 design note waiting for three decisions
+
+- **Rename** (622d634, names only): `singleKeyHead`, `isSingleKey`/`isMultiKey`, `kValueOverflow`, `objType`; `skleaf.go` is `singlekey.go`. Flat and typed leaves keep their names until 3.5 deletes them.
+- **`s34b` measured** ([step3-overflow-results.md](step3-overflow-results.md)): memory and lookups unchanged, `build`/`churn` 2 to 3 % slower (not investigated).
+- **3.5 design note** ([step3-fixed-design.md](step3-fixed-design.md)): one fixed-width layout for `uint64` and `*T`, `Set3[T]` for every `T`, flat/typed/`vset` leave `Ordered`. Waits for the user: (1) multi-key pages
+  on or off in 3.5 (recommended: on; off costs 8 % on the real mix and doubles one-value-per-key memory), (2) pointer pages only for one-word `T`, (3) alignment and equality of values.
+- Routing layer (step 6): whether it is part of 0.8 is decided at the end of step 5 (user).
+
 ## 2026-10-04 evening: step 3.4 measured, set leaf on the grid
 
 - **3.4 measured** ([step3-overflow-results.md](step3-overflow-results.md)): `Set3` in the set leaf. Memory as predicted (`street` natural 114 B/key, `dirs` 165),
