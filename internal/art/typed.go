@@ -106,7 +106,7 @@ func allocTyped[T comparable](c uint8, klen int) *leafHead {
 	default:
 		l = allocTypedK[T, [16]T](j)
 	}
-	l.kind = kSet + kind(c)
+	l.setClass(c)
 	return l
 }
 
@@ -148,14 +148,15 @@ func newTypedLeaf[T comparable](key []byte, base int) *leafHead {
 // remainder s of a key of kl bytes, and no values.
 func typedWithKey[T comparable](c uint8, s []byte, kl int) *leafHead {
 	l := allocTyped[T](c, len(s))
-	l.klen, l.kl = uint8(len(s)), uint16(kl)
+	l.setRem(len(s))
+	l.kl = uint16(kl)
 	copy(unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), len(s)), s)
 	return l
 }
 
 // typedVals returns the values of typed leaf l. The slice aliases the leaf.
 func typedVals[T comparable](l *leafHead) []T {
-	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), typedOff(int(l.klen)))), l.n)
+	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), typedOff(l.rem()))), l.n)
 }
 
 // typedAdd adds v to typed leaf l. It returns the leaf that replaces l when l
@@ -186,7 +187,7 @@ func typedAdd[T comparable](l *leafHead, v T) *leafHead {
 // appendTyped stores v after the values of typed leaf l, which has room.
 func appendTyped[T comparable](l *leafHead, v T) {
 	n := int(l.n)
-	unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), typedOff(int(l.klen)))), n+1)[n] = v
+	unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), typedOff(l.rem()))), n+1)[n] = v
 	l.n++
 }
 
@@ -217,7 +218,7 @@ func typedRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 // values.
 func resizeTyped[T comparable](l *leafHead, c uint8) *leafHead {
 	nl := typedWithKey[T](c, l.stored(), l.keyLen())
-	copy(unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(nl), typedOff(int(nl.klen)))), l.n), typedVals[T](l))
+	copy(unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(nl), typedOff(nl.rem()))), l.n), typedVals[T](l))
 	nl.n = l.n
 	return nl
 }
@@ -255,15 +256,15 @@ func unspillTyped[T comparable](l *leafHead, c uint8) *leafHead {
 // its longer key in place when the values stay where they are, and moves into
 // a typed leaf of the longer key, or a set leaf, otherwise.
 func rekeyTyped[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
-	if l.kind == kSet {
+	if l.isSet() {
 		return rekey[T](l, pre, b, pathLen)
 	}
-	old, klen := int(l.klen), l.keyLen()-pathLen
+	old, klen := l.rem(), l.keyLen()-pathLen
 	if klen <= maxTypedKey && typedOff(klen) == typedOff(old) {
 		area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
 		copy(area[klen-old:], area[:old])
 		fillHead(area[:klen-old], pre, b, pathLen)
-		l.klen = uint8(klen)
+		l.setRem(klen)
 		return l
 	}
 	key := wholeKey(l, pre, b)

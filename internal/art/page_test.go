@@ -244,7 +244,7 @@ func TestPagePromotion(t *testing.T) {
 func TestPageLayout(t *testing.T) {
 	for class := range 4 {
 		h := (*header)(unsafe.Pointer(vpage.New(class, 0)))
-		if k := asPage(h).Class(); k != class || h.kind != kPage+kind(class) || !isPage(h.kind) || isLeaf(h.kind) {
+		if k := asPage(h).Class(); k != class || h.kind != kPage+kind(class)<<1 || !isPage(h.kind) || isLeaf(h.kind) {
 			t.Errorf("page of class %d has class %d, kind %d", class, k, h.kind)
 		}
 	}

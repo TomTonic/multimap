@@ -66,7 +66,7 @@ func TestTypedLeafLife(t *testing.T) {
 		if n > 0 {
 			largest := typedCaps[len(typedCaps)-1]
 			l := findLeaf(&m.t, key)
-			switch typed := l.kind != kSet; {
+			switch typed := !l.isSet(); {
 			case n > largest && typed:
 				t.Fatalf("%d values in a typed leaf of class %d", n, l.cls())
 			case n <= largest/2 && !typed:
@@ -104,7 +104,7 @@ func TestTypedLeafForgets(t *testing.T) {
 	}
 	m.Remove(key, "value 1")
 	l := findLeaf(&m.t, key)
-	slots := unsafe.Slice((*string)(unsafe.Add(unsafe.Pointer(l), typedOff(int(l.klen)))), typedCaps[l.cls()])
+	slots := unsafe.Slice((*string)(unsafe.Add(unsafe.Pointer(l), typedOff(l.rem()))), typedCaps[l.cls()])
 	if l.n != 4 || slots[4] != "" {
 		t.Fatalf("leaf holds %d values and %q after the last one moved, want 4 and nothing", l.n, slots[4])
 	}
@@ -148,7 +148,7 @@ func TestTypedRekey(t *testing.T) {
 			}
 			nl := rekeyTyped[string](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
 			var got []string
-			if nl.kind == kSet {
+			if nl.isSet() {
 				vals[string](nl).Each(func(v string) bool { got = append(got, v); return true })
 			} else {
 				got = typedVals[string](nl)
@@ -165,7 +165,7 @@ func TestTypedRekey(t *testing.T) {
 			if nl.keyLen() != tc.keyLen || !bytes.Equal(nl.from(tc.to), k[tc.to:]) {
 				t.Errorf("leaf holds %q from %d of a key of %d bytes, want the key from %d on", nl.stored(), nl.base(), nl.keyLen(), tc.to)
 			}
-			switch kindOf := map[bool]string{true: "set", false: "typed"}[nl.kind == kSet]; {
+			switch kindOf := map[bool]string{true: "set", false: "typed"}[nl.isSet()]; {
 			case tc.want == "in place" && nl != l, tc.want == "typed" && (nl == l || kindOf != "typed"), tc.want == "set" && kindOf != "set", tc.want == "set leaf" && kindOf != "set":
 				t.Errorf("rekey gave a %s leaf, same leaf: %v, want %s", kindOf, nl == l, tc.want)
 			}

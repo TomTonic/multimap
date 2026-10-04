@@ -67,7 +67,7 @@ var MaxClass = 2
 var ErrTooLong = errors.New("vpage: remainder longer than 255 bytes")
 
 // KindBase is the kind byte of a page of the smallest class: the page of class
-// c has the kind KindBase+c, which is how the tree tells pages from its other
+// c has the kind KindBase+2c (the kinds of the tree step by two), which is how the tree tells pages from its other
 // objects and the pages' classes apart. The tree sets it before it makes a page.
 var KindBase uint8 = 1
 
@@ -82,7 +82,7 @@ type Page struct {
 	top   uint16 // start of the heap
 }
 
-func (p *Page) class() int { return int(p.kind - KindBase) }
+func (p *Page) class() int { return int(p.kind-KindBase) >> 1 }
 
 // Base returns the depth in the tree's keys where the remainders of the page
 // start: the key of an entry is the first Base bytes of the path to the page,

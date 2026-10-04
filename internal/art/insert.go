@@ -41,8 +41,8 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 			t.size++
 			return loc
 		}
-		if n.kind <= kLastPage {
-			if n.kind > kLastLeaf {
+		if n.kind <= maxPageByte {
+			if n.kind > maxLeafByte {
 				return t.upsertPage(loc, par, pi, key, pathLen, v, nl)
 			}
 			return t.splitLeaf(loc, asLeaf(n), key, pathLen, v, nl, belowByteNode)

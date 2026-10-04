@@ -172,7 +172,7 @@ func TestObjectSizes(t *testing.T) {
 			for _, klen := range []int{0, 2, 3, 10, 11, 18, 19, 26, 27, 34, 35, 42, 43, 50, 51, 58} {
 				check(t, &typed, func() unsafe.Pointer {
 					l := allocTyped[string](uint8(c), klen)
-					l.klen = uint8(klen)
+					l.setRem(klen)
 					return unsafe.Pointer(l)
 				})
 			}

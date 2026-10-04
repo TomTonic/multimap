@@ -87,7 +87,7 @@ const rChildOff = unsafe.Sizeof(rhead{})
 func asR(h *header) *rhead { return (*rhead)(unsafe.Pointer(h)) }
 
 // class returns the index of r's class in rCaps.
-func (r *rhead) class() int { return int(r.kind-kR8) & 3 }
+func (r *rhead) class() int { return int(r.kind-kR8) >> 1 & 3 }
 
 // children returns the child slots of r, as many as its class holds; the
 // first n are in use.
@@ -159,7 +159,7 @@ func rClass(n int) int {
 // makeR returns a new range node with the common prefix p and the end page end page, which
 // may be nil, and the ranges rs, of which the first must start at 0.
 func makeR(p []byte, endPage *leafHead, rs []rng) *header {
-	n := newNode(kR8+kind(rClass(len(rs))), len(p))
+	n := newNode(kR8+kind(rClass(len(rs)))<<1, len(p))
 	storePrefix(n, p)
 	fillR(n, rs)
 	setEndPageSlot(n, endPage)
@@ -181,7 +181,7 @@ func fillR(n *header, rs []rng) {
 // remakeR returns a range node with n's common prefix and end page and the ranges rs, in the
 // smallest class that holds them.
 func remakeR(n *header, rs []rng) *header {
-	y := newLike(n, kR8+kind(rClass(len(rs))))
+	y := newLike(n, kR8+kind(rClass(len(rs)))<<1)
 	fillR(y, rs)
 	setEndPageSlot(y, endPageOf(n))
 	return y

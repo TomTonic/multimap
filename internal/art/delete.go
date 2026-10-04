@@ -49,7 +49,7 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8
 	if n == nil {
 		return absent
 	}
-	if n.kind <= kLastPage {
+	if n.kind <= maxPageByte {
 		if isPage(n.kind) {
 			return delFromPage(loc, key, want)
 		}
@@ -143,7 +143,7 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.kind <= kLastPage {
+	if c.kind <= maxPageByte {
 		if isPage(c.kind) {
 			return pageUp(n, c, key, pathLen)
 		}

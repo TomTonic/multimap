@@ -210,7 +210,7 @@ func fitClass(pl plan, min, fill int) int {
 // is the entries of pl and as many more as fit with tails of the average length.
 func newPage(c int, pl plan, pfx []byte) *Page {
 	q := alloc(c)
-	q.kind, q.ulen, q.plen = KindBase+uint8(c), uint8(pl.ulen), uint8(pl.plen)
+	q.kind, q.ulen, q.plen = KindBase+uint8(c)<<1, uint8(pl.ulen), uint8(pl.plen)
 	size := sizes[c]
 	q.top = uint16(size)
 	copy(q.mem()[hdr:], pfx)

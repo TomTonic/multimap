@@ -16,7 +16,7 @@ import (
 func inOrder(s []string) []string { slices.Sort(s); return s }
 
 // isSKPage reports whether leaf l of a string map is a single-key page.
-func isSKPage(l *leafHead) bool { return l.kind != kSet }
+func isSKPage(l *leafHead) bool { return !l.isSet() }
 
 // TestStringMapUsesPages covers what a user of multimap.Ordered with string
 // values gets for each key: one single-key page (SKMV) with the key's end and
@@ -33,7 +33,7 @@ func TestStringMapUsesPages(t *testing.T) {
 	for i := range 300 {
 		key := []byte(fmt.Sprint("key-", i))
 		l := findLeaf(&m.t, key)
-		if l == nil || !isSKPage(l) || l.kind < kSet+1 || l.kind > kSet+kind(skpage.Classes) {
+		if l == nil || !isSKPage(l) || l.cls() < 1 || int(l.cls()) > skpage.Classes {
 			t.Fatalf("key %q has no single-key page", key)
 		}
 		if got := inOrder(valuesOf(&m, key)); len(got) != i%4+1 {
@@ -69,7 +69,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	for i := range 40 {
 		m.Add(key, val(i))
 		want = append(want, val(i))
-		isSet := findLeaf(&m.t, key).kind == kSet
+		isSet := findLeaf(&m.t, key).isSet()
 		if wantSet := content(i+1) > 512; isSet != wantSet {
 			t.Fatalf("after %d values (content %d): set leaf = %v", i+1, content(i+1), isSet)
 		}
@@ -80,7 +80,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	for i := 39; i > 0; i-- {
 		m.Remove(key, val(i))
 		want = want[:i]
-		isSet := findLeaf(&m.t, key).kind == kSet
+		isSet := findLeaf(&m.t, key).isSet()
 		// the set leaf stays until the values fill 256 bytes or less; the page, once back, until it is empty
 		if isSet && content(i) <= skpage.BackLimit {
 			t.Fatalf("with %d values (content %d) the key still has a set leaf", i, content(i))
@@ -94,7 +94,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	}
 	// the border: between 256 and 512 bytes the key keeps whichever object it has
 	m.Add(key, val(1))
-	if findLeaf(&m.t, key).kind == kSet {
+	if findLeaf(&m.t, key).isSet() {
 		t.Fatal("a key with two values has a set leaf")
 	}
 	m.Remove(key, val(0))
@@ -114,35 +114,35 @@ func TestStringValueTooLong(t *testing.T) {
 	m.Add(key, "a")
 	m.Add(key, "b")
 	m.Add(key, long)
-	if findLeaf(&m.t, key).kind != kSet {
+	if !findLeaf(&m.t, key).isSet() {
 		t.Fatal("a value of 300 bytes must make a set leaf")
 	}
 	if got := inOrder(valuesOf(&m, key)); !slices.Equal(got, inOrder([]string{"a", "b", long})) {
 		t.Fatalf("got %d values", len(got))
 	}
 	m.Remove(key, "a") // the set still holds the long value: it stays a set leaf
-	if findLeaf(&m.t, key).kind != kSet {
+	if !findLeaf(&m.t, key).isSet() {
 		t.Fatal("with the long value in it the key must stay a set leaf")
 	}
 	m.Remove(key, long)
-	if findLeaf(&m.t, key).kind == kSet || !slices.Equal(valuesOf(&m, key), []string{"b"}) {
+	if findLeaf(&m.t, key).isSet() || !slices.Equal(valuesOf(&m, key), []string{"b"}) {
 		t.Fatalf("the key must be a page with the value b, has %q", valuesOf(&m, key))
 	}
 }
 
 // TestStringKeyTooLong covers keys whose end does not fit a page: a lone key of
-// 300 bytes has a remainder of 300, a key of more than 64 KiB cannot even
+// 505 bytes has a remainder of 505, a key of more than 64 KiB cannot even
 // have its length in the page's header. Both get a set leaf that holds the key
 // as a string, and keep their values, also when values go.
 func TestStringKeyTooLong(t *testing.T) {
-	for _, n := range []int{255, 300, maxKeyLen + 10} {
+	for _, n := range []int{505, 600, maxKeyLen + 10} {
 		t.Run(fmt.Sprint(n, " bytes"), func(t *testing.T) {
 			var m Map[string]
 			key := bytes.Repeat([]byte("k"), n)
 			for _, v := range []string{"a", "b", "c"} {
 				m.Add(key, v)
 			}
-			if findLeaf(&m.t, key).kind != kSet {
+			if !findLeaf(&m.t, key).isSet() {
 				t.Fatal("expected a set leaf")
 			}
 			m.Remove(key, "b")
@@ -153,10 +153,10 @@ func TestStringKeyTooLong(t *testing.T) {
 	}
 	t.Run("the longest remainder a page holds", func(t *testing.T) {
 		var m Map[string]
-		key := bytes.Repeat([]byte("k"), skpage.MaxRemainder)
+		key := bytes.Repeat([]byte("k"), skpage.MaxRemainder-1) // and a value of one byte
 		m.Add(key, "a")
-		if findLeaf(&m.t, key).kind == kSet {
-			t.Fatal("a remainder of 254 bytes fits a page")
+		if findLeaf(&m.t, key).isSet() {
+			t.Fatal("a remainder of 504 bytes fits a page")
 		}
 	})
 }
@@ -172,7 +172,7 @@ func TestStringSetStaysSet(t *testing.T) {
 		m.Add(key, one(i))
 	}
 	m.Remove(key, one(0))
-	if findLeaf(&m.t, key).kind != kSet || len(valuesOf(&m, key)) != 254 {
+	if !findLeaf(&m.t, key).isSet() || len(valuesOf(&m, key)) != 254 {
 		t.Fatal("254 values of one byte are a set leaf")
 	}
 }
@@ -184,7 +184,7 @@ func TestStringSetStaysSet(t *testing.T) {
 // set leaf; a set leaf is left to the set leaf code. The values and the key
 // stay.
 func TestStringRekey(t *testing.T) {
-	key := bytes.Repeat([]byte("abcdefghij"), 30) // 300 bytes
+	key := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
 	for _, tc := range []struct {
 		name         string
 		keyLen, base int
@@ -195,17 +195,20 @@ func TestStringRekey(t *testing.T) {
 		{"fits the class", 40, 37, 30, []string{"v"}, "in place"},
 		{"grows into a larger class", 40, 37, 10, []string{strings.Repeat("v", 17)}, "page"},
 		{"a remainder of 254 bytes", 280, 270, 26, []string{"v", "w"}, "page"},
-		{"a remainder beyond 254 bytes", 290, 280, 20, []string{"v", "w"}, "set"},
+		{"a remainder of 270 bytes (nine bits of length)", 290, 280, 20, []string{"v", "w"}, "page"},
+		{"a remainder beyond what a page holds", 600, 590, 20, []string{"v", "w"}, "set"},
 		{"a set leaf", 40, 37, 30, []string{strings.Repeat("L", 300)}, "set"},
 		{"a set leaf that needs a larger key area", 100, 99, 20, []string{strings.Repeat("L", 300)}, "set"},
 		{"a set leaf in the largest key area", 200, 80, 70, []string{strings.Repeat("L", 300)}, "set"},
+		{"a set leaf in the key area of 384 bytes", 400, 100, 90, []string{strings.Repeat("L", 300)}, "set"},
+		{"a set leaf in the key area of 512 bytes", 600, 200, 190, []string{strings.Repeat("L", 300)}, "set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k := key[:tc.keyLen]
 			l := newSK(k, tc.base)
 			slot := leafHdr(l)
 			for _, v := range tc.values {
-				if l.kind == kSet {
+				if l.isSet() {
 					strSetAdd(l, v)
 				} else {
 					addSK(&slot, l, k, v)
@@ -214,7 +217,7 @@ func TestStringRekey(t *testing.T) {
 			}
 			nl := rekeySK(l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
 			var got []string
-			if nl.kind == kSet {
+			if nl.isSet() {
 				strSetEach(nl, func(v string) bool { got = append(got, v); return true })
 			} else {
 				asSK(nl).Strings(func(v string) bool { got = append(got, v); return true })
@@ -226,7 +229,7 @@ func TestStringRekey(t *testing.T) {
 				t.Errorf("leaf holds %q from %d of a key of %d bytes, want the key from %d on", nl.stored(), nl.base(), nl.keyLen(), tc.to)
 			}
 			switch {
-			case tc.want == "in place" && nl != l, tc.want == "page" && (nl == l || nl.kind == kSet), tc.want == "set" && nl.kind != kSet:
+			case tc.want == "in place" && nl != l, tc.want == "page" && (nl == l || nl.isSet()), tc.want == "set" && !nl.isSet():
 				t.Errorf("rekey gave kind %d, same leaf: %v, want %s", nl.kind, nl == l, tc.want)
 			}
 		})
@@ -234,8 +237,8 @@ func TestStringRekey(t *testing.T) {
 }
 
 // TestStringSetLeafLayout covers the set leaf of a string map as an object: it
-// lies on the grid of the pages (32, 64, 128 or 256 bytes, 32 for a key held as
-// a string), the pointer to its value set is the last word of the object whatever
+// lies on the grid of the pages (32 to 512 bytes, 32 for a key held as a
+// string), the pointer to its value set is the last word of the object whatever
 // the key area, the key area is the one that fills the object, and the object
 // statistic knows its size, which is the size the runtime allocates.
 func TestStringSetLeafLayout(t *testing.T) {
@@ -243,7 +246,7 @@ func TestStringSetLeafLayout(t *testing.T) {
 	strs.flat = 3
 	for _, tc := range []struct {
 		n, size int
-	}{{5, 32}, {18, 32}, {19, 64}, {50, 64}, {51, 128}, {114, 128}, {115, 256}, {242, 256}, {243, 32}, {300, 32}} {
+	}{{5, 32}, {18, 32}, {19, 64}, {50, 64}, {51, 128}, {114, 128}, {115, 256}, {242, 256}, {243, 384}, {370, 384}, {371, 512}, {498, 512}, {499, 32}, {600, 32}} {
 		key := bytes.Repeat([]byte("k"), tc.n)
 		l := newSetLeaf3(key, 0, set3.EmptyWithCapacity[string](4))
 		if off := int(uintptr(unsafe.Pointer(strSetOf(l))) - uintptr(unsafe.Pointer(l))); tc.n <= maxInline3 && off != tc.size-8 {
@@ -254,7 +257,7 @@ func TestStringSetLeafLayout(t *testing.T) {
 			t.Errorf("key of %d bytes: %d values", tc.n, got)
 		}
 		o := strs.leafKind(l)
-		if o.Size != tc.size || int(setLeaf3Size(l.klen)) != tc.size || o.Label != "set leaf" || !o.Pointers {
+		if o.Size != tc.size || int(setLeaf3Size(l.rem())) != tc.size || o.Label != "set leaf" || !o.Pointers {
 			t.Errorf("key of %d bytes: object %+v, want a set leaf of %d bytes", tc.n, o, tc.size)
 		}
 		if string(l.stored()) != string(key) && tc.n <= maxInline3 || l.keyLen() != tc.n {

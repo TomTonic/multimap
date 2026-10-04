@@ -10,7 +10,7 @@ import (
 // kindsOf counts the objects below n by kind, end pages included.
 func kindsOf(n *header, count map[kind]int) {
 	count[n.kind]++
-	if n.kind <= kLastPage {
+	if n.kind <= maxPageByte {
 		return
 	}
 	if endPageOf(n) != nil {
@@ -103,7 +103,7 @@ func TestPageKeyLength(t *testing.T) {
 		count := map[kind]int{}
 		kindsOf(m.t.root, count)
 		n := 0
-		for k := kPage; k <= kLastPage; k++ {
+		for k := kPage; k <= kLastPage; k += 2 {
 			n += count[k]
 		}
 		return n

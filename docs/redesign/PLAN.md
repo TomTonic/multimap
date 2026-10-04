@@ -202,7 +202,7 @@ measure as in 3.3. **Stop for the user.**
 **Done 2026-10-04**, measured: [step3-overflow-results.md](step3-overflow-results.md) (memory as predicted, speed neutral on the
 existing benchmarks: the overflow keys are 0.5 to 1.6 % of the keys). The set leaf of a string map is on the grid 32/64/128/256.
 
-### 3.4b Remainder of up to 512 bytes (user, 2026-10-04; design note first)
+### 3.4b Remainder of up to 505 bytes (user, 2026-10-04; [step3-klen9-design.md](step3-klen9-design.md); **done 2026-10-04**, not yet measured)
 
 One more bit of the kind byte extends `klen` to nine bits, so a leaf and a page hold a remainder of up to 511 bytes inline (now 254; `longKey` = 255 marks
 a key as a string). Then the set leaf gets the classes 384 and 512 (key area 370 and 498) and a page a longer remainder. It touches every `klen`

@@ -33,8 +33,9 @@ const (
 	// MaxValue is the longest value a page holds; a longer one belongs in a
 	// value set. 255 is not a length, so that a length is one byte.
 	MaxValue = 254
-	// MaxRemainder is the longest remainder a page holds.
-	MaxRemainder = 254
+	// MaxRemainder is the longest remainder a page holds: nine bits of length,
+	// and a page of 512 bytes less the header and one length byte.
+	MaxRemainder = 505
 	// Header is the size of the fixed part: kind, r, n, kl.
 	Header = 6
 	// BackLimit is the content, in bytes, up to which the value set of a key
@@ -53,14 +54,15 @@ const Classes = len(sizes)
 
 // KindBase is added to the kind byte of every page, so that a tree whose
 // objects tell their kind by their first byte can give the pages the kinds
-// KindBase to KindBase+Classes-1. A package that uses pages standalone
+// KindBase, KindBase+2, ... KindBase+2*(Classes-1): the lowest bit of the kind
+// byte is bit 8 of the length of the remainder. A package that uses pages standalone
 // leaves it 0.
 var KindBase uint8
 
 // Page is the first three bytes of a page; the page is the object they start.
 type Page struct {
-	kind uint8  // KindBase plus the size class
-	r    uint8  // length of the remainder
+	kind uint8  // KindBase plus twice the size class, plus bit 8 of the length of the remainder
+	r    uint8  // bits 0 to 7 of the length of the remainder
 	n    uint16 // number of values
 	kl   uint16 // length of the whole key
 }
@@ -79,7 +81,17 @@ const (
 	Full
 )
 
-func (p *Page) class() int { return int(p.kind - KindBase) }
+func (p *Page) class() int { return int(p.kind&^1-KindBase) >> 1 }
+
+// rem returns the length of the remainder: nine bits, the lowest bit of the
+// kind byte on top of r.
+func (p *Page) rem() int { return int(p.r) | int(p.kind&1)<<8 }
+
+// setRem sets the length of the remainder and keeps the class.
+func (p *Page) setRem(n int) {
+	p.kind = p.kind&^1 | uint8(n>>8)
+	p.r = uint8(n)
+}
 
 // mem returns the whole object.
 func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class()]) }
@@ -115,20 +127,24 @@ func classFor(need int) int {
 // of kl bytes.
 func newPage(c, r, kl int) *Page {
 	p := alloc(c)
-	p.kind, p.r, p.kl = KindBase+uint8(c), uint8(r), uint16(kl)
+	p.kind, p.kl = KindBase+uint8(c)<<1, uint16(kl)
+	p.setRem(r)
 	return p
 }
 
 // New returns a page for the key of keyLen bytes whose end is rest, with the one
-// value val, or nil if they do not fit a page (see MaxRemainder and MaxValue; the largest class always
-// holds the rest).
+// value val, or nil if they do not fit a page (see MaxRemainder and MaxValue).
 // The page copies both. The tree calls New when a key arrives that no page holds
 // yet, with the remainder it has cut from the key.
 func New(rest []byte, keyLen int, val []byte) *Page {
 	if len(rest) > MaxRemainder || len(val) > MaxValue {
 		return nil
 	}
-	p := newPage(classFor(Header+len(rest)+1+len(val)), len(rest), keyLen) // at most 512
+	c := classFor(Header + len(rest) + 1 + len(val))
+	if c < 0 {
+		return nil
+	}
+	p := newPage(c, len(rest), keyLen)
 	p.n = 1
 	m := p.mem()
 	copy(m[Header:], rest)
@@ -190,7 +206,7 @@ func (p *Page) Len() int { return int(p.n) }
 
 // Rest returns the remainder. The slice aliases the page and is valid until the
 // page changes.
-func (p *Page) Rest() []byte { return p.mem()[Header : Header+int(p.r)] }
+func (p *Page) Rest() []byte { return p.mem()[Header : Header+p.rem()] }
 
 // KeyLen returns the length of the whole key.
 func (p *Page) KeyLen() int { return int(p.kl) }
@@ -199,7 +215,7 @@ func (p *Page) KeyLen() int { return int(p.kl) }
 // whole key, and its last bytes are the remainder. The tree has matched the
 // bytes before them on its way down.
 func (p *Page) Match(key []byte) bool {
-	r := int(p.r)
+	r := p.rem()
 	return len(key) == int(p.kl) && string(key[len(key)-r:]) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(p), Header)), r)
 }
 
@@ -207,7 +223,7 @@ func (p *Page) Match(key []byte) bool {
 // remainder and the values with their lengths.
 func (p *Page) Used() int {
 	m := p.mem()
-	off := Header + int(p.r)
+	off := Header + p.rem()
 	for range p.n {
 		off += 1 + int(m[off])
 	}
@@ -218,7 +234,7 @@ func (p *Page) Used() int {
 // end of the used part.
 func (p *Page) find(val []byte) (at, used int) {
 	m := p.mem()
-	off, at := Header+int(p.r), -1
+	off, at := Header+p.rem(), -1
 	for range p.n {
 		l := int(m[off])
 		if at < 0 && l == len(val) && string(m[off+1:off+1+l]) == string(val) {
@@ -235,7 +251,7 @@ func (p *Page) Has(val []byte) bool {
 		return false
 	}
 	m := p.mem()
-	off := Header + int(p.r)
+	off := Header + p.rem()
 	for range p.n {
 		l := int(m[off])
 		if l == len(val) && string(m[off+1:off+1+l]) == string(val) {
@@ -265,7 +281,7 @@ func (p *Page) Add(val []byte) (*Page, Result) {
 		if c < 0 {
 			return p, Full
 		}
-		q = newPage(c, int(p.r), int(p.kl))
+		q = newPage(c, p.rem(), int(p.kl))
 		q.n = p.n
 		copy(q.mem()[Header:], p.mem()[Header:used])
 	}
@@ -298,7 +314,7 @@ func (p *Page) Remove(val []byte) (*Page, bool) {
 	p.n--
 	used -= end - at
 	if c := classFor(used); c >= 0 && 2*sizes[c] <= p.Size() {
-		q := newPage(c, int(p.r), int(p.kl))
+		q := newPage(c, p.rem(), int(p.kl))
 		q.n = p.n
 		copy(q.mem()[Header:], m[Header:used])
 		return q, true
@@ -310,7 +326,7 @@ func (p *Page) Remove(val []byte) (*Page, bool) {
 // false, and reports whether it ran to completion. The slices alias the page.
 func (p *Page) Each(fn func(val []byte) bool) bool {
 	m := p.mem()
-	off := Header + int(p.r)
+	off := Header + p.rem()
 	for range p.n {
 		l := int(m[off])
 		if !fn(m[off+1 : off+1+l]) {
@@ -327,7 +343,7 @@ func (p *Page) Each(fn func(val []byte) bool) bool {
 // string that fn keeps holds the bytes of its neighbours alive.
 func (p *Page) Strings(fn func(val string) bool) bool {
 	m := p.mem()
-	start := Header + int(p.r)
+	start := Header + p.rem()
 	total, off := 0, start
 	for range p.n {
 		l := int(m[off])
@@ -362,7 +378,7 @@ func (p *Page) AppendKey(dst []byte) []byte { return append(dst, p.Rest()...) }
 // content still fits, else a page of a larger class; nil if the remainder
 // would exceed MaxRemainder or the content the largest class.
 func (p *Page) Prepend(pre []byte) *Page {
-	r := int(p.r) + len(pre)
+	r := p.rem() + len(pre)
 	used := p.Used()
 	if r > MaxRemainder || used+len(pre) > sizes[Classes-1] {
 		return nil
@@ -376,7 +392,7 @@ func (p *Page) Prepend(pre []byte) *Page {
 		m := p.mem()
 		copy(m[Header+len(pre):], m[Header:used])
 	}
-	q.r = uint8(r)
+	q.setRem(r)
 	copy(q.mem()[Header:], pre)
 	return q
 }
@@ -384,5 +400,5 @@ func (p *Page) Prepend(pre []byte) *Page {
 // Equal reports whether two pages hold the same remainder and the same values
 // in the same order, whatever their classes. Tests use it.
 func Equal(a, b *Page) bool {
-	return a.n == b.n && a.r == b.r && a.kl == b.kl && bytes.Equal(a.mem()[Header:a.Used()], b.mem()[Header:b.Used()])
+	return a.n == b.n && a.rem() == b.rem() && a.kl == b.kl && bytes.Equal(a.mem()[Header:a.Used()], b.mem()[Header:b.Used()])
 }

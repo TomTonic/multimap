@@ -265,7 +265,7 @@ func TestLeafMovesUp(t *testing.T) {
 			if !slices.Equal(got, want) || l.base() != 0 || !bytes.Equal(l.stored(), k1) {
 				t.Fatalf("after moving up the leaf holds %d bytes from %d and values %v, want the whole key and %v", len(l.stored()), l.base(), got, want)
 			}
-			if flat := flatClassFor[uint64](k1, 0, n) != 0; flat != (l.kind != kSet) {
+			if flat := flatClassFor[uint64](k1, 0, n) != 0; flat != (!l.isSet()) {
 				t.Fatalf("leaf of kind %d, want a flat leaf: %v", l.kind, flat)
 			}
 		})

@@ -5,7 +5,7 @@
 - **3.4 measured** ([step3-overflow-results.md](step3-overflow-results.md)): `Set3` in the set leaf. Memory as predicted (`street` natural 114 B/key, `dirs` 165),
   speed neutral on all four profiles (the overflow keys are 0.5 to 1.6 % of the keys), GC the same.
 - **User:** the leaf stays on the grid 32/64/128/256 (done: key areas 18, 50, 114, 242); pointer position: left last (a measured 1 ns a leaf and cycle
-  does not pay for a second key offset); **new:** nine-bit `klen` through a bit of the kind byte for remainders up to 512 (PLAN.md 3.4b), design note first.
+  does not pay for a second key offset); **new:** nine-bit remainder length through the lowest bit of the kind byte (user's encoding; [step3-klen9-design.md](step3-klen9-design.md)). Done: kinds step by two, set leaf of strings on the grid 32 to 512, page remainder up to 505; all gates green; fixed a crash of `skpage.New` for 512+ bytes of content. Not measured yet.
 
 ## 2026-10-04 afternoon: step 3.3 measured, step 3.4 design note written
 

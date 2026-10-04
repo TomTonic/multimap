@@ -23,7 +23,8 @@ type Map[T comparable] struct {
 func newSetLeaf[T comparable](key []byte, base int) *leafHead {
 	if len(key) > maxKeyLen || len(key)-base > maxInline {
 		l := &leaf[T, string]{k: string(key)}
-		l.kind, l.klen = kSet, longKey
+		l.kind = kSet
+		l.setRem(longKey)
 		return &l.leafHead
 	}
 	return newSetLeafOf[T](key[base:], len(key))
@@ -56,7 +57,9 @@ func newSetLeafOf[T comparable](s []byte, kl int) *leafHead {
 func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte](s []byte, kl int) *leafHead {
 	l := &leaf[T, K]{}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), s)
-	l.kind, l.klen, l.kl = kSet, uint8(len(s)), uint16(kl)
+	l.kind = kSet
+	l.setRem(len(s))
+	l.kl = uint16(kl)
 	return &l.leafHead
 }
 
@@ -78,7 +81,7 @@ var (
 // size class of the key area only.
 func valsOff(l *leafHead) uintptr {
 	off := setOffStr
-	switch k := l.klen; {
+	switch k := l.rem(); {
 	case k <= 16:
 		off = setOff16
 	case k <= 32:
@@ -109,7 +112,7 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 // keeps l where it is when the longer remainder fits its size class, and
 // builds the whole key only when it has to copy l.
 func rekey[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
-	if l.kind != kSet {
+	if !l.isSet() {
 		if flatPrepend[T](l, pre, b, pathLen) {
 			return l
 		}
@@ -125,14 +128,15 @@ func rekey[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
 
 // setKeyCap returns the size of the key area of a set leaf whose key
 // remainder is klen bytes long, at most maxInline: the class that klen falls
-// in (see vals), whose largest holds 256 bytes.
+// in (see vals); the largest holds 256 bytes, of which a remainder uses
+// maxInline.
 func setKeyCap(klen int) int {
 	for _, c := range [...]int{16, 32, 48, 64, 96, 128, 192} {
 		if klen <= c {
 			return c
 		}
 	}
-	return 256
+	return maxInline
 }
 
 // setPrepend makes set leaf l hold its key from pathLen on in place when the
@@ -141,14 +145,14 @@ func setKeyCap(klen int) int {
 // flatPrepend, and reports whether it did. keyCap is setKeyCap, or set3KeyCap
 // for the set leaf of a string map.
 func setPrepend(l *leafHead, pre []byte, b, pathLen int, keyCap func(int) int) bool {
-	old, klen := int(l.klen), l.keyLen()-pathLen // a string leaf holds its whole key, and never gets here
-	if klen > maxInline || klen > keyCap(old) {
+	old, klen := l.rem(), l.keyLen()-pathLen // a string leaf holds its whole key, and never gets here
+	if klen > keyCap(old) {
 		return false
 	}
 	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
 	copy(area[klen-old:], area[:old])
 	fillHead(area[:klen-old], pre, b, pathLen)
-	l.klen = uint8(klen)
+	l.setRem(klen)
 	return true
 }
 
@@ -183,7 +187,7 @@ func pageType[T comparable]() bool {
 func leafWith[T comparable](key []byte, base int, raw uint64) *leafHead {
 	l := newFlatLeaf[T](key, base) // a set leaf if the key is too long for a flat one
 	v := *(*T)(unsafe.Pointer(&raw))
-	if l.kind == kSet {
+	if l.isSet() {
 		vals[T](l).Add(v)
 	} else {
 		appendFlat(l, v)
@@ -247,9 +251,9 @@ func (m *Map[T]) Add(key []byte, v T) {
 // addToLeaf adds v to the values of leaf l of key, which sits in slot loc.
 func (m *Map[T]) addToLeaf(loc **header, l *leafHead, key []byte, v T) {
 	switch {
-	case l.kind == kSet && m.flat == 3:
+	case l.isSet() && m.flat == 3:
 		strSetAdd(l, *(*string)(unsafe.Pointer(&v)))
-	case l.kind == kSet:
+	case l.isSet():
 		vals[T](l).Add(v)
 	case m.flat == 3:
 		addSK(loc, l, key, *(*string)(unsafe.Pointer(&v)))
@@ -285,7 +289,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		return
 	}
 	l := asLeaf(n)
-	if l.kind != kSet {
+	if !l.isSet() {
 		if m.flat == 3 {
 			m.t.removeSK(l, key, *(*string)(unsafe.Pointer(&v)), rk)
 			return
@@ -387,12 +391,12 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 func eachValue[T comparable](l *leafHead, flat int8, yield func(T) bool) bool {
 	if flat == 3 { // T is string
 		y := *(*func(string) bool)(unsafe.Pointer(&yield))
-		if l.kind == kSet {
+		if l.isSet() {
 			return strSetEach(l, y)
 		}
 		return asSK(l).Strings(y)
 	}
-	if l.kind == kSet {
+	if l.isSet() {
 		return vals[T](l).Each(yield)
 	}
 	for _, v := range flatVals[T](l) {

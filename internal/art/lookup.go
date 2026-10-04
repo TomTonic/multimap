@@ -38,8 +38,8 @@ func (t *Tree) find(key []byte) (*header, int) {
 	n := t.root
 	pathLen := 0
 	for n != nil {
-		if n.kind <= kLastPage {
-			if n.kind > kLastLeaf {
+		if n.kind <= maxPageByte {
+			if n.kind > maxLeafByte {
 				return findInPage(asPage(n), key)
 			}
 			// The nodes have checked the key up to pathLen; the leaf holds the

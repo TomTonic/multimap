@@ -11,7 +11,7 @@ import (
 
 // keyLen is the length of the whole key of every page in the tests: the page
 // keeps the end of it, and a remainder never grows beyond it.
-const keyLen = 300
+const keyLen = 600
 
 // model is what a page must hold: the remainder and the values in the order of
 // their arrival.
@@ -77,10 +77,14 @@ func TestNewAndBuild(t *testing.T) {
 		{"fits 64 bytes exactly", "ab", []string{long(55)}, 64, 64},
 		{"needs 128 bytes for one byte more", "ab", []string{long(56)}, 128, 128},
 		{"takes a value of 254 bytes", "", []string{long(254)}, 384, 384}, // 6 + 1 + 254 = 261
-		{"takes the longest remainder", long(254), []string{"a"}, 384, 384},
+		{"takes a remainder of 254 bytes", long(254), []string{"a"}, 384, 384},
+		{"takes a remainder of 255 bytes (nine bits of length)", long(255), []string{"a"}, 384, 384},
+		{"takes a remainder of 256 bytes", long(256), []string{"a"}, 384, 384},
+		{"takes the longest remainder", long(505), []string{""}, 512, 512},
+		{"refuses a remainder that leaves no room for a byte of value", long(505), []string{"a"}, 0, 0},
 		{"fits the largest class exactly", long(254), []string{long(251)}, 512, 512},
 		{"holds many values", "k", []string{"a", "b", "c", "d"}, 32, 32},
-		{"refuses a remainder of 255 bytes", long(255), []string{"a"}, 0, 0},
+		{"refuses a remainder of 506 bytes", long(506), []string{""}, 0, 0},
 		{"refuses a value of 255 bytes", "a", []string{long(255)}, 0, 0},
 		{"Build refuses content of 513 bytes", long(104), []string{long(200), long(204)}, 384, 0},
 	}
@@ -323,13 +327,14 @@ func TestPrepend(t *testing.T) {
 		verify(t, q, model{"abcdcd", []string{strings.Repeat("x", 23)}})
 		verify(t, p, model{"cd", []string{strings.Repeat("x", 23)}})
 	})
-	t.Run("Prepend refuses a remainder beyond 254 bytes", func(t *testing.T) {
+	t.Run("Prepend refuses a remainder beyond 505 bytes and takes nine bits of length", func(t *testing.T) {
 		p := New(bytes.Repeat([]byte("a"), 200), keyLen, []byte("v"))
-		if p.Prepend(bytes.Repeat([]byte("b"), 55)) != nil {
-			t.Fatal("255 bytes of remainder")
+		if p.Prepend(bytes.Repeat([]byte("b"), 306)) != nil {
+			t.Fatal("506 bytes of remainder")
 		}
-		if p.Prepend(bytes.Repeat([]byte("b"), 54)) == nil {
-			t.Fatal("254 bytes of remainder fit")
+		q := p.Prepend(bytes.Repeat([]byte("b"), 304))
+		if q == nil || q.Size() != 512 || q.rem() != 504 {
+			t.Fatalf("504 bytes of remainder fit a page of 512 bytes, got %v", q)
 		}
 	})
 	t.Run("Prepend refuses content beyond 512 bytes", func(t *testing.T) {
@@ -377,7 +382,7 @@ func TestKindBase(t *testing.T) {
 	defer func() { KindBase = 0 }()
 	p := New([]byte("ab"), keyLen, []byte("v"))
 	q := p.Prepend(bytes.Repeat([]byte("x"), 100))
-	if p.kind != 40 || q.kind != 40+2 || q.Size() != 128 {
+	if p.kind != 40 || q.kind != 40+2*2 || q.Size() != 128 {
 		t.Fatalf("kinds %d and %d", p.kind, q.kind)
 	}
 	verify(t, q, model{strings.Repeat("x", 100) + "ab", []string{"v"}})
@@ -526,8 +531,11 @@ func sum(b []byte) int {
 // smallest class that can take a value of one byte, nil for a remainder that is
 // too long.
 func TestEmpty(t *testing.T) {
-	if Empty(bytes.Repeat([]byte("a"), 255), keyLen) != nil {
-		t.Error("a remainder of 255 bytes does not fit")
+	if Empty(bytes.Repeat([]byte("a"), 506), keyLen) != nil {
+		t.Error("a remainder of 506 bytes does not fit")
+	}
+	if e := Empty(bytes.Repeat([]byte("a"), 505), keyLen); e == nil || e.Size() != 512 || e.rem() != 505 {
+		t.Error("a remainder of 505 bytes fits a page of 512 bytes")
 	}
 	p := Empty([]byte("abc"), keyLen)
 	if p.Len() != 0 || p.Size() != 32 || string(p.Rest()) != "abc" || p.KeyLen() != keyLen {

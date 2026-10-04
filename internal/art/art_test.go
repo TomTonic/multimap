@@ -559,13 +559,13 @@ func TestLeafLayout(t *testing.T) {
 			l := newSetLeaf[uint64](key, 0)
 			ls := newSetLeaf[string](key, 0)
 			clear(key) // the leaves must hold copies
-			wantLen := uint8(tc.n)
+			wantLen := tc.n
 			if tc.n > maxInline {
 				wantLen = longKey
 			}
 			for _, x := range []*leafHead{l, ls} {
-				if x.kind != kSet || x.klen != wantLen || x.keyLen() != tc.n || x.base() != 0 || !bytes.Equal(x.stored(), want) {
-					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a set leaf of %d bytes %v", x.kind, x.klen, x.stored(), tc.n, want)
+				if !x.isSet() || x.rem() != wantLen || x.keyLen() != tc.n || x.base() != 0 || !bytes.Equal(x.stored(), want) {
+					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a set leaf of %d bytes %v", x.kind, x.rem(), x.stored(), tc.n, want)
 				}
 			}
 			gotU := uintptr(unsafe.Pointer(vals[uint64](l))) - uintptr(unsafe.Pointer(l))

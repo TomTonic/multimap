@@ -55,7 +55,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 	if n == nil {
 		return true
 	}
-	if n.kind <= kLastPage {
+	if n.kind <= maxPageByte {
 		if isLeaf(n.kind) {
 			return scanLeaf(asLeaf(n), b, pathLen, lo, hi, kb, fn)
 		}

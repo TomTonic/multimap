@@ -50,7 +50,7 @@ func tailClass(plen int) int {
 
 // fixedSize is the size of each node kind without its tail, which is where
 // the tail starts.
-var fixedSize = [32]uintptr{
+var fixedSize = [64]uintptr{
 	kN5:   unsafe.Sizeof(node5{}),
 	kN12:  unsafe.Sizeof(node12{}),
 	kN26:  unsafe.Sizeof(node26{}),

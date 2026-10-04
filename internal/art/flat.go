@@ -118,7 +118,7 @@ func allocFlat(cls uint8) *leafHead {
 		p = unsafe.Pointer(new([64]uint64))
 	}
 	l := (*leafHead)(p)
-	l.kind = kSet + kind(cls)
+	l.setClass(cls)
 	return l
 }
 
@@ -147,7 +147,8 @@ func flatClassFor[T comparable](key []byte, base, n int) uint8 {
 // remainder s of a key of kl bytes, and no values.
 func flatWithKey(c uint8, s []byte, kl int) *leafHead {
 	l := allocFlat(c)
-	l.klen, l.kl = uint8(len(s)), uint16(kl)
+	l.setRem(len(s))
+	l.kl = uint16(kl)
 	copy(unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), len(s)), s)
 	return l
 }
@@ -180,7 +181,7 @@ func reflat[T comparable](l *leafHead, key []byte, base int) *leafHead {
 // from a rekeyFunc's pre and b. It reports whether it did.
 func flatPrepend[T comparable](l *leafHead, pre []byte, b, pathLen int) bool {
 	var z T
-	old, klen := int(l.klen), l.keyLen()-pathLen
+	old, klen := l.rem(), l.keyLen()-pathLen
 	if klen > maxInline || flatOff[T](klen)+uintptr(l.n)*unsafe.Sizeof(z) > flatSizes[l.cls()] {
 		return false
 	}
@@ -190,13 +191,13 @@ func flatPrepend[T comparable](l *leafHead, pre []byte, b, pathLen int) bool {
 	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
 	copy(area[klen-old:], area[:old])
 	fillHead(area[:klen-old], pre, b, pathLen)
-	l.klen = uint8(klen)
+	l.setRem(klen)
 	return true
 }
 
 // flatVals returns the values of flat leaf l. The slice aliases the leaf.
 func flatVals[T comparable](l *leafHead) []T {
-	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), flatOff[T](int(l.klen)))), l.n)
+	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), flatOff[T](l.rem()))), l.n)
 }
 
 // flatAdd adds v to flat leaf l. It returns the leaf that replaces l when l
@@ -206,11 +207,11 @@ func flatAdd[T comparable](l *leafHead, v T) *leafHead {
 		return nil
 	}
 	n := int(l.n)
-	if n == flatCap[T](l.cls(), int(l.klen)) {
-		if flatClass[T](int(l.klen), n+1) == 0 {
+	if n == flatCap[T](l.cls(), l.rem()) {
+		if flatClass[T](l.rem(), n+1) == 0 {
 			return spill(l, v)
 		}
-		c := flatClass[T](int(l.klen), 2*n)
+		c := flatClass[T](l.rem(), 2*n)
 		if c == 0 {
 			c = uint8(len(flatSizes) - 1) // the largest class, which holds n+1
 		}
@@ -225,7 +226,7 @@ func flatAdd[T comparable](l *leafHead, v T) *leafHead {
 // appendFlat stores v after the values of flat leaf l, which has room.
 func appendFlat[T comparable](l *leafHead, v T) {
 	n := int(l.n)
-	unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), flatOff[T](int(l.klen)))), n+1)[n] = v
+	unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), flatOff[T](l.rem()))), n+1)[n] = v
 	l.n++
 }
 
@@ -244,7 +245,7 @@ func flatRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 	if l.n == 0 {
 		return 0, true
 	}
-	if c := flatClass[T](int(l.klen), 2*int(l.n)); c != 0 && max(c, minGrown) < l.cls() {
+	if c := flatClass[T](l.rem(), 2*int(l.n)); c != 0 && max(c, minGrown) < l.cls() {
 		return max(c, minGrown), false
 	}
 	return 0, false
@@ -253,10 +254,10 @@ func flatRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 // resize copies flat leaf l into a new leaf of class c, which holds its values.
 func resize[T comparable](l *leafHead, c uint8) *leafHead {
 	var z T
-	used := flatOff[T](int(l.klen)) + uintptr(l.n)*unsafe.Sizeof(z)
+	used := flatOff[T](l.rem()) + uintptr(l.n)*unsafe.Sizeof(z)
 	nl := allocFlat(c)
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(nl)), used), unsafe.Slice((*byte)(unsafe.Pointer(l)), used))
-	nl.kind = kSet + kind(c)
+	nl.setClass(c)
 	return nl
 }
 
