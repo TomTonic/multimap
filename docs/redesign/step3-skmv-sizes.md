@@ -12,7 +12,7 @@ The values are the real ones (`street`: localities, `dirs`: file names). Nodes a
 content is above 512 bytes is a full page of 512 with a value set behind it (value overflow); the bytes of the
 value set are not counted here.
 
-Summary (bytes per key, the page only):
+Summary (bytes per key, the page only; header of 4 bytes in this table, the design note uses 3, `-header` sets it):
 
 | data | values | keys | remainder | values a key | value bytes | content | page in the grid 128..512 | page in Go's classes | content over 512 B | content up to 64 B |
 |---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|

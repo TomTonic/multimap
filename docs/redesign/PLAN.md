@@ -162,8 +162,9 @@ to 2d). The note must answer:
   with pointers, an object typed for the GC (one Go type per size class).
 - **Set semantics.** Adding a value checks that it is not there: the cost by number of values,
   and from which number a value overflow is cheaper than a linear check.
-- **Size classes and growth.** 128, 256, 384 and 512 bytes (the user's sketch); when a page grows,
-  shrinks (the sketch: only if that saves 50 %), and what happens beyond 512.
+- **Size classes and growth.** 32, 64, 128, 256, 384 and 512 bytes (decided 2026-10-04 from the
+  model of step3-skmv-sizes.md: 83.6 % of the `street` keys fit 32 bytes, memory per key 45 instead of
+  133); when a page grows, shrinks (the sketch: only if that saves 50 %), and what happens beyond 512.
 - **Value overflow** (sketch 2b): a pointer to a value set when the values do not fit. First with
   the existing value set (`internal/vset`: array, then hash set); whether its inline stage is still
   needed.

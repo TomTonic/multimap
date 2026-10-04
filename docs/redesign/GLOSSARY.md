@@ -65,7 +65,8 @@ Every object that stores entries stores only the end of their keys. The tree spe
 ## Objects
 
 - **page**: an object of 128, 256, 384 or 512 bytes that stores entries (384 since the user's
-  sketch; the code of step 2 has 128, 256 and 512). It has no pointer in it unless its values need
+  sketch; the code of step 2 has 128, 256 and 512). A **single-key page** may also be 32 or 64 bytes
+  (decided 2026-10-04, [step3-skmv-sizes.md](step3-skmv-sizes.md)): most keys hold 20 to 60 bytes. It has no pointer in it unless its values need
   one. There are two kinds, and until step 5 no page mixes them: no page holds entries with
   different numbers of values.
   - **single-key page** *(planned, step 3)*: exactly one entry with all its values inline, as many as

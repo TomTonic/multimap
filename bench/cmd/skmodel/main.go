@@ -26,8 +26,8 @@ import (
 )
 
 // headerBytes is the fixed part of the page of the design note: kind, number
-// of values, length of the remainder (2 bytes).
-const headerBytes = 4
+// of values, length of the remainder (3 bytes; -header sets another).
+var headerBytes = 3
 
 // grid is the size classes of the plan; goClasses are Go's size classes up to 512.
 var (
@@ -35,11 +35,14 @@ var (
 	goClasses = []int{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512}
 )
 
+var nodesF = flag.Bool("nodes", false, "also build the model of the byte nodes and print the whole tree")
+var header = flag.Int("header", 3, "bytes of the header of a page")
 var sets = flag.Bool("sets", false, "also compare sets of size classes")
 var detail = flag.Bool("detail", false, "also print the distribution of the page contents and examples")
 
 func main() {
 	flag.Parse()
+	headerBytes = *header
 	w := os.Stdout
 	fmt.Fprintln(w, "| data | values | keys | rem. B | values a key | value B | content B | page B (grid 128..512) | page B (Go classes) | keys over 512 B | keys up to 64 B content |")
 	fmt.Fprintln(w, "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
@@ -111,6 +114,9 @@ func row(kind keys.Kind, n int, unique bool) {
 	name := "multi"
 	if unique {
 		name = "unique"
+	}
+	if *nodesF {
+		wholeTree(kind, unique, c, es)
 	}
 	if *sets {
 		classSets(kind, unique, sizes)
@@ -255,4 +261,46 @@ func classSets(kind keys.Kind, unique bool, sizes []int) {
 		}
 		fmt.Printf("| %s | %.1f | %.1f | %.0f %% | %s |\n", cs.name, total/f, content/f, 100*content/total, strings.Join(parts, ", "))
 	}
+}
+
+// wholeTree builds the trie of the model and prints the bytes a key takes in
+// nodes and in pages (the classes 32, 64 and the plan's grid).
+func wholeTree(kind keys.Kind, unique bool, c keys.Corpus, es []entry) {
+	ks := make([][]byte, len(es))
+	for i, e := range es {
+		ks[i] = e.key
+	}
+	classes := []int{32, 64, 128, 256, 384, 512}
+	var pageB, contentB, ovKeys, ovVals, ovBytes int
+	allVals := 0
+	for _, e := range es {
+		allVals += len(e.vals)
+	}
+	t := &trie{keys: ks, nodes: map[int]int{}}
+	t.pages = func(i, rem int) {
+		size := headerBytes + rem
+		for _, v := range es[i].vals {
+			size += 1 + valueLen(c, v)
+		}
+		contentB += min(size, 512)
+		if size > 512 { // a set leaf of 128 bytes and a value set of Go strings
+			n := len(es[i].vals)
+			ovKeys++
+			ovVals += n
+			pageB += 128 - classFor(classes, 512) // the set leaf replaces the page
+			if n <= 64 {
+				ovBytes += 24 * n // an array of string headers, grown by halves
+			} else {
+				ovBytes += 40 * n // a hash set of string headers
+			}
+		}
+		pageB += classFor(classes, min(size, 512))
+	}
+	t.build(0, len(ks), 0)
+	n := float64(len(ks))
+	name := "multi"
+	if unique {
+		name = "unique"
+	}
+	fmt.Printf("\n%s, %s: the whole tree (byte nodes of internal/art and pages of 32, 64, 128, 256, 384, 512)\n\n| nodes | node B/key | page B/key | total B/key |\n|--:|--:|--:|--:|\n| %d (%.2f a key) | %.1f | %.1f | %.1f |\n\nvalue overflow (content over 512 B): %d keys (%.2f %%) with %d values (%.0f %% of all); their value sets, estimated at 24 B a value up to 64 values and 40 B beyond: %.1f B/key. Total with them: %.1f B/key.\n", kind, name, t.count, float64(t.count)/n, float64(t.bytes)/n, float64(pageB)/n, float64(t.bytes+pageB)/n, ovKeys, 100*float64(ovKeys)/n, ovVals, 100*float64(ovVals)/float64(allVals), float64(ovBytes)/n, float64(t.bytes+pageB+ovBytes)/n)
 }
