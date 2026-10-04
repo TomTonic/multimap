@@ -81,8 +81,8 @@ func TestStringKeyOverflow(t *testing.T) {
 		m.Remove(key, val(i))
 		want = want[:i]
 		isValueOverflow := m.t.find(key).isValueOverflow()
-		// the value overflow stays until the values fill 256 bytes or less; the page, once back, until it is empty
-		if isValueOverflow && content(i) <= skpage.BackLimit {
+		// the value overflow stays until the values take half the room of a page or less; the page, once back, until it is empty
+		if isValueOverflow && skpage.BackFits(3, i*(1+len(val(0)))) {
 			t.Fatalf("with %d values (content %d) the key still has a value overflow", i, content(i))
 		}
 		if !isValueOverflow && content(i) > 512 {
@@ -263,5 +263,34 @@ func TestStringValueOverflowLayout(t *testing.T) {
 		if string(l.stored()) != string(key) && tc.n <= maxInlineOverflow || l.keyLen() != tc.n {
 			t.Errorf("key of %d bytes: stored %q, length %d", tc.n, l.stored(), l.keyLen())
 		}
+	}
+}
+
+// TestStringBackWithLongRemainder covers a key whose remainder is long, which
+// leaves little room for values: the key moves into a value overflow when
+// its few values no longer fit, and comes back into a page when they take half
+// of the room that is left, which a rule of fixed content, counting the
+// remainder, never allowed (a remainder of 300 bytes took all of the 256).
+func TestStringBackWithLongRemainder(t *testing.T) {
+	var m Map[string]
+	key := bytes.Repeat([]byte("k"), 400)
+	val := func(i int) string { return fmt.Sprintf("value-%02d-%s", i, strings.Repeat("x", 20)) } // 30 bytes, 31 with its length
+	for i := range 4 {
+		m.Add(key, val(i))
+	}
+	if !m.t.find(key).isValueOverflow() {
+		t.Fatal("four values of 31 bytes behind a remainder of 400 bytes (106 left) fit a page")
+	}
+	m.Remove(key, val(3))
+	m.Remove(key, val(2))
+	if !m.t.find(key).isValueOverflow() {
+		t.Fatal("two values (62 bytes) take more than half of the 106 bytes: the key goes back too early")
+	}
+	m.Remove(key, val(1))
+	if m.t.find(key).isValueOverflow() {
+		t.Fatal("one value (31 bytes) takes less than half of the room: the key stays in the value overflow")
+	}
+	if got := valuesOf(&m, key); !slices.Equal(got, []string{val(0)}) {
+		t.Fatalf("got %q", got)
 	}
 }

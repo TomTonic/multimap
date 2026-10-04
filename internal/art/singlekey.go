@@ -77,20 +77,20 @@ func (t *Tree) removeSK(l *singleKeyHead, key []byte, v string, rk rekeyFunc) {
 }
 
 // fromValueOverflow returns the page for the value overflow l, whose values have shrunk to
-// fit a page of skpage.BackLimit bytes, or nil if they do not.
+// what skpage.BackFits allows, or nil if they have not.
 func fromValueOverflow(l *singleKeyHead) *skpage.Page {
 	if l.rem() == longKey {
 		return nil
 	}
 	s := *overflowSetOf(l)
-	if int(s.Size()) > skpage.BackLimit/2 { // every value takes two bytes at least
+	if 2*int(s.Size()) > skpage.Room(l.rem()) { // every value takes a byte at least, and they may take half the room
 		return nil
 	}
-	need, ok := skpage.Header+l.rem(), true
+	valueBytes, ok := 0, true
 	vs := make([][]byte, 0, s.Size())
 	overflowEach(l, func(x string) bool {
-		need += 1 + len(x)
-		if ok = len(x) <= skpage.MaxValue && need <= skpage.BackLimit; ok {
+		valueBytes += 1 + len(x)
+		if ok = len(x) <= skpage.MaxValue && skpage.BackFits(l.rem(), valueBytes); ok {
 			vs = append(vs, view(x))
 		}
 		return ok

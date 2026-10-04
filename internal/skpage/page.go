@@ -38,13 +38,21 @@ const (
 	MaxRemainder = 505
 	// Header is the size of the fixed part: type, r, n, kl.
 	Header = 6
-	// BackLimit is the content, in bytes, up to which the value set of a key
-	// goes back into a page (half of the largest class). A key moves into a
-	// set when its content no longer fits the largest class; moving back only
-	// at half of that keeps a key at the border from changing its object with
-	// every added and removed value.
-	BackLimit = 256
 )
+
+// BackFits reports whether the values of a key whose value overflow they have
+// left, which take valueBytes, go back into a page of the largest class that
+// holds a remainder of rem bytes: when they take at most half the room the page
+// has for them (512 less the header and the remainder). A key moves into a
+// value overflow when its values no longer fit the largest class; moving back
+// only at half of that keeps a key at the border from changing its object with
+// every added and removed value, and does not depend on how long the remainder
+// is.
+func BackFits(rem, valueBytes int) bool { return 2*valueBytes <= Room(rem) }
+
+// Room returns the bytes that the largest page has for values behind a remainder
+// of rem bytes: 512 less the header and the remainder.
+func Room(rem int) int { return sizes[Classes-1] - Header - rem }
 
 // sizes are the object sizes of the classes.
 var sizes = [...]int{32, 64, 128, 256, 384, 512}
@@ -59,13 +67,18 @@ const Classes = len(sizes)
 // leaves it 0.
 var TypeBase uint8
 
-// Page is the first three bytes of a page; the page is the object they start.
-type Page struct {
+// head is the first six bytes of every page, of both flavors; the page is the
+// object they start.
+type head struct {
 	objType uint8  // TypeBase plus twice the size class, plus bit 8 of the length of the remainder
 	r       uint8  // bits 0 to 7 of the length of the remainder
 	n       uint16 // number of values
 	kl      uint16 // length of the whole key
 }
+
+// Page is the page of values of variable length (strings), see the package
+// comment; Fixed is the page of values of one size.
+type Page struct{ head }
 
 // Result says what Add did.
 type Result int
@@ -81,37 +94,41 @@ const (
 	Full
 )
 
-func (p *Page) class() int { return int(p.objType&^1-TypeBase) >> 1 }
+func (p *head) class() int { return int(p.objType&^1-TypeBase) >> 1 }
 
 // rem returns the length of the remainder: nine bits, the lowest bit of the
 // type byte on top of r.
-func (p *Page) rem() int { return int(p.r) | int(p.objType&1)<<8 }
+func (p *head) rem() int { return int(p.r) | int(p.objType&1)<<8 }
 
 // setRem sets the length of the remainder and keeps the class.
-func (p *Page) setRem(n int) {
+func (p *head) setRem(n int) {
 	p.objType = p.objType&^1 | uint8(n>>8)
 	p.r = uint8(n)
 }
 
 // mem returns the whole object.
-func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class()]) }
+func (p *head) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class()]) }
 
-// alloc returns a zeroed object of class c.
-func alloc(c int) *Page {
+// allocRaw returns a zeroed object of class c that holds no pointer: an array
+// of words, which the garbage collector never scans.
+func allocRaw(c int) unsafe.Pointer {
 	switch c {
 	case 0:
-		return (*Page)(unsafe.Pointer(new([4]uint64)))
+		return unsafe.Pointer(new([4]uint64))
 	case 1:
-		return (*Page)(unsafe.Pointer(new([8]uint64)))
+		return unsafe.Pointer(new([8]uint64))
 	case 2:
-		return (*Page)(unsafe.Pointer(new([16]uint64)))
+		return unsafe.Pointer(new([16]uint64))
 	case 3:
-		return (*Page)(unsafe.Pointer(new([32]uint64)))
+		return unsafe.Pointer(new([32]uint64))
 	case 4:
-		return (*Page)(unsafe.Pointer(new([48]uint64)))
+		return unsafe.Pointer(new([48]uint64))
 	}
-	return (*Page)(unsafe.Pointer(new([64]uint64)))
+	return unsafe.Pointer(new([64]uint64))
 }
+
+// alloc returns a zeroed page of class c.
+func alloc(c int) *Page { return (*Page)(allocRaw(c)) }
 
 // classFor returns the smallest class that holds need bytes, or -1.
 func classFor(need int) int {
@@ -169,7 +186,7 @@ func Empty(rest []byte, keyLen int) *Page {
 // Build returns a page for the key of keyLen bytes whose end is rest, with the
 // values vals (all different),
 // or nil if they do not fit. The tree calls Build when the value set of a key
-// has shrunk to BackLimit bytes of content or less.
+// has shrunk to what BackFits allows.
 func Build(rest []byte, keyLen int, vals [][]byte) *Page {
 	if len(rest) > MaxRemainder || len(vals) == 0 {
 		return nil
@@ -196,25 +213,25 @@ func Build(rest []byte, keyLen int, vals [][]byte) *Page {
 }
 
 // Size returns the size of the page's object in bytes.
-func (p *Page) Size() int { return sizes[p.class()] }
+func (p *head) Size() int { return sizes[p.class()] }
 
 // Class returns the index of the page's size class, 0 for 32 bytes.
-func (p *Page) Class() int { return p.class() }
+func (p *head) Class() int { return p.class() }
 
 // Len returns the number of values.
-func (p *Page) Len() int { return int(p.n) }
+func (p *head) Len() int { return int(p.n) }
 
 // Rest returns the remainder. The slice aliases the page and is valid until the
 // page changes.
-func (p *Page) Rest() []byte { return p.mem()[Header : Header+p.rem()] }
+func (p *head) Rest() []byte { return p.mem()[Header : Header+p.rem()] }
 
 // KeyLen returns the length of the whole key.
-func (p *Page) KeyLen() int { return int(p.kl) }
+func (p *head) KeyLen() int { return int(p.kl) }
 
 // Match reports whether key is the key of the page: it has the length of the
 // whole key, and its last bytes are the remainder. The tree has matched the
 // bytes before them on its way down.
-func (p *Page) Match(key []byte) bool {
+func (p *head) Match(key []byte) bool {
 	r := p.rem()
 	return len(key) == int(p.kl) && string(key[len(key)-r:]) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(p), Header)), r)
 }

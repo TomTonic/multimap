@@ -43,6 +43,7 @@ var header = flag.Int("header", 3, "bytes of the header of a page")
 var sets = flag.Bool("sets", false, "also compare sets of size classes")
 var valuesF = flag.String("values", "string", "the values: string (bytes with a length byte), words (fixed 8 bytes, no length byte), words-len (8 bytes with a length byte), pointers (fixed 8 bytes, the remainder padded to whole words)")
 var ovBytesF = flag.Float64("ovbytes", 0, "bytes a value takes in the value set of the value overflow (0: the estimate for strings, 24 up to 64 values and 40 beyond; measured with cmd/ovbench: Set3 of uint64 16.3, of pointers 18)")
+var histF = flag.String("histogram", "", "write the entries of each data set, as lines `remainder values count`, to files entries-<data>.txt in this directory (the data of the microbenchmark of step 3.5: internal/art/testdata)")
 var detail = flag.Bool("detail", false, "also print the distribution of the page contents and examples")
 
 func main() {
@@ -83,6 +84,7 @@ func row(kind keys.Kind, n int, singleValue bool) {
 	sort.Slice(es, func(i, j int) bool { return bytes.Compare(es[i].key, es[j].key) < 0 })
 	var rem, nv, vb, content, gridB, goB, over, small, pageB float64
 	longRem, multi := 0, 0
+	hist := map[[2]int]int{}
 	var multiGrid, multiFlat float64
 	sizes := make([]int, n)
 	rems := make([]int, n)
@@ -112,6 +114,7 @@ func row(kind keys.Kind, n int, singleValue bool) {
 			vbytes += s
 		}
 		sizes[i], rems[i] = size, r
+		hist[[2]int{r, len(e.vals)}]++
 		if r > 58 {
 			longRem++
 		}
@@ -137,6 +140,9 @@ func row(kind keys.Kind, n int, singleValue bool) {
 	}
 	fmt.Fprintf(os.Stderr, "skmodel: %s: %d keys (%.3f %%) have a remainder above 58 bytes (the longest that a typed page of 8 words holds)\n", kind, longRem, 100*float64(longRem)/float64(n))
 	fmt.Fprintf(os.Stderr, "skmodel: %s: %d keys (%.1f %%) have several values: a page of the grid 32..512 takes %.1f B on average, a flat leaf of today's classes %.1f B\n", kind, multi, 100*float64(multi)/float64(n), multiGrid/float64(max(multi, 1)), multiFlat/float64(max(multi, 1)))
+	if *histF != "" && !singleValue {
+		writeHistogram(*histF, kind, hist)
+	}
 	f := float64(n)
 	name := "natural"
 	if singleValue {
@@ -385,4 +391,28 @@ func overflow(kind keys.Kind, c keys.Corpus, es []entry) {
 		lo = bounds[i]
 	}
 	fmt.Printf("\nall values: %d, value bytes %d (%.1f B a value)\n", allVals, allBytes, float64(allBytes)/float64(allVals))
+}
+
+// writeHistogram writes the entries of a data set, one line `remainder values count` for each
+// pair that occurs, in order, to entries-<kind>.txt in dir.
+func writeHistogram(dir string, kind keys.Kind, hist map[[2]int]int) {
+	pairs := make([][2]int, 0, len(hist))
+	for k := range hist {
+		pairs = append(pairs, k)
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i][0] != pairs[j][0] {
+			return pairs[i][0] < pairs[j][0]
+		}
+		return pairs[i][1] < pairs[j][1]
+	})
+	var b strings.Builder
+	fmt.Fprintf(&b, "# remainder length, values, number of keys: the entries of %s as a tree of byte nodes cuts them (bench/cmd/skmodel -histogram)\n", kind)
+	for _, k := range pairs {
+		fmt.Fprintf(&b, "%d %d %d\n", k[0], k[1], hist[k])
+	}
+	if err := os.WriteFile(fmt.Sprintf("%s/entries-%s.txt", dir, kind), []byte(b.String()), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "skmodel:", err)
+		os.Exit(1)
+	}
 }

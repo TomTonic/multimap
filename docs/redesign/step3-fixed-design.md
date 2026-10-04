@@ -63,6 +63,10 @@ As in 3.4. `ovbench -values words|pointers` on the keys that overflow (more than
 
 The same as for strings: memory equal, 5 to 15 % faster. `Set3` is generic in `comparable`, so one form serves all `T`. `vset` stays for `Hashed`.
 
+> **Corrections made while building (2026-10-04):** Go 1.27 has generic methods (the user's remark; I had said it had not), so `Fixed` is an untyped head with methods `p.Has[T](v)`, not a
+> generic type. Growing takes the smallest class that holds one more, **shrinking has hysteresis** (only when the values fill at most half of the smaller class), because the first version, which shrank at once like the
+> string page, copied a key at a class border on every added and removed value (churn 1.6 to 2 times the flat leaf). Results: [step3-fixed-results.md](step3-fixed-results.md).
+
 ## 5. Size classes, growth, return (as 3.3)
 
 Smallest class that holds the first value; when full, the smallest class that holds one more (the classes double, so one step); shrink on removal when a class of at most half
