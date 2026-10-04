@@ -9,6 +9,7 @@ Windows, native, `-suite dev -minprocs 6 -maxprocs 12 -memn 262144 -memrounds 3`
 | run | code | scenario |
 |---|---|---|
 | `lp8-*` | `c4dc4b6` (final) | `unique` and `multi` of `street` and `dirs`; `ordered-lpage`, `-zc`, `-mv`, `-mvzc` against `btree-map` or `btree-sets` |
+| `lp9-*` | `c4dc4b6` | `street` repeated (`mv`; the same numbers as `lp8` to within 0.03) and `dirs` with a header of 64 |
 | `lp6-multi-*` | `ef06198` | header size 32, 48 and 64 (`LPAGE_MAXHEADER`), larger minimum header (`LPAGE_MINHEADER=24`: no gain); the `dirs` run with 48 crashed in its memory phase (the bug of the report) and has no memory table |
 | `lp4-*` | `7717957` | first several-values runs (3 classes, header 24; `-h16`, `-h32`: 16 and 32) |
 | `lp3-uni-*` | `0a517ae` | first zero-copy runs |
