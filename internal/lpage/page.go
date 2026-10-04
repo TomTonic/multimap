@@ -102,14 +102,30 @@ type Page struct {
 
 func (p *Page) class() int { return int(p.code-KindBase) & 3 }
 
+// info says what a code byte means, so that the hot paths read it from a table
+// instead of computing it from the bits again and again.
+type info struct{ hdr, capacity, width, size int }
+
+// infos is indexed by the code byte less KindBase.
+var infos [128]info
+
+func init() {
+	for code := range infos {
+		h, w := 8*(1+code>>2&7), widths[code>>5&3]
+		infos[code] = info{hdr: h, capacity: capacityOf(h, w), width: w, size: sizes[code&3]}
+	}
+}
+
+func (p *Page) info() *info { return &infos[(p.code-KindBase)&127] }
+
 // hdr returns the size of the header in bytes.
-func (p *Page) hdr() int { return 8 * (1 + int((p.code-KindBase)>>2&7)) }
+func (p *Page) hdr() int { return p.info().hdr }
 
 // width returns the length of every value, or 0 if they differ.
-func (p *Page) width() int { return widths[(p.code-KindBase)>>5&3] }
+func (p *Page) width() int { return p.info().width }
 
 // capacity returns how many entries the header has room for.
-func (p *Page) capacity() int { return capacityOf(p.hdr(), p.width()) }
+func (p *Page) capacity() int { return p.info().capacity }
 
 // capacityOf returns how many entries a header of h bytes has room for when the
 // values have the width w (0: they differ).
@@ -121,7 +137,7 @@ func capacityOf(h, w int) int {
 }
 
 // Size returns the size of the page's object in bytes.
-func (p *Page) Size() int { return sizes[p.class()] }
+func (p *Page) Size() int { return p.info().size }
 
 // Class returns the index of the page's size class.
 func (p *Page) Class() int { return p.class() }
@@ -135,7 +151,7 @@ func (p *Page) HeaderLen() int { return p.hdr() }
 // Width returns the length of every value of the page, or 0 if they differ.
 func (p *Page) Width() int { return p.width() }
 
-func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), sizes[p.class()]) }
+func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), p.info().size) }
 
 // alloc returns a zeroed object of class c.
 func alloc(c int) *Page {
@@ -197,11 +213,11 @@ func sumBytes(b []byte) int {
 // lens returns the length arrays of the page: the remainders and, for values of
 // different lengths, the values (otherwise nil).
 func (p *Page) lens() (r, v []byte) {
-	m := p.mem()
-	c := p.capacity()
-	r = m[2 : 2+c]
-	if p.width() == 0 {
-		v = m[2+c : 2+2*c]
+	in := p.info()
+	m := unsafe.Slice((*byte)(unsafe.Pointer(p)), in.size)
+	r = m[2 : 2+in.capacity]
+	if in.width == 0 {
+		v = m[2+in.capacity : 2+2*in.capacity]
 	}
 	return r, v
 }
