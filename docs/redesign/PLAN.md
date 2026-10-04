@@ -213,7 +213,7 @@ and every comparison of `kind` (`isLeaf`, `isPage`, the descent), so: note with 
 
 **First, the vocabulary of what survives** (user's remark of 2026-10-04: new code still said "leaf", and the code's `isPage` means the multi-key page while the single-key page
 sits under `leaf` names). When the flat and the typed leaf are replaced by single-key pages (below), their code goes, so rename only what stays: `leafHead`
-(the head of a single-key page), `isLeaf`/`isPage` (to `isSingleKey`/`isMultiKey`), `kSet` and the "set leaf" (the overflow form of the single-key page), `skleaf.go`,
+(the head of a single-key page), `isLeaf`/`isPage` (to `isSingleKey`/`isMultiKey`), `kSet` and the "set leaf" (the single-key page in value overflow: `kValueOverflow`, `isValueOverflow()`, in prose "value overflow", never "overflow page" or a bare "set"; user, 2026-10-04: unambiguous, no guessing; `isSingleKey`/`isMultiKey` agreed), `skleaf.go`,
 the comments and test names of the string map. Names to the user first, then one commit with nothing else in it.
 
 `string -> {uint64}`, `string -> {*T}`, `uint64 -> {*T}`, each measured as in 3.3 (`u64` keys at 4K,
