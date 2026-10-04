@@ -199,6 +199,16 @@ their value sets were nearly half of the heap in the experiment. Design note fir
 value set against value blocks of 128-byte multiples (STRATEGY R6), with the prediction. Then build,
 measure as in 3.3. **Stop for the user.**
 
+**Done 2026-10-04**, measured: [step3-overflow-results.md](step3-overflow-results.md) (memory as predicted, speed neutral on the
+existing benchmarks: the overflow keys are 0.5 to 1.6 % of the keys). The set leaf of a string map is on the grid 32/64/128/256.
+
+### 3.4b Remainder of up to 512 bytes (user, 2026-10-04; design note first)
+
+One more bit of the kind byte extends `klen` to nine bits, so a leaf and a page hold a remainder of up to 511 bytes inline (now 254; `longKey` = 255 marks
+a key as a string). Then the set leaf gets the classes 384 and 512 (key area 370 and 498) and a page a longer remainder. It touches every `klen`
+and every comparison of `kind` (`isLeaf`, `isPage`, the descent), so: note with the list of places, the cost in `matches` and `find`, a prediction
+(memory: none on the existing corpora, their remainders are short; speed: not measurable) and then the change, before the next measurement.
+
 ### 3.5 The other cases
 
 `string -> {uint64}`, `string -> {*T}`, `uint64 -> {*T}`, each measured as in 3.3 (`u64` keys at 4K,

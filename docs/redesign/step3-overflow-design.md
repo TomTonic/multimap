@@ -13,13 +13,18 @@ measurement of step 3.3 and `internal/vset`.
   `Set3[string]`** (github.com/TomTonic/Set3, a swiss-table hash set that exists, is tested and is the user's) instead of the 64-byte `vset.Set[string]`
   with its inline stage and array stage. It takes any string, so the second form of the block design (values of 255 bytes or more)
   is not needed: **one** form for every key that does not fit a page, and for keys of more than 254 bytes.
+- **The leaf is on the grid** (user, 2026-10-04): 32, 64, 128 or 256 bytes, the head 6 bytes, the pointer the last 8, the key area what is
+  left (18, 50, 114, 242 bytes; a longer remainder: the whole key as a string, 32 bytes + the string). The bytes the 64-byte `vset.Set` took are
+  not saved but go to the key. 384 and 512 are of no use as long as `klen` is one byte (the remainder is at most 254); see 3.4b in PLAN.md.
+  The pointer stays last: moving it first would make the key offset of this leaf differ from every other leaf (`matches` is the hot path) for about
+  1 ns a leaf and GC cycle (measured: 1 M objects of 256 bytes, pointer first 7.1 ms, last 7.9 ms).
 - **Created** with room for what the page held (`EmptyWithCapacity` of 1.5 times its values, so the spill does not rehash).
 - **Transitions** as in the table of section 2, with the block-set leaf left out: page -> set leaf when the content no longer fits
   512 bytes or a value of 255 bytes or more arrives; set leaf -> page when the content is 256 bytes or less and every value is shorter than 255
   bytes (the check of step 3.3, `unspillSK`).
 - **`vset` stays** for `Hashed` and for the maps of other value types; nothing in it changes (option F).
 - **Prediction** (from the measurement of section 3a): the containers are 15 to 40 % faster than `vset` (a hit 55 against 65 ns, a miss 17
-  against 31, add + remove 38 against 63) and a leaf is 56 bytes smaller; the heap stays where it is, **+2 B a value** (50.4 against 48.6 on `street`), so the
+  against 31, add + remove 38 against 63) and a leaf is smaller; the heap stays where it is, **+2 B a value** (50.4 against 48.6 on `street`), so the
   memory of the natural mix does not fall: `street` about 113 B/key, `dirs` about 163, as measured in 3.3. What this step does *not* bring: the third of the
   heap that is value sets, and the pointer to every string.
 - **How it is checked:** the tests of 3.3 for the transitions run on the new leaf (the reference test with values that overflow, the fuzz test,

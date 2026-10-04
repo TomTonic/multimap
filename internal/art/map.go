@@ -115,7 +115,7 @@ func rekey[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
 		}
 		return reflat[T](l, wholeKey(l, pre, b), pathLen)
 	}
-	if setPrepend(l, pre, b, pathLen) {
+	if setPrepend(l, pre, b, pathLen, setKeyCap) {
 		return l
 	}
 	nl := newSetLeaf[T](wholeKey(l, pre, b), pathLen)
@@ -138,10 +138,11 @@ func setKeyCap(klen int) int {
 // setPrepend makes set leaf l hold its key from pathLen on in place when the
 // longer remainder still fits the key area of l's class, which keeps its value
 // set where it is. It saves rekey the allocation of a new leaf, see
-// flatPrepend, and reports whether it did.
-func setPrepend(l *leafHead, pre []byte, b, pathLen int) bool {
+// flatPrepend, and reports whether it did. keyCap is setKeyCap, or set3KeyCap
+// for the set leaf of a string map.
+func setPrepend(l *leafHead, pre []byte, b, pathLen int, keyCap func(int) int) bool {
 	old, klen := int(l.klen), l.keyLen()-pathLen // a string leaf holds its whole key, and never gets here
-	if klen > maxInline || klen > setKeyCap(old) {
+	if klen > maxInline || klen > keyCap(old) {
 		return false
 	}
 	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)

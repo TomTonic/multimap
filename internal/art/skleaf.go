@@ -106,7 +106,7 @@ func unspillSK(l *leafHead) *skpage.Page {
 // set leaf takes them in its key area if they fit, else it is copied.
 func rekeySK(l *leafHead, pre []byte, b, pathLen int) *leafHead {
 	if l.kind == kSet {
-		if setPrepend(l, pre, b, pathLen) {
+		if setPrepend(l, pre, b, pathLen, set3KeyCap) {
 			return l
 		}
 		return newSetLeaf3(wholeKey(l, pre, b), pathLen, *strSetOf(l))
@@ -126,19 +126,63 @@ func rekeySK(l *leafHead, pre []byte, b, pathLen int) *leafHead {
 // vset.Set: behind the head and the key area it holds one pointer to a Set3
 // (github.com/TomTonic/Set3), a hash set that takes any string. The page is the
 // small stage, so the inline stage and the array stage of vset, which a key
-// with a few values would use, are not needed; the leaf is 56 bytes smaller.
-// Its key areas are those of the other set leaf, and the pointer lies where
-// vset.Set lies (valsOff).
-type setLeaf3[K keyArea] struct {
+// with a few values would use, are not needed.
+//
+// It is an object of the grid of the pages, 32, 64, 128 or 256 bytes: the head
+// takes 6 bytes, the pointer the last 8, and the key area what is left, 18, 50,
+// 114 or 242 bytes, so the bytes the 64-byte vset.Set took go to the key and not
+// to padding. A remainder of more than 242 bytes is held as a string.
+type setLeaf3[K keyArea3] struct {
 	leafHead
 	k   K
 	set *set3.Set3[string]
 }
 
+// keyArea3 is the storage of the key of the set leaf of a string map: the key
+// areas of the grid, or a string.
+type keyArea3 interface {
+	[18]byte | [50]byte | [114]byte | [242]byte | string
+}
+
+// maxInline3 is the longest remainder the set leaf of a string map holds inline.
+const maxInline3 = 242
+
+// Offsets of the pointer in the set leaf of a string map: they follow from the
+// key areas of the grid.
+var (
+	setOff3a   = unsafe.Offsetof(setLeaf3[[18]byte]{}.set)
+	setOff3b   = unsafe.Offsetof(setLeaf3[[50]byte]{}.set)
+	setOff3c   = unsafe.Offsetof(setLeaf3[[114]byte]{}.set)
+	setOff3d   = unsafe.Offsetof(setLeaf3[[242]byte]{}.set)
+	setOff3Str = unsafe.Offsetof(setLeaf3[string]{}.set)
+)
+
+// set3KeyCap returns the size of the key area of a set leaf of a string map
+// whose key remainder is klen bytes long, at most maxInline3 (see setPrepend).
+func set3KeyCap(klen int) int {
+	for _, c := range [...]int{18, 50, 114} {
+		if klen <= c {
+			return c
+		}
+	}
+	return maxInline3
+}
+
 // strSetOf returns the slot that holds the value set of set leaf l of a string
 // map.
 func strSetOf(l *leafHead) **set3.Set3[string] {
-	return (**set3.Set3[string])(unsafe.Add(unsafe.Pointer(l), valsOff(l)))
+	off := setOff3Str
+	switch k := l.klen; {
+	case k <= 18:
+		off = setOff3a
+	case k <= 50:
+		off = setOff3b
+	case k <= 114:
+		off = setOff3c
+	case k <= maxInline3:
+		off = setOff3d
+	}
+	return (**set3.Set3[string])(unsafe.Add(unsafe.Pointer(l), off))
 }
 
 // newSetLeaf3 allocates a set leaf of a string map that holds key from base on,
@@ -146,29 +190,21 @@ func strSetOf(l *leafHead) **set3.Set3[string] {
 // holds set as its value set.
 func newSetLeaf3(key []byte, base int, set *set3.Set3[string]) *leafHead {
 	var l *leafHead
-	if len(key) > maxKeyLen || len(key)-base > maxInline {
+	if len(key) > maxKeyLen || len(key)-base > maxInline3 {
 		sl := &setLeaf3[string]{k: string(key)}
 		sl.kind, sl.klen = kSet, longKey
 		l = &sl.leafHead
 	} else {
 		s, kl := key[base:], len(key)
 		switch k := len(s); {
-		case k <= 16:
-			l = newInline3[[16]byte](s, kl)
-		case k <= 32:
-			l = newInline3[[32]byte](s, kl)
-		case k <= 48:
-			l = newInline3[[48]byte](s, kl)
-		case k <= 64:
-			l = newInline3[[64]byte](s, kl)
-		case k <= 96:
-			l = newInline3[[96]byte](s, kl)
-		case k <= 128:
-			l = newInline3[[128]byte](s, kl)
-		case k <= 192:
-			l = newInline3[[192]byte](s, kl)
+		case k <= 18:
+			l = newInline3[[18]byte](s, kl)
+		case k <= 50:
+			l = newInline3[[50]byte](s, kl)
+		case k <= 114:
+			l = newInline3[[114]byte](s, kl)
 		default:
-			l = newInline3[[256]byte](s, kl)
+			l = newInline3[[242]byte](s, kl)
 		}
 	}
 	*strSetOf(l) = set
@@ -177,7 +213,7 @@ func newSetLeaf3(key []byte, base int, set *set3.Set3[string]) *leafHead {
 
 // newInline3 allocates a set leaf of a string map that holds the remainder s
 // of a key of kl bytes inline in an array of type K.
-func newInline3[K [16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte](s []byte, kl int) *leafHead {
+func newInline3[K [18]byte | [50]byte | [114]byte | [242]byte](s []byte, kl int) *leafHead {
 	l := &setLeaf3[K]{}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), s)
 	l.kind, l.klen, l.kl = kSet, uint8(len(s)), uint16(kl)
@@ -188,22 +224,14 @@ func newInline3[K [16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]by
 // remainder of klen bytes (longKey: a key held as a string).
 func setLeaf3Size(klen uint8) uintptr {
 	switch k := klen; {
-	case k <= 16:
-		return unsafe.Sizeof(setLeaf3[[16]byte]{})
-	case k <= 32:
-		return unsafe.Sizeof(setLeaf3[[32]byte]{})
-	case k <= 48:
-		return unsafe.Sizeof(setLeaf3[[48]byte]{})
-	case k <= 64:
-		return unsafe.Sizeof(setLeaf3[[64]byte]{})
-	case k <= 96:
-		return unsafe.Sizeof(setLeaf3[[96]byte]{})
-	case k <= 128:
-		return unsafe.Sizeof(setLeaf3[[128]byte]{})
-	case k <= 192:
-		return unsafe.Sizeof(setLeaf3[[192]byte]{})
-	case k <= maxInline:
-		return unsafe.Sizeof(setLeaf3[[256]byte]{})
+	case k <= 18:
+		return unsafe.Sizeof(setLeaf3[[18]byte]{})
+	case k <= 50:
+		return unsafe.Sizeof(setLeaf3[[50]byte]{})
+	case k <= 114:
+		return unsafe.Sizeof(setLeaf3[[114]byte]{})
+	case k <= maxInline3:
+		return unsafe.Sizeof(setLeaf3[[242]byte]{})
 	}
 	return unsafe.Sizeof(setLeaf3[string]{})
 }

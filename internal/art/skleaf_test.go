@@ -198,6 +198,7 @@ func TestStringRekey(t *testing.T) {
 		{"a remainder beyond 254 bytes", 290, 280, 20, []string{"v", "w"}, "set"},
 		{"a set leaf", 40, 37, 30, []string{strings.Repeat("L", 300)}, "set"},
 		{"a set leaf that needs a larger key area", 100, 99, 20, []string{strings.Repeat("L", 300)}, "set"},
+		{"a set leaf in the largest key area", 200, 80, 70, []string{strings.Repeat("L", 300)}, "set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k := key[:tc.keyLen]
@@ -232,30 +233,32 @@ func TestStringRekey(t *testing.T) {
 	}
 }
 
-// TestStringSetLeafLayout covers the set leaf of a string map as an object: the
-// pointer to its value set lies where the value set of the other set leaf lies
-// (the offsets are shared), whatever the key area, and the object statistic
-// knows its size, which is the size the runtime allocates.
+// TestStringSetLeafLayout covers the set leaf of a string map as an object: it
+// lies on the grid of the pages (32, 64, 128 or 256 bytes, 32 for a key held as
+// a string), the pointer to its value set is the last word of the object whatever
+// the key area, the key area is the one that fills the object, and the object
+// statistic knows its size, which is the size the runtime allocates.
 func TestStringSetLeafLayout(t *testing.T) {
 	var strs Map[string]
 	strs.flat = 3
-	for _, n := range []int{5, 20, 40, 60, 90, 120, 180, 250, 300} {
-		key := bytes.Repeat([]byte("k"), n)
+	for _, tc := range []struct {
+		n, size int
+	}{{5, 32}, {18, 32}, {19, 64}, {50, 64}, {51, 128}, {114, 128}, {115, 256}, {242, 256}, {243, 32}, {300, 32}} {
+		key := bytes.Repeat([]byte("k"), tc.n)
 		l := newSetLeaf3(key, 0, set3.EmptyWithCapacity[string](4))
-		if off := valsOff(l); uintptr(unsafe.Pointer(strSetOf(l)))-uintptr(unsafe.Pointer(l)) != off {
-			t.Errorf("key of %d bytes: set at %d, valsOff %d", n, uintptr(unsafe.Pointer(strSetOf(l)))-uintptr(unsafe.Pointer(l)), off)
+		if off := int(uintptr(unsafe.Pointer(strSetOf(l))) - uintptr(unsafe.Pointer(l))); tc.n <= maxInline3 && off != tc.size-8 {
+			t.Errorf("key of %d bytes: set at %d, want the last word of %d", tc.n, off, tc.size)
 		}
 		strSetAdd(l, "v")
 		if got := strs.leafValues(l); got != 1 {
-			t.Errorf("key of %d bytes: %d values", n, got)
+			t.Errorf("key of %d bytes: %d values", tc.n, got)
 		}
 		o := strs.leafKind(l)
-		if want := int(setLeaf3Size(l.klen)); o.Size != want || o.Label != "set leaf" || !o.Pointers {
-			t.Errorf("key of %d bytes: object %+v, want a set leaf of %d bytes", n, o, want)
+		if o.Size != tc.size || int(setLeaf3Size(l.klen)) != tc.size || o.Label != "set leaf" || !o.Pointers {
+			t.Errorf("key of %d bytes: object %+v, want a set leaf of %d bytes", tc.n, o, tc.size)
 		}
-	}
-	// the offsets of the two kinds of set leaf agree for every key area
-	if unsafe.Offsetof(setLeaf3[[16]byte]{}.set) != setOff16 || unsafe.Offsetof(setLeaf3[[256]byte]{}.set) != setOff256 || unsafe.Offsetof(setLeaf3[string]{}.set) != setOffStr {
-		t.Error("the value set of the set leaf of strings lies elsewhere than that of the other set leaf")
+		if string(l.stored()) != string(key) && tc.n <= maxInline3 || l.keyLen() != tc.n {
+			t.Errorf("key of %d bytes: stored %q, length %d", tc.n, l.stored(), l.keyLen())
+		}
 	}
 }
