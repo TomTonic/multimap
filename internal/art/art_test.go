@@ -5,15 +5,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"maps"
-	"math/bits"
 	"math/rand/v2"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
 	"unsafe"
-
-	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // keySets returns key corpora that exercise every structural case: keys that
@@ -650,12 +647,8 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		checkLeaf(t, asSingleKey(n), path)
 		return 1
 	}
-	if isMultiKey(n.objType) {
-		return checkPage(t, asMultiKey(n), path)
-	}
 	limits := map[objType][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
-		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256},
-		kR8: {1, 8}, kR24: {rShrink[1] + 1, 24}, kR56: {rShrink[2] + 1, 56}, kR256: {rShrink[3] + 1, 256}}[n.objType]
+		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256}}[n.objType]
 	count, endPage := int(n.count), endPageOf(n)
 	if n.objType == kN256 {
 		if n.count != 255 {
@@ -663,19 +656,13 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		}
 		count = int(asN256(n).total)
 	}
-	if isRange(n.objType) {
-		if n.count != 255 {
-			t.Fatalf("range node with header count %d, want 255", n.count)
-		}
-		count = int(asR(n).n)
-	}
 	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
 		t.Fatalf("type %d holds %d children, allowed %d..%d", n.objType, count, lo, hi)
 	}
-	if count+b2i(endPage != nil) < 2 && !pinned(n) {
+	if count+b2i(endPage != nil) < 2 {
 		t.Fatalf("node does not branch (type %d, count %d, endPage %v): it should have collapsed", n.objType, count, endPage != nil)
 	}
-	if n.objType != kN256 && !isRange(n.objType) {
+	if n.objType != kN256 {
 		s := slots(n)
 		if count+b2i(endPage != nil) > len(s) {
 			t.Fatalf("type %d holds %d children and a endPage in %d slots", n.objType, count, len(s))
@@ -703,9 +690,6 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 			t.Fatalf("endPage key of %d bytes does not end at pathLen %d", endPage.keyLen(), len(end))
 		}
 		leaves++
-	}
-	if isRange(n.objType) {
-		return leaves + checkRangeNode(t, n, end)
 	}
 	children, bytesOf := 0, -1
 	eachChild(n, func(b byte, c *header) {
@@ -758,7 +742,6 @@ func TestShrinkAndCollapse(t *testing.T) {
 			t.Run(fmt.Sprintf("%q/%d", prefix, fan), func(t *testing.T) {
 				r := rand.New(rand.NewPCG(uint64(fan), 9))
 				var m Map[uint64]
-				leavesOnly(&m)
 				keys := [][]byte{[]byte(prefix)} // the end page of the widest node
 				for b := range fan {
 					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
@@ -879,7 +862,6 @@ func TestLongPaths(t *testing.T) {
 				}
 				key := func(b int) []byte { return append(append(slices.Clip(common), byte(b)), "tail"...) }
 				var m Map[uint64]
-				leavesOnly(&m)
 				ref := reference{}
 				step := func(add bool, k []byte) {
 					if add {
@@ -919,89 +901,10 @@ func TestLongPaths(t *testing.T) {
 	}
 }
 
-// findSingleKey returns the leaf of key in tr, or nil if the key is absent or lives
-// in a page.
-func findSingleKey(tr *Tree, key []byte) *singleKeyHead {
-	n, _ := tr.find(key)
-	if n == nil || !isSingleKey(n.objType) {
-		return nil
+// b2i returns 1 for true and 0 for false.
+func b2i(b bool) int {
+	if b {
+		return 1
 	}
-	return asSingleKey(n)
-}
-
-// checkPage fails unless the keys of page p are strictly ascending and start
-// with path, the key bytes above the page, which the page's base does not lie
-// below, and returns their number.
-func checkPage(t *testing.T, p *vpage.Page, path []byte) int {
-	t.Helper()
-	if p.Len() == 0 || p.Base() > len(path) {
-		t.Fatalf("page of class %d holds %d keys, from base %d below a path of %d bytes", p.Class(), p.Len(), p.Base(), len(path))
-	}
-	items := pageItems(p, path)
-	for i, it := range items {
-		if !bytes.HasPrefix(it.key, path) {
-			t.Fatalf("page key %q does not continue its path %q", it.key, path)
-		}
-		if i > 0 && bytes.Compare(items[i-1].key, it.key) >= 0 {
-			t.Fatalf("page keys %q and %q are not ascending", items[i-1].key, it.key)
-		}
-	}
-	return len(items)
-}
-
-// pinned reports whether n is a range node of one page and no end page. Such a node
-// is allowed: it can stand where the page holds its keys from below the node's
-// path and does not fit the path's bytes (see pageUp), or where a split of the
-// node's path has left it with a page that could stand alone (the next delete
-// through it takes the node away).
-func pinned(n *header) bool {
-	return isRange(n.objType) && asR(n).n == 1 && endPageOf(n) == nil && isMultiKey(asR(n).children()[0].objType)
-}
-
-// checkRangeNode checks the ranges of range node n, whose path ends at end, and
-// returns the number of keys below them: the first range starts at byte 0, the
-// starts and their counts agree, and every key below a range's child has its
-// byte at pathLen len(end) within the range.
-func checkRangeNode(t *testing.T, n *header, end []byte) int {
-	t.Helper()
-	r := asR(n)
-	rs := r.ranges()
-	if len(rs) != int(r.n) || rs[0].b != 0 {
-		t.Fatalf("range node of %d ranges, first at byte %d", len(rs), rs[0].b)
-	}
-	c := 0
-	for w := range r.before {
-		if int(r.before[w]) != c {
-			t.Fatalf("before[%d] = %d, want %d", w, r.before[w], c)
-		}
-		c += bits.OnesCount64(r.starts[w])
-	}
-	for i := int(r.n); i < rCaps[r.class()]; i++ {
-		if r.children()[i] != nil {
-			t.Fatalf("unused range slot %d is not empty", i)
-		}
-	}
-	keys := 0
-	for i, rg := range rs {
-		keys += checkNode(t, rg.c, end)
-		lo, hi := int(rg.b), 256
-		if i+1 < len(rs) {
-			hi = int(rs[i+1].b)
-		}
-		w := walker{path: slices.Clone(end)}
-		w.walk(rg.c, len(end))
-		for _, it := range w.out {
-			if len(it.key) <= len(end) || int(it.key[len(end)]) < lo || int(it.key[len(end)]) >= hi {
-				t.Fatalf("key %q below range [%d, %d) at pathLen %d", it.key, lo, hi, len(end))
-			}
-		}
-	}
-	return keys
-}
-
-// leavesOnly makes m hold every key in a leaf, as a map does that has no
-// pages, for the tests of the leaf layouts.
-func leavesOnly[T comparable](m *Map[T]) {
-	m.decide()
-	m.t.small = false
+	return 0
 }

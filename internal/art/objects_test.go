@@ -10,7 +10,6 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/skpage"
-	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // allocated returns the size of the blocks Go allocates for the objects that mk
@@ -157,11 +156,6 @@ func TestObjectSizes(t *testing.T) {
 			}
 		}
 	})
-	t.Run("pages of every class", func(t *testing.T) {
-		for class := range 4 {
-			check(t, &flat, func() unsafe.Pointer { return unsafe.Pointer(vpage.New(class, 0)) })
-		}
-	})
 	t.Run("flat leaves of every class", func(t *testing.T) {
 		for cls := 1; cls < len(flatSizes); cls++ {
 			check(t, &flat, func() unsafe.Pointer { return unsafe.Pointer(allocFlat(uint8(cls))) })
@@ -228,25 +222,16 @@ func TestObjects(t *testing.T) {
 		}
 	}
 	for name, keys := range keySets() {
-		var pages, mixed, flat, sets Map[uint64]
-		flat.flat, sets.flat = 1, -1
+		var flat, flat1, sets Map[uint64]
+		flat.flat, flat1.flat, sets.flat = 1, 1, -1
 		var typed Map[string]
 		typed.flat = 2
-		fill(t, name+"/pages", keys, false, func(k []byte, v uint64) { pages.Add(k, v) }, pages.Objects, pages.Len)
-		fill(t, name+"/pages and leaves", keys, true, func(k []byte, v uint64) { mixed.Add(k, v) }, mixed.Objects, mixed.Len)
+		fill(t, name+"/flat one value", keys, false, func(k []byte, v uint64) { flat1.Add(k, v) }, flat1.Objects, flat1.Len)
 		fill(t, name+"/flat", keys, true, func(k []byte, v uint64) { flat.Add(k, v) }, flat.Objects, flat.Len)
 		fill(t, name+"/typed", keys, true, func(k []byte, v uint64) { typed.Add(k, str(v)) }, typed.Objects, typed.Len)
 		fill(t, name+"/sets", keys, true, func(k []byte, v uint64) { sets.Add(k, v) }, sets.Objects, sets.Len)
 		var strPages Map[string]
 		fill(t, name+"/single-key pages", keys, true, func(k []byte, v uint64) { strPages.Add(k, str(v)) }, strPages.Objects, strPages.Len)
-		if name == "u64-dense" { // one value per integer key: pages below range nodes
-			seen := map[string]bool{}
-			pages.Objects(func(o Object) { seen[o.Label] = true })
-			ranges := seen["R8"] || seen["R24"] || seen["R56"] || seen["R256"]
-			if !seen["page"] || !ranges {
-				t.Errorf("%s with one value per key has the objects %v, want pages and range nodes", name, seen)
-			}
-		}
 	}
 	var empty Map[uint64]
 	empty.Objects(func(o Object) { t.Errorf("an empty map has the object %+v", o) })

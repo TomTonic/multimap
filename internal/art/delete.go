@@ -4,149 +4,78 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// The outcomes of del.
-const (
-	absent    = iota // the key is not there
-	deleted          // the key is gone
-	keptLeaf         // the key has a leaf, which del left in place
-	keptEntry        // the key's entry in a page holds another value, and is still there
-)
-
 // remove deletes key and reports whether it was there. rk moves a leaf that
 // takes the place of a node above it (see collapse).
 func (t *Tree) remove(key []byte, rk rekeyFunc) bool {
-	ok := del(&t.root, key, 0, rk, nil) == deleted
+	ok := del(&t.root, key, 0, rk)
 	if ok {
 		t.size--
 	}
 	return ok
 }
 
-// removeRaw deletes key if it has one value in a page, which is the raw word
-// want: in one descent, where a lookup and a delete would make two. It
-// reports absent, deleted, keptEntry for another value, or keptLeaf if key has
-// a leaf, which the caller removes values from. rk is as in remove.
-func (t *Tree) removeRaw(key []byte, want uint64, rk rekeyFunc) int8 {
-	r := del(&t.root, key, 0, rk, &want)
-	if r == deleted {
-		t.size--
-	}
-	return r
-}
-
 // del deletes key from the subtree at *loc, whose common prefix starts at
 // key[pathLen:], and reports whether it was there. On the way back up,
 // every node on the path shrinks to the smallest type that fits and collapses
 // when it no longer branches, so the tree after a delete has the shape it
-// would have had if the key had never been inserted. Below a range node, a
-// range whose child is gone goes to its neighbour, and a page merges with a
-// neighbouring page once both are thin (see rMerge).
-//
-// If want is not nil, del deletes only a key that is in a page with the raw
-// value *want (see removeRaw).
-func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8 {
+// would have had if the key had never been inserted.
+func del(loc **header, key []byte, pathLen int, rk rekeyFunc) bool {
 	n := *loc
 	if n == nil {
-		return absent
+		return false
 	}
-	if n.objType <= maxMultiKeyByte {
-		if isMultiKey(n.objType) {
-			return delFromPage(loc, key, want)
-		}
-		switch {
-		case !asSingleKey(n).matches(key):
-			return absent
-		case want != nil:
-			return keptLeaf
+	if isSingleKey(n.objType) {
+		if !asSingleKey(n).matches(key) {
+			return false
 		}
 		*loc = nil
-		return deleted
+		return true
 	}
 	pl := n.prefixLen()
 	if pl != 0 && !prefixMatches(n, pl, key, pathLen) {
-		return absent
+		return false
 	}
 	d := pathLen + pl
-	switch {
-	case d == len(key):
+	if d == len(key) {
 		// The end page's key is the path to n, which key matched: it is key.
 		if endPageOf(n) == nil {
-			return absent
-		}
-		if want != nil {
-			return keptLeaf
+			return false
 		}
 		setEndPageSlot(n, nil)
-	case isRange(n.objType):
-		r := asR(n)
-		i := r.index(key[d])
-		c := &r.children()[i]
-		if r := del(c, key, d, rk, want); r != deleted {
-			return r
-		}
-		switch {
-		case *c == nil:
-			n = rRemove(n, i)
-		case isMultiKey((*c).objType) && asMultiKey(*c).Thin():
-			// Two pages merge only if they fit one page together, so one that is
-			// not thin does not need its neighbours looked at.
-			n = rMerge(n, i)
-		}
-	default:
+	} else {
 		b := key[d]
 		c := findLoc(n, b)
 		if c == nil {
-			return absent
+			return false
 		}
-		if r := del(c, key, d+1, rk, want); r != deleted {
-			return r
+		if !del(c, key, d+1, rk) {
+			return false
 		}
 		if *c == nil {
 			n = removeChild(n, b)
 		}
 	}
 	*loc = collapse(n, key, pathLen, d, rk)
-	return deleted
+	return true
 }
 
-// delFromPage deletes key from the page at *loc, unless want is not nil and
-// the key's value is not *want, and reports what it found (see del).
-func delFromPage(loc **header, key []byte, want *uint64) int8 {
-	p := asMultiKey(*loc)
-	i, ok := p.FindIn(key)
-	switch {
-	case !ok:
-		return absent
-	case want != nil && p.Val(i) != *want:
-		return keptEntry
-	}
-	*loc = multiKeyHdr(p.DeleteAt(i))
-	return deleted
-}
-
-// collapse replaces a byte or range node n at pathLen, whose common prefix ends at d,
+// collapse replaces a byte node n at pathLen, whose common prefix ends at d,
 // that no longer branches: without children it becomes its end page, and with
 // a single child and no end page it merges into that child, whose common prefix
-// grows by n's common prefix plus the child's byte (which a range node's child already
-// starts with). key is the key just deleted below n, which agrees with every
-// key below n up to d. It returns what should stand in n's place.
+// grows by n's common prefix plus the child's byte. key is the key just deleted
+// below n, which agrees with every key below n up to d. It returns what should
+// stand in n's place.
 func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
-	switch c := childCount(n); {
+	switch c := int(n.count); {
 	case c == 0:
-		// The node held only its end page, or nothing: a range node whose only
-		// page could not move up (see pageUp) stays, and its last key may go.
-		if endPageOf(n) == nil {
-			return nil
-		}
+		// The node held only its end page. A node without one never gets here:
+		// it collapsed when it fell to one child.
 		return singleKeyHdr(lift(endPageOf(n), key[:d], pathLen, rk))
 	case c > 1 || endPageOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.objType <= maxMultiKeyByte {
-		if isMultiKey(c.objType) {
-			return pageUp(n, c, key, pathLen)
-		}
+	if isSingleKey(c.objType) {
 		l := asSingleKey(c)
 		if l.base() <= pathLen {
 			return c
@@ -154,35 +83,8 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 		return singleKeyHdr(rk(l, key[:d], b, pathLen))
 	}
 	var buf [prefixBuf]byte // on the stack for the common short prefixes
-	p := appendPrefix(buf[:0], n)
-	if b >= 0 {
-		p = append(p, byte(b))
-	}
+	p := append(appendPrefix(buf[:0], n), byte(b))
 	return withPrefix(c, appendPrefix(p, c))
-}
-
-// pageUp returns what should stand in the place of the range node n at pathLen,
-// which has no end page and one child, page c: the page, which then starts at pathLen,
-// or n itself if the page cannot take the bytes of n's common prefix in front of its
-// keys.
-func pageUp(n, c *header, key []byte, pathLen int) *header {
-	p := asMultiKey(c)
-	if p.Base() <= pathLen {
-		return c
-	}
-	if q := p.Rebase(pathLen, key[pathLen:p.Base()]); q != nil {
-		return multiKeyHdr(q)
-	}
-	return n
-}
-
-// childCount returns the number of byte children of a byte node, or of ranges
-// of a range node.
-func childCount(n *header) int {
-	if isRange(n.objType) {
-		return int(asR(n).n)
-	}
-	return int(n.count)
 }
 
 // lift returns leaf l, whose key is k, ready to stand at pathLen: l itself if it
@@ -194,14 +96,10 @@ func lift(l *singleKeyHead, k []byte, pathLen int, rk rekeyFunc) *singleKeyHead 
 	return rk(l, k, -1, pathLen)
 }
 
-// onlyChild returns the single child of n and the byte it sits under, or -1
-// for a range node's child. Only a 5-way node or a range node of the smallest
-// class can fall to one child: every larger type shrinks into the next smaller
-// one well before.
+// onlyChild returns the single child of n and the byte it sits under. Only a
+// 5-way node can fall to one child: every larger type shrinks into the next
+// smaller one well before.
 func onlyChild(n *header) (int, *header) {
-	if isRange(n.objType) {
-		return -1, asR(n).children()[0]
-	}
 	x := asN5(n)
 	return int(x.keys[0]), x.child[0]
 }

@@ -32,7 +32,7 @@ func TestStringMapUsesPages(t *testing.T) {
 	}
 	for i := range 300 {
 		key := []byte(fmt.Sprint("key-", i))
-		l := findSingleKey(&m.t, key)
+		l := m.t.find(key)
 		if l == nil || !isSKPage(l) || l.cls() < 1 || int(l.cls()) > skpage.Classes {
 			t.Fatalf("key %q has no single-key page", key)
 		}
@@ -69,7 +69,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	for i := range 40 {
 		m.Add(key, val(i))
 		want = append(want, val(i))
-		isValueOverflow := findSingleKey(&m.t, key).isValueOverflow()
+		isValueOverflow := m.t.find(key).isValueOverflow()
 		if wantSet := content(i+1) > 512; isValueOverflow != wantSet {
 			t.Fatalf("after %d values (content %d): value overflow = %v", i+1, content(i+1), isValueOverflow)
 		}
@@ -80,7 +80,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	for i := 39; i > 0; i-- {
 		m.Remove(key, val(i))
 		want = want[:i]
-		isValueOverflow := findSingleKey(&m.t, key).isValueOverflow()
+		isValueOverflow := m.t.find(key).isValueOverflow()
 		// the value overflow stays until the values fill 256 bytes or less; the page, once back, until it is empty
 		if isValueOverflow && content(i) <= skpage.BackLimit {
 			t.Fatalf("with %d values (content %d) the key still has a value overflow", i, content(i))
@@ -94,7 +94,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	}
 	// the border: between 256 and 512 bytes the key keeps whichever object it has
 	m.Add(key, val(1))
-	if findSingleKey(&m.t, key).isValueOverflow() {
+	if m.t.find(key).isValueOverflow() {
 		t.Fatal("a key with two values has a value overflow")
 	}
 	m.Remove(key, val(0))
@@ -114,18 +114,18 @@ func TestStringValueTooLong(t *testing.T) {
 	m.Add(key, "a")
 	m.Add(key, "b")
 	m.Add(key, long)
-	if !findSingleKey(&m.t, key).isValueOverflow() {
+	if !m.t.find(key).isValueOverflow() {
 		t.Fatal("a value of 300 bytes must make a value overflow")
 	}
 	if got := inOrder(valuesOf(&m, key)); !slices.Equal(got, inOrder([]string{"a", "b", long})) {
 		t.Fatalf("got %d values", len(got))
 	}
 	m.Remove(key, "a") // the set still holds the long value: it stays a value overflow
-	if !findSingleKey(&m.t, key).isValueOverflow() {
+	if !m.t.find(key).isValueOverflow() {
 		t.Fatal("with the long value in it the key must stay a value overflow")
 	}
 	m.Remove(key, long)
-	if findSingleKey(&m.t, key).isValueOverflow() || !slices.Equal(valuesOf(&m, key), []string{"b"}) {
+	if m.t.find(key).isValueOverflow() || !slices.Equal(valuesOf(&m, key), []string{"b"}) {
 		t.Fatalf("the key must be a page with the value b, has %q", valuesOf(&m, key))
 	}
 }
@@ -142,7 +142,7 @@ func TestStringKeyTooLong(t *testing.T) {
 			for _, v := range []string{"a", "b", "c"} {
 				m.Add(key, v)
 			}
-			if !findSingleKey(&m.t, key).isValueOverflow() {
+			if !m.t.find(key).isValueOverflow() {
 				t.Fatal("expected a value overflow")
 			}
 			m.Remove(key, "b")
@@ -155,7 +155,7 @@ func TestStringKeyTooLong(t *testing.T) {
 		var m Map[string]
 		key := bytes.Repeat([]byte("k"), skpage.MaxRemainder-1) // and a value of one byte
 		m.Add(key, "a")
-		if findSingleKey(&m.t, key).isValueOverflow() {
+		if m.t.find(key).isValueOverflow() {
 			t.Fatal("a remainder of 504 bytes fits a page")
 		}
 	})
@@ -172,7 +172,7 @@ func TestStringValueOverflowStays(t *testing.T) {
 		m.Add(key, one(i))
 	}
 	m.Remove(key, one(0))
-	if !findSingleKey(&m.t, key).isValueOverflow() || len(valuesOf(&m, key)) != 254 {
+	if !m.t.find(key).isValueOverflow() || len(valuesOf(&m, key)) != 254 {
 		t.Fatal("254 values of one byte are a value overflow")
 	}
 }

@@ -25,7 +25,6 @@ func TestFlatLeaves(t *testing.T) {
 		t.Run(fmt.Sprintf("key of %d bytes", klen), func(t *testing.T) {
 			key := bytes.Repeat([]byte{'k'}, klen)
 			var m Map[uint64]
-			leavesOnly(&m)
 			m.Add([]byte("neighbour"), 1) // the key's leaf lives below a node, which holds its first byte
 			rem := max(klen-1, 0)         // what the leaf holds
 			maxCap := flatCap[uint64](uint8(len(flatSizes)-1), rem)
@@ -41,7 +40,7 @@ func TestFlatLeaves(t *testing.T) {
 				if len(want) == 0 {
 					return
 				}
-				l := findSingleKey(&m.t, key)
+				l := m.t.find(key)
 				switch {
 				case rem > maxInline:
 					if l.cls() != 0 {
@@ -60,7 +59,7 @@ func TestFlatLeaves(t *testing.T) {
 				m.Add(key, v) // a duplicate changes nothing
 				want = append(want, v)
 				check()
-				if l := findSingleKey(&m.t, key); rem <= maxInline && len(want) > maxCap && l.cls() != 0 {
+				if l := m.t.find(key); rem <= maxInline && len(want) > maxCap && l.cls() != 0 {
 					t.Fatalf("%d values in a flat leaf, the largest holds %d", len(want), maxCap)
 				}
 			}
@@ -86,20 +85,19 @@ func TestFlatLeaves(t *testing.T) {
 // class would be half empty.
 func TestFlatLeafHysteresis(t *testing.T) {
 	var m Map[uint64]
-	leavesOnly(&m)
 	key := []byte("hovering")
 	full := flatCap[uint64](minGrown, len(key)) // a cache-line leaf holds this many
 	for v := range uint64(full + 1) {
 		m.Add(key, v)
 	}
-	l := findSingleKey(&m.t, key)
+	l := m.t.find(key)
 	if want := flatClass[uint64](len(key), 2*full); l.cls() != want {
 		t.Fatalf("leaf in class %d after %d values, want class %d, which holds twice as many", l.cls(), full+1, want)
 	}
 	for range 10 {
 		m.Remove(key, uint64(full))
 		m.Add(key, uint64(full))
-		if findSingleKey(&m.t, key) != l {
+		if m.t.find(key) != l {
 			t.Fatalf("hovering at %d values moved the leaf", full)
 		}
 	}
@@ -110,7 +108,7 @@ func TestFlatLeafHysteresis(t *testing.T) {
 	for v := range uint64(4) { // one more than the smallest leaf holds
 		m.Add(few, v)
 	}
-	l = findSingleKey(&m.t, few)
+	l = m.t.find(few)
 	for range 10 {
 		for v := range uint64(3) {
 			m.Remove(few, v+1)
@@ -118,7 +116,7 @@ func TestFlatLeafHysteresis(t *testing.T) {
 		for v := range uint64(3) {
 			m.Add(few, v+1)
 		}
-		if findSingleKey(&m.t, few) != l || l.cls() != minGrown {
+		if m.t.find(few) != l || l.cls() != minGrown {
 			t.Fatalf("hovering between 1 and 4 values moved the leaf or left the cache line")
 		}
 	}
@@ -172,7 +170,6 @@ func TestFlatValueTypes(t *testing.T) {
 func roundTrip[T comparable](mk func(int) T) func(t *testing.T) int8 {
 	return func(t *testing.T) int8 {
 		var m Map[T]
-		leavesOnly(&m)
 		keys := [][]byte{nil, []byte("a"), []byte("ab"), bytes.Repeat([]byte("x"), 70)}
 		for _, k := range keys {
 			for i := range 300 {
@@ -244,7 +241,6 @@ func TestLeafMovesUp(t *testing.T) {
 	for _, n := range []int{1, 5, 62} {
 		t.Run(fmt.Sprintf("%d values", n), func(t *testing.T) {
 			var m Map[uint64]
-			leavesOnly(&m)
 			k1, k2, k3 := append(slices.Clip(common), '1'), append(slices.Clip(common), '2'), append(slices.Clip(common), '3')
 			m.Add(k2, 7) // k2 and k3 make the node holding the common part
 			m.Add(k3, 7)
@@ -253,13 +249,13 @@ func TestLeafMovesUp(t *testing.T) {
 				m.Add(k1, v)
 				want = append(want, v)
 			}
-			if l := findSingleKey(&m.t, k1); len(l.stored()) != 0 {
+			if l := m.t.find(k1); len(l.stored()) != 0 {
 				t.Fatalf("leaf below the common part holds %q, want nothing", l.stored())
 			}
 			m.RemoveKey(k2)
 			m.RemoveKey(k3)
 			checkInvariants(t, &m.t)
-			l := findSingleKey(&m.t, k1)
+			l := m.t.find(k1)
 			got := valuesOf(&m, k1)
 			slices.Sort(got)
 			if !slices.Equal(got, want) || l.base() != 0 || !bytes.Equal(l.stored(), k1) {

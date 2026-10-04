@@ -4,7 +4,6 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
-	"github.com/TomTonic/multimap/internal/vpage"
 )
 
 // Tree is the untyped adaptive radix tree; Map[T] wraps it. The zero value is
@@ -12,13 +11,6 @@ import (
 type Tree struct {
 	root *header
 	size int
-	// Set by Map[T] before the first write: whether its values may go into
-	// pages (small and pointer-free, see pageType), and how to make the leaf of
-	// a key with one raw value, which a rebuild needs as an end page and a key that
-	// gets a second value needs in place of its page entry.
-	small bool
-	at    spot // where upsert found a key that was in a page
-	mk    func(key []byte, base int, raw uint64) *singleKeyHead
 }
 
 // Len returns the number of keys.
@@ -27,33 +19,29 @@ func (t *Tree) Len() int { return t.size }
 // Clear removes all keys.
 func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 
-// find returns where key is: its leaf (with i = 0) or its page and its
-// position there, or nil.
+// find returns the leaf of key, or nil.
 //
 // This is the hot path of every point operation. It is one loop over the
 // levels with every node search written out, so that the search helpers are
 // inlined and no call is made per level; that is why it is longer than the
 // project's usual function size.
-func (t *Tree) find(key []byte) (*header, int) {
+func (t *Tree) find(key []byte) *singleKeyHead {
 	n := t.root
 	pathLen := 0
 	for n != nil {
-		if n.objType <= maxMultiKeyByte {
-			if n.objType > maxSingleKeyByte {
-				return findInPage(asMultiKey(n), key)
-			}
+		if isSingleKey(n.objType) {
 			// The nodes have checked the key up to pathLen; the leaf holds the
 			// rest.
-			if asSingleKey(n).matches(key) {
-				return n, 0
+			if l := asSingleKey(n); l.matches(key) {
+				return l
 			}
-			return nil, 0
+			return nil
 		}
 		if n.plen != 0 {
 			pl := int(n.plen)
 			if !swar.Match8(&n.prefix, pl, key, pathLen) {
 				if pl = longMatch(n, key, pathLen); pl < 0 {
-					return nil, 0
+					return nil
 				}
 			}
 			pathLen += pl
@@ -61,7 +49,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 		if pathLen == len(key) {
 			t := endPageOf(n)
 			if t == nil {
-				return nil, 0
+				return nil
 			}
 			n = singleKeyHdr(t)
 			continue
@@ -73,7 +61,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 			x := asN5(n)
 			i := swar.Index8(swar.Word(x.keys[:]), b)
 			if i >= int(x.count) {
-				return nil, 0
+				return nil
 			}
 			n = childAt(&x.child[0], i) // i < count <= 5
 		case kN12:
@@ -83,39 +71,26 @@ func (t *Tree) find(key []byte) (*header, int) {
 				i = 8 + swar.Index8(swar.Word(x.keys[8:16]), b)
 			}
 			if i >= int(x.count) {
-				return nil, 0
+				return nil
 			}
 			n = childAt(&x.child[0], i) // i < count <= 12
 		case kN26:
 			x := asN26(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil, 0
+				return nil
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
 		case kN58:
 			x := asN58(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil, 0
+				return nil
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
-		case kN256:
-			n = asN256(n).child[b]
 		default:
-			// A range node: the child checks byte b itself (see rnode.go).
-			pathLen--
-			x := asR(n)
-			n = *(**header)(unsafe.Add(unsafe.Pointer(x), rChildOff+ptrSize*uintptr(x.index(b))))
+			n = asN256(n).child[b]
 		}
 	}
-	return nil, 0
-}
-
-// findInPage looks for key in page p, which holds its keys from its base on.
-func findInPage(p *vpage.Page, key []byte) (*header, int) {
-	if i, ok := p.FindIn(key); ok { // the descent has checked the bytes above the base
-		return multiKeyHdr(p), i
-	}
-	return nil, 0
+	return nil
 }
 
 // findSlot returns the slot that holds the leaf of key, which must be in the
@@ -127,13 +102,9 @@ func (t *Tree) findSlot(key []byte) **header {
 	for !isSingleKey((*loc).objType) {
 		n := *loc
 		pathLen += n.prefixLen()
-		switch {
-		case pathLen == len(key):
+		if pathLen == len(key) {
 			loc = endPageSlot(n)
-		case isRange(n.objType):
-			x := asR(n)
-			loc = &x.children()[x.index(key[pathLen])]
-		default:
+		} else {
 			loc = findLoc(n, key[pathLen])
 			pathLen++
 		}

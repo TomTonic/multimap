@@ -56,14 +56,10 @@ var fixedSize = [64]uintptr{
 	kN26:  unsafe.Sizeof(node26{}),
 	kN58:  unsafe.Sizeof(node58{}),
 	kN256: unsafe.Sizeof(node256{}),
-	kR8:   unsafe.Sizeof(rnode8{}),
-	kR24:  unsafe.Sizeof(rnode24{}),
-	kR56:  unsafe.Sizeof(rnode56{}),
-	kR256: unsafe.Sizeof(rnode256{}),
 }
 
 type nodeTypes interface {
-	node5 | node12 | node26 | node58 | node256 | rnode8 | rnode24 | rnode56 | rnode256
+	node5 | node12 | node26 | node58 | node256
 }
 
 type tailTypes interface {
@@ -107,20 +103,8 @@ func newNode(k objType, plen int) *header {
 		h = allocOf[node26](tc)
 	case kN58:
 		h = allocOf[node58](tc)
-	case kN256:
-		h = allocOf[node256](tc)
-		h.count = 255
-	case kR8:
-		h = allocOf[rnode8](tc)
-		h.count = 255
-	case kR24:
-		h = allocOf[rnode24](tc)
-		h.count = 255
-	case kR56:
-		h = allocOf[rnode56](tc)
-		h.count = 255
 	default:
-		h = allocOf[rnode256](tc)
+		h = allocOf[node256](tc)
 		h.count = 255
 	}
 	h.objType = k
@@ -209,14 +193,6 @@ func withPrefix(n *header, p []byte) *header {
 // move.
 func copyFixed(dst, src *header) {
 	switch src.objType {
-	case kR8:
-		*(*rnode8)(unsafe.Pointer(dst)) = *(*rnode8)(unsafe.Pointer(src))
-	case kR24:
-		*(*rnode24)(unsafe.Pointer(dst)) = *(*rnode24)(unsafe.Pointer(src))
-	case kR56:
-		*(*rnode56)(unsafe.Pointer(dst)) = *(*rnode56)(unsafe.Pointer(src))
-	case kR256:
-		*(*rnode256)(unsafe.Pointer(dst)) = *(*rnode256)(unsafe.Pointer(src))
 	case kN5:
 		*asN5(dst) = *asN5(src)
 	case kN12:

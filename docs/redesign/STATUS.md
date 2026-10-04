@@ -1,5 +1,11 @@
 # Status
 
+## 2026-10-04 night: step 3.5.0 done, the multi-key pages are out of the code
+
+- **Cut out** (user's decision: no code or mental dependency now): the page paths of insert, lookup, scan, delete and rebuild, `page.go`, `rnode.go` (range nodes), `rebuild.go` (build, ranges, fall back),
+  `internal/vpage`, `internal/lpage` and the benches `pagebench`, `pagefill`. Every map holds its keys in single-key pages (and the flat/typed leaves that 3.5 replaces) below byte nodes; `find` returns
+  the leaf again. **Way back:** branch `mk-pages` and tag `before-mk-pages-removal` (both pushed, the tree of commit 1984f4c with the experiment `mkmv-experiment` beside it). Gates green, `internal/art` 100 %.
+
 ## 2026-10-04 night: rename done, step 3.5 design note waiting for three decisions
 
 - **Rename** (622d634, names only): `singleKeyHead`, `isSingleKey`/`isMultiKey`, `kValueOverflow`, `objType`; `skleaf.go` is `singlekey.go`. Flat and typed leaves keep their names until 3.5 deletes them.

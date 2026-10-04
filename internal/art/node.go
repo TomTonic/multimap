@@ -31,17 +31,6 @@
 //     node's end page. It takes the node's last child slot, which the byte
 //     children reach only when there is no end page: few keys are prefixes of
 //     others, so no node pays a field for them.
-//   - In a map whose values are small and pointer-free (at most 8 bytes), keys
-//     with exactly one value need no leaf at all: they live in pages
-//     (page.go), sorted arrays of up to 31 keys with their values that hold
-//     whole keys of one length of at most 8 bytes, such as integers. Range
-//     nodes (rnode.go) give the pages below them ranges of key bytes instead
-//     of one child per byte, which keeps them full however many keys there
-//     are, and let a range scan walk contiguous memory. A key
-//     that gets a second value leaves its page for a leaf, and where such keys
-//     crowd a range node, its subtree is rebuilt from byte nodes and leaves
-//     (rebuild.go). Only keys in such a tree's pages and range nodes pay for
-//     that; every other map has none of them.
 //
 // The tree code is not generic. It works on singleKeyHead, the key part every leaf
 // starts with, so no generic dictionary calls sit on the traversal path; only
@@ -52,6 +41,7 @@
 package art
 
 import (
+	"math/bits"
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
@@ -76,29 +66,18 @@ const (
 	_
 	_
 	kLastSingleKey // flat leaf of the largest class
-	kMultiKey      // page of the smallest class; kMultiKey+2c is a page of class c (see page.go)
-	_
-	_
-	kLastMultiKey // page of the largest class
 	kN5
 	kN12
 	kN26
 	kN58
 	kN256
-	kR8 // range nodes, see rnode.go
-	kR24
-	kR56
-	kR256
 )
 
-// A descent ends at an object of a type byte up to maxMultiKeyByte: single-key and multi-key pages
-// come first, so that one comparison detects them. The byte of a leaf or page
+// A descent ends at an object of a type byte up to maxSingleKeyByte: single-key
+// pages come first, so that one comparison detects them. The byte of a page
 // may have its lowest bit set (a long remainder), so the largest byte of a
 // class is its largest type plus one.
-const (
-	maxSingleKeyByte = kLastSingleKey | 1
-	maxMultiKeyByte  = kLastMultiKey | 1
-)
+const maxSingleKeyByte = kLastSingleKey | 1
 
 // objTypeMask maps a type to an index of the tables below, which hold every type.
 const objTypeMask = 63
@@ -155,12 +134,6 @@ type singleKeyHead struct {
 // isSingleKey reports whether an object of type k is a single-key page (in any of its
 // forms: the flat and typed leaf, the value overflow).
 func isSingleKey(k objType) bool { return k <= maxSingleKeyByte }
-
-// isMultiKey reports whether an object of type k is a multi-key page.
-func isMultiKey(k objType) bool { return k-kMultiKey <= maxMultiKeyByte-kMultiKey }
-
-// isRange reports whether an object of type k is a range node.
-func isRange(k objType) bool { return k >= kR8 }
 
 // cls returns the size class of a flat leaf (see flatSizes), or 0 for a set
 // leaf.
@@ -326,7 +299,7 @@ func fillHead(dst, pre []byte, b, pathLen int) {
 }
 
 // slots returns all child slots of n, including the one its end page takes; n must
-// not be a 256-way or a range node.
+// not be a 256-way node.
 func slots(n *header) []*header {
 	switch n.objType {
 	case kN5:
@@ -350,10 +323,6 @@ var (
 		kN26:  unsafe.Offsetof(node26{}.child) + 25*ptrSize,
 		kN58:  unsafe.Offsetof(node58{}.child) + 57*ptrSize,
 		kN256: unsafe.Offsetof(node256{}.child) + 256*ptrSize,
-		kR8:   rChildOff + 8*ptrSize,
-		kR24:  rChildOff + 24*ptrSize,
-		kR56:  rChildOff + 56*ptrSize,
-		kR256: rChildOff + 256*ptrSize,
 	}
 )
 
@@ -381,7 +350,7 @@ func setEndPageSlot(n *header, l *singleKeyHead) { *endPageSlot(n) = singleKeyHd
 
 // full reports whether n has no room for another byte child or an end page.
 func full(n *header) bool {
-	if n.objType == kN256 || isRange(n.objType) {
+	if n.objType == kN256 {
 		return false
 	}
 	s := slots(n)
@@ -408,4 +377,30 @@ func bitmapOf(n *header) (*[4]uint64, []*header) {
 	}
 	x := asN58(n)
 	return &x.bitmap, x.child[:]
+}
+
+// eachByteNode calls fn for every byte child of the byte node n in byte order.
+func eachByteNode(n *header, fn func(b byte, c *header)) {
+	switch n.objType {
+	case kN5, kN12:
+		keys, child := sorted(n)
+		for i, c := range child {
+			fn(keys[i], c)
+		}
+	case kN26, kN58:
+		bm, child := bitmapOf(n)
+		i := 0
+		for w, set := range bm {
+			for ; set != 0; set &= set - 1 {
+				fn(byte(w<<6+bits.TrailingZeros64(set)), child[i])
+				i++
+			}
+		}
+	default:
+		for b, c := range asN256(n).child[:256] {
+			if c != nil {
+				fn(byte(b), c)
+			}
+		}
+	}
 }

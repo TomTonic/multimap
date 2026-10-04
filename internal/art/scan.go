@@ -7,22 +7,20 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
-	"github.com/TomTonic/multimap/internal/vpage"
 )
 
-// Bounds selects a key range. A bound that is not value overflows that side open.
+// Bounds selects a key range. A bound that is not set leaves that side open.
 type Bounds struct {
 	From, To         []byte
 	HasFrom, HasTo   bool
 	FromIncl, ToIncl bool
 }
 
-// scan calls fn for every leaf within b (with i, j = 0, 1) and for every run of
-// positions [i, j) of a page within b, in ascending key order, until fn returns
-// false. leafTail is the offset of the last byte of a leaf, which the scan
-// touches ahead (see touchChildren). If kb is not nil, kb.key holds the key of
-// the leaf fn is called for.
-func (t *Tree) scan(b *Bounds, leafTail uintptr, kb *keyBuf, fn func(n *header, i, j int) bool) {
+// scan calls fn for every leaf within b, in ascending key order, until fn
+// returns false. leafTail is the offset of the last byte of a leaf, which
+// the scan touches ahead (see touchChildren). If kb is not nil, kb.key holds
+// the key of the leaf fn is called for.
+func (t *Tree) scan(b *Bounds, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool) {
 	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, kb, fn)
 }
 
@@ -38,12 +36,6 @@ func (kb *keyBuf) reach(l *singleKeyHead) {
 	kb.key = append(append(kb.key[:0], kb.path[:l.base()]...), l.stored()...)
 }
 
-// pageKey returns key i of page p, whose path is in kb.path, in kb.key.
-func (kb *keyBuf) pageKey(p *vpage.Page, i int) []byte {
-	kb.key = p.AppendKey(append(kb.key[:0], kb.path[:p.Base()]...), i)
-	return kb.key
-}
-
 // scanRange visits the leaves of the subtree n within b in order and returns
 // false once the scan is over (fn stopped it, or the upper bound was passed).
 //
@@ -51,15 +43,12 @@ func (kb *keyBuf) pageKey(p *vpage.Page, i int) []byte {
 // are checked structurally: a node's path and child bytes are compared with a
 // bound only while on its path, so a subtree strictly inside the range is
 // visited without reading a single key.
-func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool) bool {
 	if n == nil {
 		return true
 	}
-	if n.objType <= maxMultiKeyByte {
-		if isSingleKey(n.objType) {
-			return scanLeaf(asSingleKey(n), b, pathLen, lo, hi, kb, fn)
-		}
-		return scanPage(asMultiKey(n), b, lo, hi, fn)
+	if isSingleKey(n.objType) {
+		return scanLeaf(asSingleKey(n), b, pathLen, lo, hi, kb, fn)
 	}
 	pl := n.prefixLen()
 	if (lo || hi) && pl > 0 {
@@ -98,7 +87,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 		if kb != nil {
 			kb.reach(t)
 		}
-		if !fn(singleKeyHdr(t), 0, 1) {
+		if !fn(t) {
 			return false
 		}
 	}
@@ -122,7 +111,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 // scanLeaf calls fn for leaf l at pathLen if it lies within b. On a bound's
 // path the key agrees with the bound up to pathLen, so comparing the rest
 // decides.
-func scanLeaf(l *singleKeyHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+func scanLeaf(l *singleKeyHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf, fn func(*singleKeyHead) bool) bool {
 	if lo {
 		if c := bytes.Compare(l.from(pathLen), b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
 			return true
@@ -136,40 +125,12 @@ func scanLeaf(l *singleKeyHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf,
 	if kb != nil {
 		kb.reach(l)
 	}
-	return fn(singleKeyHdr(l), 0, 1)
-}
-
-// scanPage hands fn the run of the page's keys within b. The page's keys start
-// at its base, below the path to it, which on a bound's path agrees with the
-// bound: so the parts of the keys are compared with the part of the bound below
-// the base, and only on the bounds' paths.
-func scanPage(p *vpage.Page, b *Bounds, lo, hi bool, fn func(n *header, i, j int) bool) bool {
-	i, j := 0, p.Len()
-	if lo {
-		i = seek(p, b.From[p.Base():], !b.FromIncl)
-	}
-	if hi {
-		j = max(i, seek(p, b.To[p.Base():], b.ToIncl))
-	}
-	if i < j && !fn(multiKeyHdr(p), i, j) {
-		return false
-	}
-	return !hi // on To's path, everything after the page is above To
-}
-
-// seek returns how many keys of p are below bound, or at most bound with
-// orEqual.
-func seek(p *vpage.Page, bound []byte, orEqual bool) int {
-	i, found := p.Locate(bound)
-	if found && orEqual {
-		i++
-	}
-	return i
+	return fn(l)
 }
 
 // scanChildren visits the children with byte in [loB, hiB] in order. Only the
 // child for loB stays on From's path, only the one for hiB on To's.
-func scanChildren(n *header, b *Bounds, pathLen int, lo, hi bool, loB, hiB byte, leafTail uintptr, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+func scanChildren(n *header, b *Bounds, pathLen int, lo, hi bool, loB, hiB byte, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool) bool {
 	visit := func(c *header, k byte) bool {
 		if kb != nil {
 			kb.path = append(kb.path[:pathLen], k)
@@ -177,18 +138,6 @@ func scanChildren(n *header, b *Bounds, pathLen int, lo, hi bool, loB, hiB byte,
 		return scanRange(c, b, pathLen+1, lo && k == loB, hi && k == hiB, leafTail, kb, fn)
 	}
 	switch n.objType {
-	case kR8, kR24, kR56, kR256:
-		// The children of a range node start at its pathLen; only the ranges
-		// holding loB and hiB lie on the bounds' paths.
-		r := asR(n)
-		ch := r.children()
-		i0, i1 := r.index(loB), r.index(hiB)
-		for i := i0; i <= i1; i++ {
-			if !scanRange(ch[i], b, pathLen, lo && i == i0, hi && i == i1, leafTail, kb, fn) {
-				return false
-			}
-		}
-		return true
 	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		i := swar.Rank(bm, loB)
@@ -258,15 +207,6 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 		}
 	}
 	switch n.objType {
-	case kR8, kR24, kR56, kR256:
-		r := asR(n)
-		i0, i1 := r.index(loB), r.index(hiB)
-		if i1 == i0 {
-			return
-		}
-		for _, c := range r.children()[i0 : i1+1] {
-			touch(c)
-		}
 	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		end := swar.Rank(bm, hiB)

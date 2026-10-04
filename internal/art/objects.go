@@ -73,7 +73,6 @@ func (m *Map[T]) Objects(fn func(Object)) {
 
 var objTypeLabels = [64]string{
 	kN5: "N5", kN12: "N12", kN26: "N26", kN58: "N58", kN256: "N256",
-	kR8: "R8", kR24: "R24", kR56: "R56", kR256: "R256",
 }
 
 // leafObject describes leaf l of a map of T.
@@ -139,9 +138,6 @@ func (m *Map[T]) object(n *header) Object {
 	switch {
 	case isSingleKey(n.objType):
 		return m.leafObject(asSingleKey(n))
-	case isMultiKey(n.objType):
-		p := asMultiKey(n)
-		return Object{Label: "page", Size: p.Size(), Keys: p.Len()}
 	}
 	size, label := int(fixedSize[n.objType&objTypeMask]), objTypeLabels[n.objType]
 	if tc := tailClass(n.prefixLen()); tc != tailNone {
@@ -154,17 +150,11 @@ func (m *Map[T]) object(n *header) Object {
 // objects reports the subtree n.
 func (m *Map[T]) objects(n *header, fn func(Object)) {
 	fn(m.object(n))
-	if isSingleKey(n.objType) || isMultiKey(n.objType) {
+	if isSingleKey(n.objType) {
 		return
 	}
 	if t := endPageOf(n); t != nil {
 		fn(m.leafObject(t))
-	}
-	if isRange(n.objType) {
-		for _, c := range asR(n).children()[:asR(n).n] {
-			m.objects(c, fn)
-		}
-		return
 	}
 	eachByteNode(n, func(_ byte, c *header) { m.objects(c, fn) })
 }
