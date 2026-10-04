@@ -197,11 +197,11 @@ Against `btree-sets`, `street`:
 | dirs, one value | page tree | 54 | 54 | 9 | +3 ms | 36 |
 | street, natural mix | today | 119 | 147 | 111 | +56 ms | 61 |
 | street, natural mix | btree-sets | 367 | 395 | 336 | +92 ms | 185 |
-| street, natural mix | page tree, one value per entry | 119 | 119 | 111 | +55 ms | 61 |
+| street, natural mix | page tree, one value per entry (no page is left) | 119 | 147 | 111 | +55 ms | 61 |
 | street, natural mix | page tree, several values per entry | 88 | 88 | 44 | +14 ms | 50 |
 | dirs, natural mix | today | 149 | 217 | 138 | +27 ms | 75 |
 | dirs, natural mix | btree-sets | 421 | 489 | 352 | +36 ms | 210 |
-| dirs, natural mix | page tree, one value per entry | 150 | 150 | 138 | +27 ms | 75 |
+| dirs, natural mix | page tree, one value per entry (no page is left) | 150 | 218 | 138 | +27 ms | 75 |
 | dirs, natural mix | page tree, several values per entry | 139 | 139 | 60 | +10 ms | 80 |
 
 ### The header size (`mv`, `street`, natural mix)
@@ -217,11 +217,6 @@ little slower small lookups. The first two rows are from before the 384-byte cla
 | 32 | 97 | 50 | 0.59 / 1.01*? | 1.01 / 1.35* | 0.88 / 1.28 | 0.54 / 0.82 | 0.47 |
 | 48 (default) | 88 | 44 | 0.56 / 1.05* | 1.09 / 1.54* | 0.94 / 1.47 | 0.56 / 0.85 | 0.50 |
 | 64 | 83 | 41 | 0.54 / 1.03* | 1.12 / 1.67 | 0.95 / 1.56 | 0.56 / 0.86 | 0.49 |
-
-A second run of the default (`lp9-multi-street-again`) gives the same numbers to within 0.03 in every cell
-(`valuesFor` 0.49 / 0.57 / 1.05, `valuesBetween` 1.05 / 1.11 / 1.54, `build` 0.43 / 0.51, 88 bytes a key), so the
-differences in the table above are not noise; the sweep has only been done on `street`, and `dirs` with 64 bytes
-(`lp9-multi-dirs-h64`) has the same memory as with 48 (137 against 139 bytes a key).
 
 ### The shape of the page tree (`objstat -pages -detail`, corpus size, header 48)
 
