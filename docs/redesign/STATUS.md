@@ -19,6 +19,10 @@
   common side `baseline`.
 - **M1 jobs l1 to l4** (the MKMV experiment) are in: `bench/results-layout/step3-tree/m1/`, same picture as the PC.
 - Open: the three-byte header, the value overflow (3.4), the other value types (3.5).
+- **Decided (user):** the aim is a complete "version 0.8" on the existing benchmarks (steps 3 to 5); then a large
+  measurement and profile, then the optimization strategies. Further corpora (inverted index of Wikipedia, DBLP,
+  Wikipedia pagelinks, the full Debian tree, DNS records of the Tranco list) are a backlog in PLAN.md and are not
+  built now.
 
 ## 2026-10-04 morning: review of the night, new order, plan revised
 

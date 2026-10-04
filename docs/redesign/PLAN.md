@@ -269,6 +269,54 @@ the promote and the fall back go. Design note with prediction first.
 - Update `bench/README.md` and the published numbers.
 - The user decides about merging into `main`.
 
+## Version 0.8 and what follows (decided 2026-10-04)
+
+The goal of the current work is a **complete implementation, called version 0.8**, on the benchmarks that exist
+(`street`, `dirs`, and the synthetic key kinds for the checks): the single-key page (step 3), the multi-key page
+(step 4) and multi-value entries in multi-key pages (step 5), each with its gate. Only then:
+
+1. **Measure and profile at large**, with the corpora of the backlog below, on the PC and the M1, against all
+   competitors.
+2. **Fix the optimization strategies** from what that shows (mutation, the three-byte header, the routing layer
+   of step 6, the value overflow, zero-copy as an option), each with its prediction, as the working rules say.
+
+No new corpus is built before that point; the backlog says what to build then. (Open: whether step 6, the
+routing layer, belongs to 0.8 or to the optimization that follows it.)
+
+## Backlog: further benchmark corpora (todo for after 0.8, not to be started now)
+
+Each answers a question the current corpora cannot. Raw data does not go into the repository: a download script
+with the version of the source, a loader like `keys/corpora.go`, a statistic of the value distribution, and the
+license checked before the first commit.
+
+- **Inverted index (term -> documents) from a Wikipedia dump. A must.** The classic multimap use, a Zipf
+  distribution: few terms with millions of values, most with one. It tests the value overflow (step 3.4) and
+  integer values (documents as numbers), and gives the largest value sets. Terms are strings, values `uint64`
+  (document numbers) and, as a second profile, strings (titles).
+- **DBLP (author -> publications), CC0.** Strings as keys and values, one publication for most authors, hundreds
+  for a few: `street` with a realistic tail. The smallest of the heavy-tailed corpora.
+- **Wikipedia pagelinks (page number -> linked page numbers).** `uint64` -> `uint64` with a power law: the
+  integer case with a real distribution.
+- **The complete Debian file tree** (`Contents-*` of several releases; path -> packages): `dirs` without
+  the reduction, past one million keys, for the 1M spot check. Possibly with a skewed choice of the keys.
+- **DNS records of the Tranco top list** (idea of the user). Keys: the domain names of one *numbered* Tranco list
+  (the list id makes it reproducible). Values: the records that are queried (A, AAAA, HTTPS, CNAME, MX, NS, TXT, ...),
+  with their types. Only the **distribution** matters: the number of records of each type per domain and their
+  lengths are measured once and stored as a histogram in the repository; the benchmark draws the values as
+  random bytes of those lengths from a seeded generator. That is reproducible without storing the records and
+  raises no license question (the data is meant to be cached). A real DNS cache would be hash-based, since DNS has no range
+  queries; here the corpus stands for variable-length values with a realistic spread, and for the case that a hash map
+  no longer fits the memory.
+- **After those, for robustness and not for decisions:** the French address base (BAN, Licence Ouverte;
+  street -> municipality, ten times `street`), GeoNames (alternative name -> places, CC BY, Unicode, "Springfield"),
+  US addresses (TIGER, public domain; OpenAddresses by source), a package registry (package -> dependents,
+  Debian `Packages`, crates.io).
+- **Not now, expensive:** the Common Crawl URL index (URL -> captures) for real URLs instead of the synthetic
+  `url` kind, as a sample; OpenStreetMap cells -> places for range queries.
+
+The first two (inverted index, DBLP) are due before the value overflow of step 3.4 is designed *if* the
+real data of 0.8 is not enough for it: decide at 3.4 whether to pull them forward.
+
 ## Status
 
 The state of work, the next action and open questions live in [STATUS.md](STATUS.md). Update it
