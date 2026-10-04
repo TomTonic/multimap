@@ -1,5 +1,25 @@
 # Status
 
+## 2026-10-04 midday: single-key page for strings is in the tree, measurement running
+
+- **Decisions of the day** (user): the plan order SKMV, MKSV, MKMV; size classes of the single-key page
+  32, 64, 128, 256, 384, 512 (step3-skmv-sizes.md: a page per key at 128 bytes would take 133 B/key for 39
+  B of content); design note step3-skmv-design.md approved (layout, copy-out strings, byte nodes plus a page per
+  key). Profiles of the bench are called `single-value` and `natural` now (`multi`/`unique` still accepted).
+- **Done:** 3.0 (renames after the glossary in `internal/art`, `vpage`, `lpage`: `path` -> common prefix,
+  `depth` -> `pathLen`, `term` -> end page, `inner` -> byte node, `settle`/`crowded` -> fall back, `suffix` ->
+  remainder; `base` and `class` left on purpose; the bench reads the bytes of string values; build tag `ptrvals`),
+  3.2 (`internal/skpage` and `bench/cmd/skbench`), 3.3 code (`Map[string]` holds its keys in single-key pages, the set
+  leaf is the value overflow; commit 06244b4; art tests 100 %, race, fuzz 60 s, lint clean). **Deviation:** the page
+  has the 6-byte header of the leaves for this step (the 3-byte header is a later step, design note section 3).
+- **Running on the PC** (from 11:04, about 4 hours): `sk-street-natural`, `sk-dirs-natural`, `sk-street-single`,
+  `sk-dirs-single` (`run-sk.cmd`): the new `ordered` against `baseline` (node-layout), `btree-sets`/`btree-map`,
+  `hashed`. The reference runs of before (`ref-str-street-natural` etc.: the tree of step 2) are only done for
+  street natural (`ref-str-street-multi`, 1 h 21 min); the others are not run, the new runs go through the
+  common side `baseline`.
+- **M1 jobs l1 to l4** (the MKMV experiment) are in: `bench/results-layout/step3-tree/m1/`, same picture as the PC.
+- Open: the three-byte header, the value overflow (3.4), the other value types (3.5).
+
 ## 2026-10-04 morning: review of the night, new order, plan revised
 
 The user had the night's work reviewed (Opus) and set the course:

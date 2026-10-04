@@ -166,3 +166,26 @@ anything else changes (PLAN.md).
 3. Convert back from a set leaf at a content of 256 bytes or less.
 4. One allocation per lookup or scan of a key for the strings (copy-out), no zero-copy.
 5. In 3.3 the tree is byte nodes plus one page per key; no multi-key pages, no fall back for string maps.
+
+## 8. The page alone (step 3.2, measured 2026-10-04)
+
+`internal/skpage` (6-byte header, tests 100 %, race, fuzz) and `bench/cmd/skbench` on the real entries (Ryzen
+9 7900, Windows through WSL's `go run`, machine idle, median of 5 rounds of `testing.Benchmark`; a diagnosis of
+the page in isolation, not a claim of speed). One page per key, in random order; ns per operation and
+allocations:
+
+| data | lookup, 4,096 pages (hot) | lookup, all pages | add + remove a value, all pages | add + remove at a class border | build, per key |
+|---|--:|--:|--:|--:|--:|
+| street | 38 ns, 1 | 134 ns, 1 | 77 ns, 0 | 40 ns, 2 | 88 ns, 1 |
+| dirs | 57 ns, 1 | 113 ns, 1 | 67 ns, 0 | 40 ns, 2 | 103 ns, 1 |
+
+- **The lookup** is `Match` plus `Strings`, whose one allocation (the copy of the values of the key) is
+  included. Hot, a lookup takes 38 and 57 ns; with all pages, which do not fit the cache, 113 to 134 ns, which is
+  the cache miss on the page. An allocation is about 20 ns of it (the loop of the class border, which does
+  nothing else, takes 40 ns for two).
+- **The worry about `churn`:** adding a value and removing it again, on pages in random order, takes 67 to 77 ns, with
+  *no* allocation on average: in place, as designed. The worst case, a page that fills its class exactly
+  (every add copies to the next class, every remove copies back) takes 40 ns for the two copies: about the cost
+  of one cache miss. A key at a class border is slower than the others by less than a miss.
+- The prediction of section 6 for lookups stands as a risk: a lookup in the tree pays the descent plus about
+  these 38 to 134 ns, of which the copy is one fifth.
