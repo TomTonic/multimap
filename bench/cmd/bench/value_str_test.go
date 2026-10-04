@@ -5,6 +5,7 @@ package main
 import (
 	"strconv"
 	"testing"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/bench/keys"
 )
@@ -12,8 +13,8 @@ import (
 // TestStringValues makes sure a bench built with string values checks the
 // candidates as strictly as one with integers. It covers the value type of
 // the strvals build (value_str.go): every value number becomes its own 16
-// hex digits, and weigh tells apart two strings with equal bytes, because
-// the checks compare which values a candidate holds, not only how many.
+// hex digits, and every value number is its own string, because the checks
+// compare which values a candidate holds, not only how many.
 func TestStringValues(t *testing.T) {
 	nums := []uint64{0, 1, 0xdeadbeef, 1<<63 | 42}
 	vs := toVs(nums, nil)
@@ -22,13 +23,10 @@ func TestStringValues(t *testing.T) {
 		if got, err := strconv.ParseUint(v, 16, 64); err != nil || got != nums[i] || len(v) != 16 {
 			t.Fatalf("value %d is %q, want %d as 16 hex digits", i, v, nums[i])
 		}
-		if seen[weigh(v)] {
-			t.Fatalf("value %q weighs like another", v)
+		if seen[checkWeigh(v)] {
+			t.Fatalf("value %q checks like another", v)
 		}
-		seen[weigh(v)] = true
-	}
-	if again := toVs(nums[:1], nil); again[0] == vs[0] && weigh(again[0]) == weigh(vs[0]) {
-		t.Fatal("a copy of a value weighs like the value itself")
+		seen[checkWeigh(v)] = true
 	}
 }
 
@@ -47,7 +45,7 @@ func TestNamedValues(t *testing.T) {
 			t.Errorf("value %d is %q, want %q", i, v, want[i])
 		}
 	}
-	if weigh(vs[0]) != weigh(vs[2]) || weigh(vs[0]) == weigh(vs[1]) {
+	if addr(vs[0]) != addr(vs[2]) || addr(vs[0]) == addr(vs[1]) {
 		t.Error("equal numbers must be the same string, different numbers different ones")
 	}
 	for _, kind := range []keys.Kind{keys.Street, keys.Dirs} {
@@ -62,5 +60,23 @@ func TestNamedValues(t *testing.T) {
 		if len(lengths) < 5 {
 			t.Errorf("%s: names of only %d different lengths", kind, len(lengths))
 		}
+	}
+}
+
+// addr returns the address of the bytes of v.
+func addr(v V) uintptr { return uintptr(unsafe.Pointer(unsafe.StringData(v))) }
+
+// TestWeighReadsBytes makes sure that the timed loops of a bench with string
+// values depend on the bytes of a value, as a caller's use of it does: values
+// of other length or other end bytes weigh differently, an empty one weighs 0.
+func TestWeighReadsBytes(t *testing.T) {
+	if weigh("") != 0 {
+		t.Error("an empty value must weigh 0")
+	}
+	if weigh("ab") == weigh("abc") || weigh("ab") == weigh("bb") || weigh("ab") == weigh("aa") {
+		t.Error("length, first and last byte must all show in the weight")
+	}
+	if weigh("ab") != weigh(string([]byte("ab"))) {
+		t.Error("a copy of a value must weigh like the value")
 	}
 }

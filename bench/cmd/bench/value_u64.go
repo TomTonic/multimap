@@ -1,4 +1,4 @@
-//go:build !strvals
+//go:build !strvals && !ptrvals
 
 package main
 

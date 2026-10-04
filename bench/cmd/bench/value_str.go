@@ -76,17 +76,21 @@ func toNamed(u []uint64, names []string) []V {
 	return out
 }
 
-// weigh returns what the timed loops and the checks add up per value: the
-// address of its bytes. It reads only the string header, which the
-// candidate holds, not the bytes behind it, and since every candidate holds
-// the same headers (see toVs), the sums of two candidates agree exactly when
-// they hold the same values.
-func weigh(v V) uint64 { return uint64(uintptr(unsafe.Pointer(unsafe.StringData(v)))) }
+// weigh returns what the timed loops add up per value: its length and its
+// first and last byte. It reads the bytes of the string, as a caller that uses
+// a value does, and so pays the cache miss that a candidate with a pointer to
+// the caller's string pays there and a candidate that holds the bytes in its
+// own pages does not. The checks compare values with checkWeigh instead.
+func weigh(v V) uint64 {
+	if len(v) == 0 {
+		return 0
+	}
+	return uint64(len(v)) + uint64(v[0]) + uint64(v[len(v)-1])
+}
 
 // checkWeigh is weigh for the checks that candidates hold the same values: a
-// hash of the bytes, since a candidate that keeps the bytes in its own pages
-// hands out strings at other addresses. The timed loops do not use it; they
-// read only the header, as weigh does.
+// hash of all bytes, since two values may agree in length and end bytes. The
+// timed loops do not use it; it costs more than a caller's use of a value.
 func checkWeigh(v V) uint64 {
 	h := uint64(14695981039346656037)
 	for i := range len(v) {

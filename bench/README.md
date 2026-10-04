@@ -82,9 +82,20 @@ garbage collector has to scan them. The profiles are then reported as
 `multi-str` and `unique-str`. All value strings are views into one buffer
 that no candidate owns, as the key corpus is, so the memory figures count
 each value's 16-byte string header but not its bytes. The timed loops add
-up the address of each value's bytes, which reads the string header the
-candidate holds but not the bytes behind it. Both builds share one source;
-the `uint64` build compiles its timed loops exactly as before.
+up each value's length and first and last byte, which reads the bytes
+as a caller that uses a value does (since 2026-10-04; before, they added up the
+address of the bytes, which read only the string header the candidate holds,
+so string-value speed figures from before are not comparable: they favoured a
+candidate that holds pointers to the caller's strings over one that holds the
+bytes itself). The checks compare an FNV hash of all bytes.
+
+Built with the tag `ptrvals`, the values are pointers to records of 16 bytes
+(`*rec`, one object per different value, allocated one by one), as an
+application indexes its objects by key. The profiles are reported as
+`multi-ptr` and `unique-ptr`. The records are the caller's and cost every
+candidate the same, so the memory figures do not count them; the timed loops
+read the record's id. `strvals` and `ptrvals` are exclusive. All three builds
+share one source; the `uint64` build compiles its timed loops exactly as before.
 
 ## Results
 

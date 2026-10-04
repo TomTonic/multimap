@@ -62,7 +62,7 @@ func newPairs(n int, vals []V, offs []int, r float64, unique bool) pairs {
 		key[target+i], trans[i] = uint32(k), transientBit|uint64(i)
 	}
 	// The corpus elements are the very values the fixture holds, so that
-	// candidates built by the stream and by the fixture agree (see weigh).
+	// candidates built by the stream and by the fixture agree (see checkWeigh).
 	return pairs{key: key, val: append(slices.Clip(vals), toVs(trans, nil)...)}
 }
 
