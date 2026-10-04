@@ -35,6 +35,7 @@ var (
 	goClasses = []int{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512}
 )
 
+var overflowF = flag.Bool("overflow", false, "also describe the keys whose content does not fit a page (the value overflow)")
 var nodesF = flag.Bool("nodes", false, "also build the model of the byte nodes and print the whole tree")
 var header = flag.Int("header", 3, "bytes of the header of a page")
 var sets = flag.Bool("sets", false, "also compare sets of size classes")
@@ -117,6 +118,9 @@ func row(kind keys.Kind, n int, singleValue bool) {
 	}
 	if *nodesF {
 		wholeTree(kind, singleValue, c, es)
+	}
+	if *overflowF && !singleValue {
+		overflow(kind, c, es)
 	}
 	if *sets {
 		classSets(kind, singleValue, sizes)
@@ -303,4 +307,43 @@ func wholeTree(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 		name = "single-value"
 	}
 	fmt.Printf("\n%s, %s: the whole tree (byte nodes of internal/art and pages of 32, 64, 128, 256, 384, 512)\n\n| nodes | node B/key | page B/key | total B/key |\n|--:|--:|--:|--:|\n| %d (%.2f a key) | %.1f | %.1f | %.1f |\n\nvalue overflow (content over 512 B): %d keys (%.2f %%) with %d values (%.0f %% of all); their value sets, estimated at 24 B a value up to 64 values and 40 B beyond: %.1f B/key. Total with them: %.1f B/key.\n", kind, name, t.count, float64(t.count)/n, float64(t.bytes)/n, float64(pageB)/n, float64(t.bytes+pageB)/n, ovKeys, 100*float64(ovKeys)/n, ovVals, 100*float64(ovVals)/float64(allVals), float64(ovBytes)/n, float64(t.bytes+pageB+ovBytes)/n)
+}
+
+// overflow describes the keys whose content is above 512 bytes: how many values
+// they have, how long the values are, and what share of all values and value
+// bytes they hold.
+func overflow(kind keys.Kind, c keys.Corpus, es []entry) {
+	bounds := []int{16, 64, 256, 1024, 4096, 1 << 30}
+	type bucket struct{ keys, vals, bytes, maxVals int }
+	bs := make([]bucket, len(bounds))
+	allVals, allBytes := 0, 0
+	for _, e := range es {
+		n, b := len(e.vals), 0
+		for _, v := range e.vals {
+			b += valueLen(c, v)
+		}
+		allVals += n
+		allBytes += b
+		if headerBytes+b+n > 512 { // the rest of the content is small
+			i := sort.SearchInts(bounds, n)
+			bs[i].keys++
+			bs[i].vals += n
+			bs[i].bytes += b
+			bs[i].maxVals = max(bs[i].maxVals, n)
+		}
+	}
+	fmt.Printf("\n%s, natural: the keys with more than 512 bytes of content\n\n| values of the key | keys | values | share of all values | value bytes | average value | most values |\n|---|--:|--:|--:|--:|--:|--:|\n", kind)
+	lo := 0
+	for i, b := range bs {
+		if b.keys == 0 {
+			continue
+		}
+		hi := fmt.Sprint(bounds[i])
+		if i == len(bounds)-1 {
+			hi = "more"
+		}
+		fmt.Printf("| %d to %s | %d | %d | %.1f %% | %d | %.1f B | %d |\n", lo+1, hi, b.keys, b.vals, 100*float64(b.vals)/float64(allVals), b.bytes, float64(b.bytes)/float64(b.vals), b.maxVals)
+		lo = bounds[i]
+	}
+	fmt.Printf("\nall values: %d, value bytes %d (%.1f B a value)\n", allVals, allBytes, float64(allBytes)/float64(allVals))
 }
