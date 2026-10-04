@@ -9,6 +9,10 @@ import (
 	"testing"
 )
 
+// keyLen is the length of the whole key of every page in the tests: the page
+// keeps the end of it, and a remainder never grows beyond it.
+const keyLen = 300
+
 // model is what a page must hold: the remainder and the values in the order of
 // their arrival.
 type model struct {
@@ -20,7 +24,7 @@ type model struct {
 // the remainder, every value in order, the lookups, the copies of Strings, the
 // used bytes and a zero tail.
 func check(p *Page, m model) error {
-	if p.Len() != len(m.vals) || string(p.Rest()) != m.rest || !p.Match([]byte(m.rest)) {
+	if p.Len() != len(m.vals) || string(p.Rest()) != m.rest || !p.Match(fullKey(m.rest)) || p.KeyLen() != keyLen {
 		return fmt.Errorf("page has %d values and remainder %q, want %d and %q", p.Len(), p.Rest(), len(m.vals), m.rest)
 	}
 	var got []string
@@ -68,13 +72,13 @@ func TestNewAndBuild(t *testing.T) {
 	}{
 		{"holds an empty remainder", "", []string{"a"}, 32, 32},
 		{"holds an empty value", "ab", []string{""}, 32, 32},
-		{"fits 32 bytes exactly", "ab", []string{long(26)}, 32, 32}, // 3 + 2 + 1 + 26
-		{"needs 64 bytes for one byte more", "ab", []string{long(27)}, 64, 64},
-		{"fits 64 bytes exactly", "ab", []string{long(58)}, 64, 64},
-		{"needs 128 bytes for one byte more", "ab", []string{long(59)}, 128, 128},
-		{"takes a value of 254 bytes", "", []string{long(254)}, 384, 384}, // 3 + 1 + 254 = 258
+		{"fits 32 bytes exactly", "ab", []string{long(23)}, 32, 32}, // 6 + 2 + 1 + 23
+		{"needs 64 bytes for one byte more", "ab", []string{long(24)}, 64, 64},
+		{"fits 64 bytes exactly", "ab", []string{long(55)}, 64, 64},
+		{"needs 128 bytes for one byte more", "ab", []string{long(56)}, 128, 128},
+		{"takes a value of 254 bytes", "", []string{long(254)}, 384, 384}, // 6 + 1 + 254 = 261
 		{"takes the longest remainder", long(254), []string{"a"}, 384, 384},
-		{"fits the largest class exactly", long(254), []string{long(254)}, 512, 512},
+		{"fits the largest class exactly", long(254), []string{long(251)}, 512, 512},
 		{"holds many values", "k", []string{"a", "b", "c", "d"}, 32, 32},
 		{"refuses a remainder of 255 bytes", long(255), []string{"a"}, 0, 0},
 		{"refuses a value of 255 bytes", "a", []string{long(255)}, 0, 0},
@@ -82,8 +86,8 @@ func TestNewAndBuild(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := New([]byte(tt.rest), []byte(tt.vals[0]))
-			b := Build([]byte(tt.rest), bytesOf(tt.vals))
+			p := New([]byte(tt.rest), keyLen, []byte(tt.vals[0]))
+			b := Build([]byte(tt.rest), keyLen, bytesOf(tt.vals))
 			if (p == nil) != (tt.new == 0) || (b == nil) != (tt.bild == 0) {
 				t.Fatalf("New = %v, Build = %v", p, b)
 			}
@@ -102,7 +106,7 @@ func TestNewAndBuild(t *testing.T) {
 		})
 	}
 	t.Run("Build refuses no values", func(t *testing.T) {
-		if Build([]byte("a"), nil) != nil {
+		if Build([]byte("a"), keyLen, nil) != nil {
 			t.Error("a page needs a value")
 		}
 	})
@@ -111,10 +115,15 @@ func TestNewAndBuild(t *testing.T) {
 		for i := range 256 {
 			vals = append(vals, []byte{byte(i)})
 		}
-		if Build(nil, vals) != nil {
+		if Build(nil, keyLen, vals) != nil {
 			t.Error("256 values of one byte take 515 bytes")
 		}
 	})
+}
+
+// fullKey returns a key of keyLen bytes that ends with rest.
+func fullKey(rest string) []byte {
+	return append(bytes.Repeat([]byte("p"), keyLen-len(rest)), rest...)
 }
 
 func bytesOf(ss []string) [][]byte {
@@ -133,7 +142,7 @@ func bytesOf(ss []string) [][]byte {
 // value does not fit any more.
 func TestAddAndRemove(t *testing.T) {
 	t.Run("adds in place while the content fits", func(t *testing.T) {
-		p := New([]byte("rest"), []byte("one"))
+		p := New([]byte("rest"), keyLen, []byte("one"))
 		q, res := p.Add([]byte("two"))
 		if q != p || res != Added {
 			t.Fatalf("got %p, %v; want the same page and Added", q, res)
@@ -141,7 +150,7 @@ func TestAddAndRemove(t *testing.T) {
 		verify(t, q, model{"rest", []string{"one", "two"}})
 	})
 	t.Run("answers Present for a value that is there", func(t *testing.T) {
-		p := New([]byte("rest"), []byte("one"))
+		p := New([]byte("rest"), keyLen, []byte("one"))
 		p, _ = p.Add([]byte("two"))
 		if q, res := p.Add([]byte("one")); q != p || res != Present {
 			t.Fatalf("got %p, %v", q, res)
@@ -155,23 +164,23 @@ func TestAddAndRemove(t *testing.T) {
 		}
 	})
 	t.Run("grows into the next class that holds the content", func(t *testing.T) {
-		p := New([]byte("ab"), bytes.Repeat([]byte("x"), 26)) // 32 bytes
+		p := New([]byte("ab"), keyLen, bytes.Repeat([]byte("x"), 23)) // 32 bytes
 		q, res := p.Add([]byte("y"))
 		if q == p || res != Added || q.Size() != 64 {
 			t.Fatalf("got a page of %d bytes, %v", q.Size(), res)
 		}
-		verify(t, q, model{"ab", []string{strings.Repeat("x", 26), "y"}})
-		verify(t, p, model{"ab", []string{strings.Repeat("x", 26)}}) // the old page is unchanged
+		verify(t, q, model{"ab", []string{strings.Repeat("x", 23), "y"}})
+		verify(t, p, model{"ab", []string{strings.Repeat("x", 23)}}) // the old page is unchanged
 	})
 	t.Run("jumps over classes for a long value", func(t *testing.T) {
-		p := New([]byte("ab"), []byte("v"))
+		p := New([]byte("ab"), keyLen, []byte("v"))
 		q, _ := p.Add(bytes.Repeat([]byte("z"), 200))
 		if q.Size() != 256 {
 			t.Fatalf("got %d bytes", q.Size())
 		}
 	})
 	t.Run("answers Full for a value of 255 bytes", func(t *testing.T) {
-		p := New([]byte("ab"), []byte("v"))
+		p := New([]byte("ab"), keyLen, []byte("v"))
 		if q, res := p.Add(make([]byte, 255)); q != p || res != Full {
 			t.Fatalf("got %p, %v", q, res)
 		}
@@ -180,20 +189,20 @@ func TestAddAndRemove(t *testing.T) {
 		}
 	})
 	t.Run("answers Full when the content would pass 512 bytes", func(t *testing.T) {
-		p := New([]byte("ab"), bytes.Repeat([]byte("a"), 200))
-		p, _ = p.Add(bytes.Repeat([]byte("b"), 200)) // 3 + 2 + 201 + 201 = 407
+		p := New([]byte("ab"), keyLen, bytes.Repeat([]byte("a"), 200))
+		p, _ = p.Add(bytes.Repeat([]byte("b"), 200)) // 6 + 2 + 201 + 201 = 410
 		before := p.Used()
-		q, res := p.Add(bytes.Repeat([]byte("c"), 110)) // 407 + 111 = 518
+		q, res := p.Add(bytes.Repeat([]byte("c"), 110)) // 410 + 111 = 521
 		if q != p || res != Full || p.Used() != before {
 			t.Fatalf("got %p, %v, used %d", q, res, p.Used())
 		}
-		if _, res := p.Add(bytes.Repeat([]byte("c"), 100)); res != Added { // 407 + 101 = 508
+		if _, res := p.Add(bytes.Repeat([]byte("c"), 100)); res != Added { // 410 + 101 = 511
 			t.Fatalf("got %v", res)
 		}
 	})
 	t.Run("removes the first, a middle and the last value", func(t *testing.T) {
 		for _, gone := range []string{"a", "bb", "ccc"} {
-			p := Build([]byte("r"), bytesOf([]string{"a", "bb", "ccc"}))
+			p := Build([]byte("r"), keyLen, bytesOf([]string{"a", "bb", "ccc"}))
 			q, ok := p.Remove([]byte(gone))
 			if !ok || q != p {
 				t.Fatalf("remove %q: got %p, %v", gone, q, ok)
@@ -208,7 +217,7 @@ func TestAddAndRemove(t *testing.T) {
 		}
 	})
 	t.Run("answers false for a value that is not there", func(t *testing.T) {
-		p := New([]byte("r"), []byte("a"))
+		p := New([]byte("r"), keyLen, []byte("a"))
 		if q, ok := p.Remove([]byte("b")); q != p || ok {
 			t.Fatalf("got %p, %v", q, ok)
 		}
@@ -217,27 +226,27 @@ func TestAddAndRemove(t *testing.T) {
 		}
 	})
 	t.Run("returns nil for the last value", func(t *testing.T) {
-		p := New([]byte("r"), []byte("a"))
+		p := New([]byte("r"), keyLen, []byte("a"))
 		if q, ok := p.Remove([]byte("a")); q != nil || !ok {
 			t.Fatalf("got %p, %v", q, ok)
 		}
 	})
 	t.Run("shrinks when the content fits a class of at most half the size", func(t *testing.T) {
-		p := New([]byte("ab"), bytes.Repeat([]byte("x"), 26))
+		p := New([]byte("ab"), keyLen, bytes.Repeat([]byte("x"), 23))
 		p, _ = p.Add([]byte("y")) // 64 bytes, content 35
 		q, ok := p.Remove([]byte("y"))
 		if !ok || q == p || q.Size() != 32 {
 			t.Fatalf("got a page of %d bytes", q.Size())
 		}
-		verify(t, q, model{"ab", []string{strings.Repeat("x", 26)}})
+		verify(t, q, model{"ab", []string{strings.Repeat("x", 23)}})
 	})
 	t.Run("keeps a page that would save less than half", func(t *testing.T) {
-		p := New(nil, bytes.Repeat([]byte("a"), 200)) // 256
-		p, _ = p.Add(bytes.Repeat([]byte("b"), 100))  // 3 + 201 + 101 = 305: 384
+		p := New(nil, keyLen, bytes.Repeat([]byte("a"), 200)) // 256
+		p, _ = p.Add(bytes.Repeat([]byte("b"), 100))          // 6 + 201 + 101 = 308: 384
 		if p.Size() != 384 {
 			t.Fatalf("got %d bytes", p.Size())
 		}
-		q, _ := p.Remove(bytes.Repeat([]byte("b"), 100)) // content 204: class 256 saves a third
+		q, _ := p.Remove(bytes.Repeat([]byte("b"), 100)) // content 207: class 256 saves a third
 		if q != p || q.Size() != 384 {
 			t.Fatalf("got a page of %d bytes", q.Size())
 		}
@@ -248,7 +257,7 @@ func TestAddAndRemove(t *testing.T) {
 // does. Each hands out views of the page and Strings copies of it, all in
 // one allocation, and both stop when the caller says so.
 func TestEachAndStrings(t *testing.T) {
-	p := Build([]byte("rest"), bytesOf([]string{"alpha", "", "gamma"}))
+	p := Build([]byte("rest"), keyLen, bytesOf([]string{"alpha", "", "gamma"}))
 	t.Run("Each stops when fn returns false", func(t *testing.T) {
 		n := 0
 		if p.Each(func([]byte) bool { n++; return n < 2 }) || n != 2 {
@@ -268,7 +277,7 @@ func TestEachAndStrings(t *testing.T) {
 		}
 	})
 	t.Run("Strings hands out an empty value", func(t *testing.T) {
-		e := New([]byte("r"), nil)
+		e := New([]byte("r"), keyLen, nil)
 		var got []string
 		e.Strings(func(v string) bool { got = append(got, v); return true })
 		if !slices.Equal(got, []string{""}) {
@@ -276,7 +285,7 @@ func TestEachAndStrings(t *testing.T) {
 		}
 	})
 	t.Run("the strings stay valid when the page changes", func(t *testing.T) {
-		q := Build([]byte("r"), bytesOf([]string{"hello", "world"}))
+		q := Build([]byte("r"), keyLen, bytesOf([]string{"hello", "world"}))
 		var s []string
 		q.Strings(func(v string) bool { s = append(s, v); return true })
 		q.Remove([]byte("hello")) // shifts the bytes of "world" down in the page
@@ -291,25 +300,14 @@ func TestEachAndStrings(t *testing.T) {
 	})
 }
 
-// TestSkipAndPrepend covers the moves of a page in the tree: deeper when a
-// node is split in above it (Skip, in place) and up when the node above it goes
-// away (Prepend, into a larger class if need be). The remainder changes,
-// the values stay, and a remainder or content beyond the limits is refused.
-func TestSkipAndPrepend(t *testing.T) {
-	t.Run("Skip(0) changes nothing", func(t *testing.T) {
-		p := Build([]byte("abcd"), bytesOf([]string{"v", "w"}))
-		p.Skip(0)
-		verify(t, p, model{"abcd", []string{"v", "w"}})
-	})
-	t.Run("Skip removes the first bytes of the remainder and keeps the values", func(t *testing.T) {
-		for k := 0; k <= 4; k++ {
-			p := Build([]byte("abcd"), bytesOf([]string{"v", "w"}))
-			p.Skip(k)
-			verify(t, p, model{"abcd"[k:], []string{"v", "w"}})
-		}
-	})
+// TestPrepend covers the move of a page up in the tree, when the node above it
+// goes away: the remainder grows at the front, in place if the content still
+// fits the class and in a page of a larger class if not, and a remainder or
+// content beyond the limits is refused. The values and the length of the whole
+// key stay.
+func TestPrepend(t *testing.T) {
 	t.Run("Prepend puts bytes in front of the remainder in place", func(t *testing.T) {
-		p := Build([]byte("cd"), bytesOf([]string{"v", "w"}))
+		p := Build([]byte("cd"), keyLen, bytesOf([]string{"v", "w"}))
 		q := p.Prepend([]byte("ab"))
 		if q != p {
 			t.Fatal("the content fits, so the page stays")
@@ -317,16 +315,16 @@ func TestSkipAndPrepend(t *testing.T) {
 		verify(t, q, model{"abcd", []string{"v", "w"}})
 	})
 	t.Run("Prepend moves to a larger class when the content outgrows it", func(t *testing.T) {
-		p := New([]byte("cd"), bytes.Repeat([]byte("x"), 24)) // 3 + 2 + 25 = 30
+		p := New([]byte("cd"), keyLen, bytes.Repeat([]byte("x"), 23)) // 6 + 2 + 24 = 32
 		q := p.Prepend([]byte("abcd"))
 		if q == p || q.Size() != 64 {
 			t.Fatalf("got a page of %d bytes", q.Size())
 		}
-		verify(t, q, model{"abcdcd", []string{strings.Repeat("x", 24)}})
-		verify(t, p, model{"cd", []string{strings.Repeat("x", 24)}})
+		verify(t, q, model{"abcdcd", []string{strings.Repeat("x", 23)}})
+		verify(t, p, model{"cd", []string{strings.Repeat("x", 23)}})
 	})
 	t.Run("Prepend refuses a remainder beyond 254 bytes", func(t *testing.T) {
-		p := New(bytes.Repeat([]byte("a"), 200), []byte("v"))
+		p := New(bytes.Repeat([]byte("a"), 200), keyLen, []byte("v"))
 		if p.Prepend(bytes.Repeat([]byte("b"), 55)) != nil {
 			t.Fatal("255 bytes of remainder")
 		}
@@ -335,12 +333,12 @@ func TestSkipAndPrepend(t *testing.T) {
 		}
 	})
 	t.Run("Prepend refuses content beyond 512 bytes", func(t *testing.T) {
-		p := New([]byte("a"), bytes.Repeat([]byte("v"), 200))
-		p, _ = p.Add(bytes.Repeat([]byte("w"), 200)) // 3 + 1 + 201 + 201 = 406
-		if p.Prepend(bytes.Repeat([]byte("b"), 107)) != nil {
+		p := New([]byte("a"), keyLen, bytes.Repeat([]byte("v"), 200))
+		p, _ = p.Add(bytes.Repeat([]byte("w"), 200)) // 6 + 1 + 201 + 201 = 409
+		if p.Prepend(bytes.Repeat([]byte("b"), 104)) != nil {
 			t.Fatal("513 bytes")
 		}
-		if p.Prepend(bytes.Repeat([]byte("b"), 106)) == nil {
+		if p.Prepend(bytes.Repeat([]byte("b"), 103)) == nil {
 			t.Fatal("512 bytes fit")
 		}
 	})
@@ -349,8 +347,8 @@ func TestSkipAndPrepend(t *testing.T) {
 // TestEqual covers the comparison tests use: two pages are equal when
 // remainder and values in order agree, whatever their classes.
 func TestEqual(t *testing.T) {
-	a := Build([]byte("r"), bytesOf([]string{"x", "y"}))
-	b := Build([]byte("r"), bytesOf([]string{"x", "y"}))
+	a := Build([]byte("r"), keyLen, bytesOf([]string{"x", "y"}))
+	b := Build([]byte("r"), keyLen, bytesOf([]string{"x", "y"}))
 	b2, _ := b.Add(bytes.Repeat([]byte("z"), 40))
 	b2, _ = b2.Remove(bytes.Repeat([]byte("z"), 40))
 	cases := []struct {
@@ -360,10 +358,10 @@ func TestEqual(t *testing.T) {
 	}{
 		{"same content", a, b, true},
 		{"same content after growing and shrinking", a, b2, true},
-		{"other order", a, Build([]byte("r"), bytesOf([]string{"y", "x"})), false},
-		{"other remainder", a, Build([]byte("s"), bytesOf([]string{"x", "y"})), false},
-		{"other number of values", a, New([]byte("r"), []byte("x")), false},
-		{"remainder and value swap bytes", New([]byte("ab"), []byte("c")), New([]byte("a"), []byte("bc")), false},
+		{"other order", a, Build([]byte("r"), keyLen, bytesOf([]string{"y", "x"})), false},
+		{"other remainder", a, Build([]byte("s"), keyLen, bytesOf([]string{"x", "y"})), false},
+		{"other number of values", a, New([]byte("r"), keyLen, []byte("x")), false},
+		{"remainder and value swap bytes", New([]byte("ab"), keyLen, []byte("c")), New([]byte("a"), keyLen, []byte("bc")), false},
 	}
 	for _, tt := range cases {
 		if got := Equal(tt.x, tt.y); got != tt.want {
@@ -377,7 +375,7 @@ func TestEqual(t *testing.T) {
 func TestKindBase(t *testing.T) {
 	KindBase = 40
 	defer func() { KindBase = 0 }()
-	p := New([]byte("ab"), []byte("v"))
+	p := New([]byte("ab"), keyLen, []byte("v"))
 	q := p.Prepend(bytes.Repeat([]byte("x"), 100))
 	if p.kind != 40 || q.kind != 40+2 || q.Size() != 128 {
 		t.Fatalf("kinds %d and %d", p.kind, q.kind)
@@ -411,7 +409,7 @@ func randBytes(rng *rand.Rand, n int) []byte {
 func drive(t *testing.T, rng *rand.Rand, gen func(n int) []byte, steps int) {
 	t.Helper()
 	m := model{rest: string(gen(rng.Intn(6))), vals: []string{""}}
-	p := New([]byte(m.rest), nil)
+	p := New([]byte(m.rest), keyLen, nil)
 	var hist []string
 	for range steps {
 		var op string
@@ -449,14 +447,9 @@ func drive(t *testing.T, rng *rand.Rand, gen func(n int) []byte, steps int) {
 			}
 			if q == nil { // the last value went: a key begins again
 				m = model{rest: string(gen(rng.Intn(6))), vals: []string{""}}
-				q = New([]byte(m.rest), nil)
+				q = New([]byte(m.rest), keyLen, nil)
 			}
 			p = q
-		case 7:
-			k := rng.Intn(len(m.rest) + 1)
-			op = fmt.Sprintf("skip %d", k)
-			p.Skip(k)
-			m.rest = m.rest[k:]
 		default:
 			pre := gen(rng.Intn(20))
 			op = fmt.Sprintf("prepend %q", pre)

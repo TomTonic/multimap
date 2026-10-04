@@ -1,6 +1,6 @@
 # Step 3.1: design note of the single-key page (SKMV) for string values
 
-Status: **for the user's approval, no code yet** (PLAN.md, step 3.1). Written 2026-10-04. Words as in
+Status: **approved by the user on 2026-10-04** (layout of section 2, return from the set leaf at 256 bytes, copy-out strings, byte nodes plus a page per key in 3.3); the user is worried about `churn`, and the layout can be measured, profiled and changed later. Written 2026-10-04. Words as in
 [GLOSSARY.md](GLOSSARY.md). Numbers from `bench/cmd/skmodel` (a model on the real keys and values, no
 tree is built) and from [step3-skmv-sizes.md](step3-skmv-sizes.md).
 
@@ -21,7 +21,7 @@ One object per key, **no pointer in it**. It holds the key's remainder and all i
 
 ```
 offset 0   kind        1 B   the size class: kSK32, kSK64, kSK128, kSK256, kSK384, kSK512
-offset 1   n           1 B   number of values, 1 to 255
+offset 1   n           1 B   number of values, 1 to 254 (each takes a byte at least, the page has 512)
 offset 2   r           1 B   length of the remainder, 0 to 254
 offset 3   remainder   r B   the key from the page's path length on
 offset 3+r value 1     1 B length l1 (0 to 254), then l1 bytes
@@ -47,8 +47,8 @@ header, values behind the remainder):
 - **The remainder comes first**, because a lookup first decides whether this is the key.
 
 Limits that make every length one byte, and what happens beyond them (all of them go to the value
-overflow of today, the set leaf; see 5): a value of 255 bytes or more, more than 255 values, a content of
-more than 512 bytes. A remainder of 255 bytes or more also goes to the set leaf, which holds a key inline
+overflow of today, the set leaf; see 5): a value of 255 bytes or more or a content of more than 512 bytes (the number of values
+never reaches 255: each takes two bytes at least). A remainder of 255 bytes or more also goes to the set leaf, which holds a key inline
 up to 254 bytes and longer ones as a string (this is today's behaviour; the *oversized object* of the glossary
 is not built in this step).
 
@@ -57,6 +57,17 @@ that are aligned to their size, so an object of 64 bytes or less lies in one 64-
 pages share one); 128, 256, 384 and 512 are multiples of 128 as before. R1 gets an exception for the
 single-key page: 32 and 64.
 
+**Deviation for step 3.3 (2026-10-04, Claude): the header is the leaf's 6 bytes.** `kind | r | n (2 B) | kl (2 B)`:
+the first six bytes of the leaves of `internal/art` (kind, remainder length, number of values, length of the
+whole key). A page that starts like a leaf lets the existing code for keys work on it unchanged: the leaf holds
+its key from the path length it was made at (`base`) and compares the *end* of a key with its remainder, so a
+page that is pushed deeper by a new node above it needs no change (no `Skip`), and `stored`, `base`, `matches`,
+`from`, the key assembly of scans and the rebuilds need no second code path. It costs 3 bytes a key against the
+3-byte header: in the model 46.4 instead of 44.8 B/key of pages on `street`, 79.7 instead of 76.3 on `dirs`. The
+header diet (3 bytes, `Skip` in place) is a separate step after the measurement of 3.3, so that one thing changes
+at a time. `internal/skpage` has this header; the table below keeps the 3-byte figures of the approved layout
+and the prediction in section 6 uses 6.
+
 ## 3. Operations
 
 All are on one page; the tree finds the page and tells it the remainder of the key and the path length.
@@ -64,10 +75,10 @@ All are on one page; the tree finds the page and tells it the remainder of the k
 | operation | what it does | cost |
 |---|---|---|
 | `Has(rest)` / `Values(rest)` | compare `r` with len(rest) and the remainder bytes with `rest`; then walk the values | one pass over at most 512 bytes |
-| `Add(rest, v)` | `Values` found the key: walk the values, return if `v` is there (set semantics); else append `1+len(v)` bytes at the end, `n++`; if it does not fit the class, copy to the next class that holds it; if none (512) or `n==255` or `len(v)>=255`, convert to a set leaf | append in place; a copy when the class changes |
+| `Add(rest, v)` | `Values` found the key: walk the values, return if `v` is there (set semantics); else append `1+len(v)` bytes at the end, `n++`; if it does not fit the class, copy to the next class that holds it; if none (512) or `len(v)>=255`, convert to a set leaf | append in place; a copy when the class changes |
 | `Remove(rest, v)` | walk to the value, shift the values behind it down, `n--`; if `n==0` the key is gone; shrink (below) | one memmove of at most 512 bytes |
 | `New(rest, v)` | the smallest class that holds 3 + r + 1 + len(v) | one allocation |
-| `Skip(k)` | the page moves k bytes deeper (a new node was split in above it): the remainder loses its first k bytes, everything behind it shifts down; in place | one memmove |
+| `Skip(k)` | (3-byte header only, see above; not in `internal/skpage`) the page moves k bytes deeper: the remainder loses its first k bytes, everything behind it shifts down; in place | one memmove |
 | `Prepend(pre)` | the page moves up (the node above it went away): the remainder gets `pre` in front; copy to a larger class if it no longer fits | a copy |
 | `Each` / key assembly for scans | the remainder is appended to the path; the values are handed out as below | |
 
@@ -78,7 +89,7 @@ fits 128 or less. The page the garbage collector frees is not recycled (the sket
 Go's allocator is the cache).
 
 **From the page to the set leaf and back.** The conversion to a set leaf happens when the content no longer
-fits 512 bytes, `n` would be 256, or a value is 255 bytes or longer. The set leaf goes back to a page when all
+fits 512 bytes, or a value is 255 bytes or longer. The set leaf goes back to a page when all
 its values fit a page of 256 bytes (half of the largest class, so a key at the boundary does not flap between
 the two on every add and remove) and every value is shorter than 255 bytes.
 
@@ -119,10 +130,10 @@ Model of the tree of byte nodes (the nodes of `node-layout`) with a page per key
 
 | data | nodes (a key) | pages | value overflow (est.) | total B/key |
 |---|--:|--:|--:|--:|
-| street, natural mix | 34.4 | 42.8 | 38.6 | **115.8** |
-| street, one value | 34.4 | 32.8 | 0 | **67.2** |
-| dirs, natural mix | 37.7 | 70.2 | 46.0 | **153.9** |
-| dirs, one value | 37.7 | 42.2 | 0 | **80.0** |
+| street, natural mix | 34.4 | 44.5 | 38.6 | **117.5** |
+| street, one value | 34.4 | 33.7 | 0 | **68.1** |
+| dirs, natural mix | 37.7 | 73.5 | 46.0 | **157.3** |
+| dirs, one value | 37.7 | 45.3 | 0 | **83.0** |
 
 The string bytes of the values are in the pages. The value overflow row is a rough estimate (the value sets
 of 0.5 % of the `street` keys and 1.6 % of the `dirs` keys, which hold 37 % of the values; 24 or 40 bytes a
@@ -149,7 +160,7 @@ anything else changes (PLAN.md).
 ## 7. For the user to decide
 
 1. The layout of section 2: remainder first, then length-prefixed values, a 3-byte header, one-byte lengths
-   (so: value < 255 bytes, remainder < 255 bytes, n < 256 per page), the rest to the set leaf. Alternative with
+   (so: value < 255 bytes, remainder < 255 bytes), the rest to the set leaf. Alternative with
    all lengths in the header as in the sketch: +5 bytes a key, a fixed number of values.
 2. The classes 32, 64, 128, 256, 384, 512 (decided), shrink only if that saves half, no page cache.
 3. Convert back from a set leaf at a content of 256 bytes or less.

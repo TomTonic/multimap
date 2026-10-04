@@ -42,6 +42,7 @@ var sink int
 
 // entry is one key as the tree holds it: the remainder below the byte node and its values.
 type entry struct {
+	key  []byte // the whole key
 	rest []byte
 	vals [][]byte
 }
@@ -84,11 +85,11 @@ func load(kind keys.Kind) ([]entry, error) {
 		if i+1 < len(all) {
 			l = max(l, lcp(e.key, all[i+1].key))
 		}
-		en := entry{rest: e.key[min(l+1, len(e.key)):]}
+		en := entry{key: e.key, rest: e.key[min(l+1, len(e.key)):]}
 		for _, v := range e.vals {
 			en.vals = append(en.vals, []byte(name(c, v)))
 		}
-		if skpage.Build(en.rest, en.vals) != nil {
+		if skpage.Build(en.rest, len(e.key), en.vals) != nil {
 			es = append(es, en)
 		}
 	}
@@ -118,7 +119,7 @@ func run(kind keys.Kind, rounds int) error {
 	}
 	pages := make([]*skpage.Page, len(es))
 	for i, e := range es {
-		pages[i] = skpage.Build(e.rest, e.vals)
+		pages[i] = skpage.Build(e.rest, len(e.key), e.vals)
 	}
 	hot := min(4096, len(pages))
 	row := func(op string, f func(b *testing.B)) {
@@ -139,7 +140,7 @@ func run(kind keys.Kind, rounds int) error {
 			perm := rng.Perm(n)
 			for i := 0; i < b.N; i++ {
 				j := perm[i%n]
-				if !pages[j].Match(es[j].rest) {
+				if !pages[j].Match(es[j].key) {
 					b.Fatal("no match")
 				}
 				pages[j].Strings(func(v string) bool { sink += len(v); return true })
@@ -164,7 +165,7 @@ func run(kind keys.Kind, rounds int) error {
 	})
 	row("add+remove at a class border", func(b *testing.B) {
 		b.ReportAllocs()
-		p := skpage.New([]byte("ab"), bytes.Repeat([]byte("x"), 26)) // content 3 + 2 + 1 + 26 = 32: the 32-byte class is full
+		p := skpage.New([]byte("ab"), 10, bytes.Repeat([]byte("x"), 23)) // content 6 + 2 + 1 + 23 = 32: the 32-byte class is full
 		for i := 0; i < b.N; i++ {
 			q, _ := p.Add(val)
 			p, _ = q.Remove(val)
@@ -174,7 +175,7 @@ func run(kind keys.Kind, rounds int) error {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			e := &es[i%len(es)]
-			p := skpage.New(e.rest, e.vals[0])
+			p := skpage.New(e.rest, len(e.key), e.vals[0])
 			for _, v := range e.vals[1:] {
 				var res skpage.Result
 				if p, res = p.Add(v); res == skpage.Full {

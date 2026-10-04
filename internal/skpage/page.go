@@ -6,17 +6,22 @@
 //
 // A page is an object of 32, 64, 128, 256, 384 or 512 bytes:
 //
-//	kind | n | r | remainder (r bytes) | length 1, value 1 | length 2, value 2 | ...
+//	kind | r | n (2 bytes) | kl (2 bytes) | remainder (r bytes) | length 1, value 1 | length 2, value 2 | ...
 //
-// kind is the size class (plus KindBase), n the number of values (1 to 254: every
-// value takes a byte at least, and the largest class has 512), r
-// the length of the remainder (0 to 254). Each value is a length byte (0 to 254)
+// kind is the size class (plus KindBase), r the length of the remainder (0 to
+// 254), n the number of values (1 to 254: every value takes a byte at least, and
+// the largest class has 512), kl the length of the whole key. The first six
+// bytes are those of the leaves of internal/art (kind, key remainder length,
+// number of values, whole key length), so that the tree's code for keys, which
+// holds the key from the base it was made at and compares the end of a key with
+// the remainder, works on a page as on a leaf (design note, section 5: the
+// header of 3 bytes is a later step). Each value is a length byte (0 to 254)
 // followed by that many bytes. The bytes behind the last value are zero. The
 // values of a key are a set: no two are equal, and their order is the order of
 // their arrival.
 //
-// The page knows nothing of the tree. The tree hands in the remainder: the key
-// from the page's path length on.
+// The page knows nothing of the tree beyond what the leaves of the tree know:
+// the tree hands in the key, of which the page keeps the end.
 package skpage
 
 import (
@@ -30,8 +35,8 @@ const (
 	MaxValue = 254
 	// MaxRemainder is the longest remainder a page holds.
 	MaxRemainder = 254
-	// Header is the size of the fixed part: kind, n, r.
-	Header = 3
+	// Header is the size of the fixed part: kind, r, n, kl.
+	Header = 6
 	// BackLimit is the content, in bytes, up to which the value set of a key
 	// goes back into a page (half of the largest class). A key moves into a
 	// set when its content no longer fits the largest class; moving back only
@@ -54,9 +59,10 @@ var KindBase uint8
 
 // Page is the first three bytes of a page; the page is the object they start.
 type Page struct {
-	kind uint8 // KindBase plus the size class
-	n    uint8 // number of values
-	r    uint8 // length of the remainder
+	kind uint8  // KindBase plus the size class
+	r    uint8  // length of the remainder
+	n    uint16 // number of values
+	kl   uint16 // length of the whole key
 }
 
 // Result says what Add did.
@@ -105,23 +111,24 @@ func classFor(need int) int {
 	return -1
 }
 
-// newPage returns an empty page of class c for a remainder of r bytes.
-func newPage(c, r int) *Page {
+// newPage returns an empty page of class c for a remainder of r bytes of a key
+// of kl bytes.
+func newPage(c, r, kl int) *Page {
 	p := alloc(c)
-	p.kind, p.r = KindBase+uint8(c), uint8(r)
+	p.kind, p.r, p.kl = KindBase+uint8(c), uint8(r), uint16(kl)
 	return p
 }
 
-// New returns a page for remainder rest with the one value val, or nil if they
-// do not fit a page (see MaxRemainder and MaxValue; the largest class always
+// New returns a page for the key of keyLen bytes whose end is rest, with the one
+// value val, or nil if they do not fit a page (see MaxRemainder and MaxValue; the largest class always
 // holds the rest).
 // The page copies both. The tree calls New when a key arrives that no page holds
 // yet, with the remainder it has cut from the key.
-func New(rest, val []byte) *Page {
+func New(rest []byte, keyLen int, val []byte) *Page {
 	if len(rest) > MaxRemainder || len(val) > MaxValue {
 		return nil
 	}
-	p := newPage(classFor(Header+len(rest)+1+len(val)), len(rest)) // at most 512
+	p := newPage(classFor(Header+len(rest)+1+len(val)), len(rest), keyLen) // at most 512
 	p.n = 1
 	m := p.mem()
 	copy(m[Header:], rest)
@@ -130,10 +137,11 @@ func New(rest, val []byte) *Page {
 	return p
 }
 
-// Build returns a page for remainder rest with the values vals (all different),
+// Build returns a page for the key of keyLen bytes whose end is rest, with the
+// values vals (all different),
 // or nil if they do not fit. The tree calls Build when the value set of a key
 // has shrunk to BackLimit bytes of content or less.
-func Build(rest []byte, vals [][]byte) *Page {
+func Build(rest []byte, keyLen int, vals [][]byte) *Page {
 	if len(rest) > MaxRemainder || len(vals) == 0 {
 		return nil
 	}
@@ -147,8 +155,8 @@ func Build(rest []byte, vals [][]byte) *Page {
 			return nil // also keeps n below 256
 		}
 	}
-	p := newPage(classFor(need), len(rest))
-	p.n = uint8(len(vals))
+	p := newPage(classFor(need), len(rest), keyLen)
+	p.n = uint16(len(vals))
 	m := p.mem()
 	off := Header + copy(m[Header:], rest)
 	for _, v := range vals {
@@ -171,9 +179,15 @@ func (p *Page) Len() int { return int(p.n) }
 // page changes.
 func (p *Page) Rest() []byte { return p.mem()[Header : Header+int(p.r)] }
 
-// Match reports whether rest is the remainder of the page.
-func (p *Page) Match(rest []byte) bool {
-	return len(rest) == int(p.r) && string(rest) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(p), Header)), len(rest))
+// KeyLen returns the length of the whole key.
+func (p *Page) KeyLen() int { return int(p.kl) }
+
+// Match reports whether key is the key of the page: it has the length of the
+// whole key, and its last bytes are the remainder. The tree has matched the
+// bytes before them on its way down.
+func (p *Page) Match(key []byte) bool {
+	r := int(p.r)
+	return len(key) == int(p.kl) && string(key[len(key)-r:]) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(p), Header)), r)
 }
 
 // Used returns the bytes of the page that hold something: the header, the
@@ -238,7 +252,7 @@ func (p *Page) Add(val []byte) (*Page, Result) {
 		if c < 0 {
 			return p, Full
 		}
-		q = newPage(c, int(p.r))
+		q = newPage(c, int(p.r), int(p.kl))
 		q.n = p.n
 		copy(q.mem()[Header:], p.mem()[Header:used])
 	}
@@ -271,7 +285,7 @@ func (p *Page) Remove(val []byte) (*Page, bool) {
 	p.n--
 	used -= end - at
 	if c := classFor(used); c >= 0 && 2*sizes[c] <= p.Size() {
-		q := newPage(c, int(p.r))
+		q := newPage(c, int(p.r), int(p.kl))
 		q.n = p.n
 		copy(q.mem()[Header:], m[Header:used])
 		return q, true
@@ -330,20 +344,6 @@ func (p *Page) Strings(fn func(val string) bool) bool {
 // of a scan from the path and the remainder.
 func (p *Page) AppendKey(dst []byte) []byte { return append(dst, p.Rest()...) }
 
-// Skip shortens the remainder by its first k bytes, in place (0 <= k <= the
-// remainder's length): the page moves k bytes deeper in the tree, when a node
-// is split in above it.
-func (p *Page) Skip(k int) {
-	if k == 0 {
-		return
-	}
-	m := p.mem()
-	used := p.Used()
-	copy(m[Header:], m[Header+k:used])
-	clear(m[used-k : used])
-	p.r -= uint8(k)
-}
-
 // Prepend returns the page with pre in front of the remainder: the page moves
 // up in the tree, when the node above it goes away. It is p itself if the
 // content still fits, else a page of a larger class; nil if the remainder
@@ -356,7 +356,7 @@ func (p *Page) Prepend(pre []byte) *Page {
 	}
 	q := p
 	if used+len(pre) > p.Size() {
-		q = newPage(classFor(used+len(pre)), r)
+		q = newPage(classFor(used+len(pre)), r, int(p.kl))
 		q.n = p.n
 		copy(q.mem()[Header+len(pre):], p.mem()[Header:used])
 	} else {
@@ -371,5 +371,5 @@ func (p *Page) Prepend(pre []byte) *Page {
 // Equal reports whether two pages hold the same remainder and the same values
 // in the same order, whatever their classes. Tests use it.
 func Equal(a, b *Page) bool {
-	return a.n == b.n && a.r == b.r && bytes.Equal(a.mem()[Header:a.Used()], b.mem()[Header:b.Used()])
+	return a.n == b.n && a.r == b.r && a.kl == b.kl && bytes.Equal(a.mem()[Header:a.Used()], b.mem()[Header:b.Used()])
 }
