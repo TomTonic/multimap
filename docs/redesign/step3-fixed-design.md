@@ -1,6 +1,6 @@
 # Step 3.5: the single-key page for fixed-size values (`uint64`, `*T`)
 
-Status: **design, before code** (2026-10-04); **three decisions are the user's** (section 8). Words as in [GLOSSARY.md](GLOSSARY.md). Numbers: `bench/cmd/skmodel`
+Status: **design, decided 2026-10-04 (user)**: (1) the multi-key pages are **off, and cut out of `internal/art`** in 3.5 (they are redesigned later with what has been learned by then; if there is nothing, the old implementation is taken from the tag `before-mk-pages-removal`); (2) pointer pages only for one-word `T`, bigger inline is an optimization for later; (3) values aligned to `T`, compared as `T`. Sections 6 and 8 keep the numbers that led there; section 7 gets the first step below. Words as in [GLOSSARY.md](GLOSSARY.md). Numbers: `bench/cmd/skmodel`
 (`-values words|pointers`, `-ovbytes`), `bench/cmd/ovbench` (`-values words|pointers`), the measurements of step 2 (`bench/results-layout/step3-real`).
 
 ## 1. What is there today, for the three cases
@@ -63,7 +63,7 @@ Smallest class that holds the first value; when full, the smallest class that ho
 the size holds the values; value overflow when the values do not fit 512 bytes; back into a page at **256 bytes of content or less** (hysteresis, `skpage.BackLimit`). Capacity of a
 page of 8-byte values with a remainder of 5 bytes: 3, 7, 15, 31, 47, 63 values.
 
-## 6. The multi-key pages (decision 1)
+## 6. The multi-key pages (decision 1: off, and cut out)
 
 The plan of 3.1 says: switch the multi-key pages off while the single-key page is measured, bring them back in step 4. For strings they never existed, so nothing changed.
 **For `T` of at most 8 bytes the tree has them today** (step 2), and they carry the keys with one value. Switching them off in 3.5 costs (model, B per key whole tree:
@@ -96,7 +96,7 @@ between the two lines is the case for MKSV.**
 | `internal/art` | `Map.flat`: 1 = fixed-size pointer-free, 2 = one word with a pointer, 3 = string, -1 = every key a value overflow; `leafWith` (the multi-key page's `mk`) makes a `Fixed` page; `fall back` and the promote path use the same functions; `flat.go`, `typed.go`, `leaf[T,K]`, `newSetLeaf`, `vals[T]` deleted; the value overflow generic in `T` (`valueOverflow[K,T]`) |
 | `bench` | `objstat` knows the new objects; reference runs of the commit before 3.5 and of `node-layout` for `uint64` |
 
-Order of work, each with its gate (race, 100 %, fuzz 60 s, lint): (1) `skpage.Fixed` standalone with microbenchmark against the flat and the typed leaf (`skbench -values words|pointers`);
+Order of work, each with its gate (race, 100 %, fuzz 60 s, lint): (0) **cut the multi-key pages out of `internal/art`** (one commit of its own, tag `before-mk-pages-removal` is the way back): the page paths of insert, lookup, scan, delete and rebuild, `page.go`, the range nodes if only pages need them, `internal/vpage` and `internal/lpage` stay in the repository as standalone packages but nothing in the tree uses them; (1) `skpage.Fixed` standalone with microbenchmark against the flat and the typed leaf (`skbench -values words|pointers`);
 (2) the value overflow generic in `T` for strings first (no change of behavior, tests as today); (3) the tree for `uint64`; (4) the tree for `*T`; (5) delete the old code; (6) measure
 (`street`, `dirs`, `u64` keys with `*T` at 4K, 16K, 256K and a 1M spot check, PC; then M1).
 

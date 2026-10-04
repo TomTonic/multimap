@@ -211,6 +211,8 @@ and every comparison of `kind` (`isLeaf`, `isPage`, the descent), so: note with 
 
 ### 3.5 The other cases
 
+**Decided 2026-10-04 (user), see [step3-fixed-design.md](step3-fixed-design.md):** the multi-key pages are off and cut out of `internal/art` first (tag `before-mk-pages-removal`; they are redesigned in step 4 with what is learned by then, or the old code comes back from the tag); pointer pages for one-word `T` only; values aligned to `T` and compared as `T`.
+
 **First, the vocabulary of what survives** (user's remark of 2026-10-04: new code still said "leaf", and the code's `isPage` means the multi-key page while the single-key page
 sits under `leaf` names). When the flat and the typed leaf are replaced by single-key pages (below), their code goes, so rename only what stays: `leafHead`
 (the head of a single-key page), `isLeaf`/`isPage` (to `isSingleKey`/`isMultiKey`), `kSet` and the "set leaf" (the single-key page in value overflow: `kValueOverflow`, `isValueOverflow()`, in prose "value overflow", never "overflow page" or a bare "set"; user, 2026-10-04: unambiguous, no guessing; `isSingleKey`/`isMultiKey` agreed). Likewise the word `kind` (the type byte of an object) is to be called *type* or *class*, as *child* is the parent-child relation only: the field and the Go type `kind` become `objType` (agreed 2026-10-04: byte 0 of every object, nodes and pages alike; `pageType` and `nodeType` would be wrong for half of them; only the prefix of the constants `kN5`, `kR8`, `kValueOverflow` is still open); the bench profile `natural` is called "real" in prose (`street real`) and may get that name in code too, if the user says so, `skleaf.go`,
