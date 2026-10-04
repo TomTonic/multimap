@@ -131,7 +131,7 @@ const longPrefix = 1<<16 - 1
 // leafHead is the start of every leaf (6 B). The key remainder follows at
 // keyOff; a whole key held as a string sits at strOff.
 //
-// A leaf holds its key from its base on, the depth it was created at: the
+// A leaf holds its key from its base on, the pathLen it was created at: the
 // bytes before are the path to it, stored in the nodes above. The leaf may
 // move deeper later, when a node is split in above it, and still holds the
 // bytes from its base, which are then also on its path; it moves up only
@@ -184,12 +184,12 @@ type leaf[T comparable, K keyArea] struct {
 // its head. Map[T] supplies it so that the tree code does not need to know T.
 type newLeafFunc func(key []byte, base int) *leafHead
 
-// rekeyFunc moves leaf l to depth, which is below its base: it returns a leaf
-// with the same values that holds its key from depth on. The tree calls it when
+// rekeyFunc moves leaf l to pathLen, which is below its base: it returns a leaf
+// with the same values that holds its key from pathLen on. The tree calls it when
 // a node above l goes away and l takes its place. l's whole key is pre, then
 // the byte b unless b is negative, then l's key from there on. Map[T] supplies
 // it, and gets by without the whole key when the longer remainder still fits l.
-type rekeyFunc func(l *leafHead, pre []byte, b int, depth int) *leafHead
+type rekeyFunc func(l *leafHead, pre []byte, b int, pathLen int) *leafHead
 
 // Every node kind but the 256-way one keeps its term leaf, if any, in its
 // last child slot, which is free whenever there is a term (see termOf).
@@ -258,18 +258,18 @@ func (l *leafHead) keyLen() int {
 	return len(*(*string)(unsafe.Add(unsafe.Pointer(l), strOff)))
 }
 
-// base returns the depth the leaf holds its key from.
+// base returns the pathLen the leaf holds its key from.
 func (l *leafHead) base() int { return l.keyLen() - len(l.stored()) }
 
-// from returns the leaf's key from depth on; depth must not be below its base.
-func (l *leafHead) from(depth int) []byte {
+// from returns the leaf's key from pathLen on; pathLen must not be below its base.
+func (l *leafHead) from(pathLen int) []byte {
 	s := l.stored()
-	return s[depth-(l.keyLen()-len(s)):]
+	return s[pathLen-(l.keyLen()-len(s)):]
 }
 
 // matches reports whether l is the leaf of key. l holds the key from its base
 // on, which a key of the leaf's length has at the same distance from its end,
-// so no depth is needed; the bytes from the base down to l are checked twice.
+// so no pathLen is needed; the bytes from the base down to l are checked twice.
 // Kept small enough to inline into find.
 func (l *leafHead) matches(key []byte) bool {
 	if l.klen == longKey {
@@ -291,10 +291,10 @@ func wholeKey(l *leafHead, pre []byte, b int) []byte {
 	return append(k, l.from(at)...)
 }
 
-// fillHead writes the bytes of a rekeyFunc call's whole key from depth on into
+// fillHead writes the bytes of a rekeyFunc call's whole key from pathLen on into
 // dst, as many as dst holds: the rest of pre, then b.
-func fillHead(dst, pre []byte, b, depth int) {
-	if n := copy(dst, pre[depth:]); n < len(dst) {
+func fillHead(dst, pre []byte, b, pathLen int) {
+	if n := copy(dst, pre[pathLen:]); n < len(dst) {
 		dst[n] = byte(b)
 	}
 }

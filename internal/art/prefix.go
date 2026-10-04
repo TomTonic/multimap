@@ -230,13 +230,13 @@ func copyFixed(dst, src *header) {
 	}
 }
 
-// prefixMatches reports whether key[depth:] starts with n's whole prefix of pl
+// prefixMatches reports whether key[pathLen:] starts with n's whole prefix of pl
 // bytes, pl > 0.
-func prefixMatches(n *header, pl int, key []byte, depth int) bool {
-	if !swar.MatchPrefix(&n.prefix, pl, key, depth) {
+func prefixMatches(n *header, pl int, key []byte, pathLen int) bool {
+	if !swar.MatchPrefix(&n.prefix, pl, key, pathLen) {
 		return false
 	}
-	return pl <= swar.PrefixLen || bytes.Equal(prefixTail(n), key[depth+swar.PrefixLen:depth+pl])
+	return pl <= swar.PrefixLen || bytes.Equal(prefixTail(n), key[pathLen+swar.PrefixLen:pathLen+pl])
 }
 
 // prefixLcp returns the length m of the common prefix of n's prefix of pl bytes

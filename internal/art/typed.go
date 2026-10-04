@@ -254,28 +254,28 @@ func unspillTyped[T comparable](l *leafHead, c uint8) *leafHead {
 // rekeyTyped is rekey for a map of typed leaves: a typed leaf grows to hold
 // its longer key in place when the values stay where they are, and moves into
 // a typed leaf of the longer key, or a set leaf, otherwise.
-func rekeyTyped[T comparable](l *leafHead, pre []byte, b, depth int) *leafHead {
+func rekeyTyped[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
 	if l.kind == kSet {
-		return rekey[T](l, pre, b, depth)
+		return rekey[T](l, pre, b, pathLen)
 	}
-	old, klen := int(l.klen), l.keyLen()-depth
+	old, klen := int(l.klen), l.keyLen()-pathLen
 	if klen <= maxTypedKey && typedOff(klen) == typedOff(old) {
 		area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
 		copy(area[klen-old:], area[:old])
-		fillHead(area[:klen-old], pre, b, depth)
+		fillHead(area[:klen-old], pre, b, pathLen)
 		l.klen = uint8(klen)
 		return l
 	}
 	key := wholeKey(l, pre, b)
 	if klen > maxTypedKey {
-		nl := newSetLeaf[T](key, depth)
+		nl := newSetLeaf[T](key, pathLen)
 		s := vals[T](nl)
 		for _, v := range typedVals[T](l) {
 			s.Add(v)
 		}
 		return nl
 	}
-	nl := typedWithKey[T](l.cls(), key[depth:], len(key))
+	nl := typedWithKey[T](l.cls(), key[pathLen:], len(key))
 	copy(unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(nl), typedOff(klen))), l.n), typedVals[T](l))
 	nl.n = l.n
 	return nl

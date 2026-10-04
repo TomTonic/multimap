@@ -35,7 +35,7 @@ func (t *Tree) removeRaw(key []byte, want uint64, rk rekeyFunc) int8 {
 }
 
 // del deletes key from the subtree at *loc, whose common prefix starts at
-// key depth depth, and reports whether it was there. On the way back up,
+// key[pathLen:], and reports whether it was there. On the way back up,
 // every node on the path shrinks to the smallest kind that fits and collapses
 // when it no longer branches, so the tree after a delete has the shape it
 // would have had if the key had never been inserted. Below a range node, a
@@ -44,7 +44,7 @@ func (t *Tree) removeRaw(key []byte, want uint64, rk rekeyFunc) int8 {
 //
 // If want is not nil, del deletes only a key that is in a page with the raw
 // value *want (see removeRaw).
-func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
+func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8 {
 	n := *loc
 	if n == nil {
 		return absent
@@ -63,10 +63,10 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
 		return deleted
 	}
 	pl := n.prefixLen()
-	if pl != 0 && !prefixMatches(n, pl, key, depth) {
+	if pl != 0 && !prefixMatches(n, pl, key, pathLen) {
 		return absent
 	}
-	d := depth + pl
+	d := pathLen + pl
 	switch {
 	case d == len(key):
 		// The term's key is the path to n, which key matched: it is key.
@@ -105,7 +105,7 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
 			n = removeChild(n, b)
 		}
 	}
-	*loc = collapse(n, key, depth, d, rk)
+	*loc = collapse(n, key, pathLen, d, rk)
 	return deleted
 }
 
@@ -124,13 +124,13 @@ func delFromPage(loc **header, key []byte, want *uint64) int8 {
 	return deleted
 }
 
-// collapse replaces an inner or range node n at depth, whose common prefix ends at d,
+// collapse replaces an inner or range node n at pathLen, whose common prefix ends at d,
 // that no longer branches: without children it becomes its term leaf, and with
 // a single child and no term it merges into that child, whose common prefix
 // grows by n's common prefix plus the child's byte (which a range node's child already
 // starts with). key is the key just deleted below n, which agrees with every
 // key below n up to d. It returns what should stand in n's place.
-func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
+func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 	switch c := childCount(n); {
 	case c == 0:
 		// The node held only its term leaf, or nothing: a range node whose only
@@ -138,20 +138,20 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 		if termOf(n) == nil {
 			return nil
 		}
-		return leafHdr(lift(termOf(n), key[:d], depth, rk))
+		return leafHdr(lift(termOf(n), key[:d], pathLen, rk))
 	case c > 1 || termOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
 	if c.kind <= kLastPage {
 		if isPage(c.kind) {
-			return pageUp(n, c, key, depth)
+			return pageUp(n, c, key, pathLen)
 		}
 		l := asLeaf(c)
-		if l.base() <= depth {
+		if l.base() <= pathLen {
 			return c
 		}
-		return leafHdr(rk(l, key[:d], b, depth))
+		return leafHdr(rk(l, key[:d], b, pathLen))
 	}
 	var buf [prefixBuf]byte // on the stack for the common short prefixes
 	p := appendPrefix(buf[:0], n)
@@ -161,16 +161,16 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 	return withPrefix(c, appendPrefix(p, c))
 }
 
-// pageUp returns what should stand in the place of the range node n at depth,
-// which has no term and one child, page c: the page, which then starts at depth,
+// pageUp returns what should stand in the place of the range node n at pathLen,
+// which has no term and one child, page c: the page, which then starts at pathLen,
 // or n itself if the page cannot take the bytes of n's common prefix in front of its
 // keys.
-func pageUp(n, c *header, key []byte, depth int) *header {
+func pageUp(n, c *header, key []byte, pathLen int) *header {
 	p := asPage(c)
-	if p.Base() <= depth {
+	if p.Base() <= pathLen {
 		return c
 	}
-	if q := p.Rebase(depth, key[depth:p.Base()]); q != nil {
+	if q := p.Rebase(pathLen, key[pathLen:p.Base()]); q != nil {
 		return pageHdr(q)
 	}
 	return n
@@ -185,13 +185,13 @@ func childCount(n *header) int {
 	return int(n.count)
 }
 
-// lift returns leaf l, whose key is k, ready to stand at depth: l itself if it
+// lift returns leaf l, whose key is k, ready to stand at pathLen: l itself if it
 // holds its key from there on, the leaf from rk otherwise.
-func lift(l *leafHead, k []byte, depth int, rk rekeyFunc) *leafHead {
-	if l.base() <= depth {
+func lift(l *leafHead, k []byte, pathLen int, rk rekeyFunc) *leafHead {
+	if l.base() <= pathLen {
 		return l
 	}
-	return rk(l, k, -1, depth)
+	return rk(l, k, -1, pathLen)
 }
 
 // onlyChild returns the single child of n and the byte it sits under, or -1

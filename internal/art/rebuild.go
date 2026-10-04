@@ -12,37 +12,37 @@ import (
 type item struct {
 	key  []byte    // the whole key
 	val  uint64    // the key's value, if it has no leaf
-	leaf *leafHead // holds key from a base of some depth on, or nil
+	leaf *leafHead // holds key from a base of some pathLen on, or nil
 }
 
-// leafOf returns the leaf of it, ready to stand at depth: the leaf it has, or a
+// leafOf returns the leaf of it, ready to stand at pathLen: the leaf it has, or a
 // new one for a key from a page. A leaf never lands above its base: the
 // subtrees that are rebuilt around leaves hold them in inner nodes only (see
 // settle), and in a tree of inner nodes a leaf stands where its key first
 // differs from every other key. Every node above a leaf branches on a byte its
 // key shares with another one, so the leaf stood no deeper before.
-func (t *Tree) leafOf(it item, depth int) *leafHead {
+func (t *Tree) leafOf(it item, pathLen int) *leafHead {
 	if it.leaf == nil {
-		return t.mk(it.key, depth, it.val)
+		return t.mk(it.key, pathLen, it.val)
 	}
 	return it.leaf
 }
 
 // build returns a subtree holding exactly items, which are sorted by key,
-// distinct, and all start with the same depth bytes. It is how pages burst
+// distinct, and all start with the same pathLen bytes. It is how pages burst
 // and how pages change type when nothing simpler fits: the subtree is rebuilt
 // from its keys. Items that fit a page become one; otherwise a range node
 // takes their common path and splits them into ranges (see ranges).
-func (t *Tree) build(items []item, depth int) *header {
-	if p := pageFor(items, depth); p != nil {
+func (t *Tree) build(items []item, pathLen int) *header {
+	if p := pageFor(items, pathLen); p != nil {
 		return pageHdr(p)
 	}
 	if len(items) == 1 {
-		return leafHdr(t.leafOf(items[0], depth)) // a key that no page holds, or that has a leaf
+		return leafHdr(t.leafOf(items[0], pathLen)) // a key that no page holds, or that has a leaf
 	}
 	first, last := items[0].key, items[len(items)-1].key
-	plen := swar.Lcp(first[depth:], last[depth:])
-	d := depth + plen
+	plen := swar.Lcp(first[pathLen:], last[pathLen:])
+	d := pathLen + plen
 	var term *leafHead
 	if len(first) == d {
 		// A key that ends here sorts first.
@@ -51,7 +51,7 @@ func (t *Tree) build(items []item, depth int) *header {
 	}
 	rs := t.ranges(items, d, nil)
 	rs[0].b = 0
-	return makeR(first[depth:d], term, rs)
+	return makeR(first[pathLen:d], term, rs)
 }
 
 // ranges appends to out the ranges that hold items, which are sorted,
@@ -127,11 +127,11 @@ func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 // in crowdedRatio+1 of its keys holds several values.
 const crowdedRatio = 4
 
-// rpos is a range node on the path of a key: its slot and the key depth its
+// rpos is a range node on the path of a key: its slot and the key pathLen its
 // path starts at.
 type rpos struct {
-	loc   **header
-	depth int
+	loc     **header
+	pathLen int
 }
 
 // settle rebuilds the subtree around key, which has just got a leaf, from
@@ -141,15 +141,15 @@ type rpos struct {
 func (t *Tree) settle(key []byte) {
 	var buf [16]rpos
 	path := buf[:0]
-	loc, depth := &t.root, 0
+	loc, pathLen := &t.root, 0
 	for n := *loc; isRange(n.kind); n = *loc {
-		path = append(path, rpos{loc, depth})
-		depth += n.prefixLen()
-		if depth == len(key) {
+		path = append(path, rpos{loc, pathLen})
+		pathLen += n.prefixLen()
+		if pathLen == len(key) {
 			break // the key's leaf is n's term
 		}
 		x := asR(n)
-		loc = &x.children()[x.index(key[depth])]
+		loc = &x.children()[x.index(key[pathLen])]
 	}
 	top, gained := -1, 0
 	for i := len(path) - 1; i >= 0; i-- {
@@ -160,7 +160,7 @@ func (t *Tree) settle(key []byte) {
 	}
 	if top >= 0 {
 		p := path[top]
-		*p.loc = t.inner(t.items(*p.loc, p.depth, key[:p.depth]), p.depth)
+		*p.loc = t.inner(t.items(*p.loc, p.pathLen, key[:p.pathLen]), p.pathLen)
 	}
 }
 
@@ -189,12 +189,12 @@ type walker struct {
 	out   []item
 }
 
-// items returns the keys below n, whose path starts at depth, in order, with
+// items returns the keys below n, whose path starts at pathLen, in order, with
 // their leaves or, for keys in pages, their raw values; pre is the key bytes
-// before depth.
-func (t *Tree) items(n *header, depth int, pre []byte) []item {
+// before pathLen.
+func (t *Tree) items(n *header, pathLen int, pre []byte) []item {
 	w := walker{path: slices.Clone(pre)}
-	w.walk(n, depth)
+	w.walk(n, pathLen)
 	return w.out
 }
 
@@ -207,9 +207,9 @@ func (w *walker) leaf(l *leafHead) {
 	w.out = append(w.out, item{key: k, leaf: l})
 }
 
-// walk appends the items of the subtree n, whose path starts at depth, to
+// walk appends the items of the subtree n, whose path starts at pathLen, to
 // w.out.
-func (w *walker) walk(n *header, depth int) {
+func (w *walker) walk(n *header, pathLen int) {
 	switch {
 	case isLeaf(n.kind):
 		w.leaf(asLeaf(n))
@@ -218,20 +218,20 @@ func (w *walker) walk(n *header, depth int) {
 		w.out = append(w.out, pageItems(asPage(n), w.path)...)
 		return
 	}
-	w.path = appendPrefix(w.path[:depth], n)
-	depth += n.prefixLen()
+	w.path = appendPrefix(w.path[:pathLen], n)
+	pathLen += n.prefixLen()
 	if t := termOf(n); t != nil {
 		w.leaf(t)
 	}
 	if isRange(n.kind) {
 		for _, c := range asR(n).children()[:asR(n).n] {
-			w.walk(c, depth)
+			w.walk(c, pathLen)
 		}
 		return
 	}
 	eachInner(n, func(b byte, c *header) {
-		w.path = append(w.path[:depth], b)
-		w.walk(c, depth+1)
+		w.path = append(w.path[:pathLen], b)
+		w.walk(c, pathLen+1)
 	})
 }
 
@@ -278,16 +278,16 @@ func innerKind(groups int, term bool) kind {
 }
 
 // inner returns a subtree of inner nodes and leaves that holds items, which
-// are sorted, distinct and share their first depth bytes, as a tree without
+// are sorted, distinct and share their first pathLen bytes, as a tree without
 // pages holds them. Keys from pages get a leaf with their value; keys with a
 // leaf keep it.
-func (t *Tree) inner(items []item, depth int) *header {
+func (t *Tree) inner(items []item, pathLen int) *header {
 	if len(items) == 1 {
-		return leafHdr(t.leafOf(items[0], depth))
+		return leafHdr(t.leafOf(items[0], pathLen))
 	}
 	first, last := items[0].key, items[len(items)-1].key
-	plen := swar.Lcp(first[depth:], last[depth:])
-	d := depth + plen
+	plen := swar.Lcp(first[pathLen:], last[pathLen:])
+	d := pathLen + plen
 	var term *leafHead
 	if len(first) == d {
 		// A key that ends here sorts first.
@@ -299,7 +299,7 @@ func (t *Tree) inner(items []item, depth int) *header {
 		groups += b2i(items[i].key[d] != items[i-1].key[d])
 	}
 	n := newNode(innerKind(groups, term != nil), plen)
-	storePrefix(n, first[depth:d])
+	storePrefix(n, first[pathLen:d])
 	setTermSlot(n, term)
 	for i := 0; i < len(items); {
 		j, b := i+1, items[i].key[d]

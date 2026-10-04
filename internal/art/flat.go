@@ -173,14 +173,14 @@ func reflat[T comparable](l *leafHead, key []byte, base int) *leafHead {
 	return nl
 }
 
-// flatPrepend makes flat leaf l hold its key from depth on in place, by moving
+// flatPrepend makes flat leaf l hold its key from pathLen on in place, by moving
 // its key remainder and values up, when they still fit its size class: the copy
 // that reflat would make costs an allocation, which a delete that merges a node
 // into its only leaf would otherwise pay every time. The bytes it adds come
 // from a rekeyFunc's pre and b. It reports whether it did.
-func flatPrepend[T comparable](l *leafHead, pre []byte, b, depth int) bool {
+func flatPrepend[T comparable](l *leafHead, pre []byte, b, pathLen int) bool {
 	var z T
-	old, klen := int(l.klen), l.keyLen()-depth
+	old, klen := int(l.klen), l.keyLen()-pathLen
 	if klen > maxInline || flatOff[T](klen)+uintptr(l.n)*unsafe.Sizeof(z) > flatSizes[l.cls()] {
 		return false
 	}
@@ -189,7 +189,7 @@ func flatPrepend[T comparable](l *leafHead, pre []byte, b, depth int) bool {
 	copy(unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), to)), nb), unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), from)), nb))
 	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
 	copy(area[klen-old:], area[:old])
-	fillHead(area[:klen-old], pre, b, depth)
+	fillHead(area[:klen-old], pre, b, pathLen)
 	l.klen = uint8(klen)
 	return true
 }

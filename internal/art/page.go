@@ -18,43 +18,43 @@ import (
 //
 // A page holds its keys from its base on, as a leaf does: the bytes before the
 // base are the path to it, stored in the nodes above, which a lookup has
-// checked. The base is the depth the page was created at. A page moves up only
+// checked. The base is the pathLen the page was created at. A page moves up only
 // with a new base (see collapse); it may sit deeper than its base, when a node is
 // split in above it.
 
 func init() { vpage.KindBase = uint8(kPage) }
 
-// maxPageDepth is the deepest base a page has; a key whose path is longer gets
+// maxPagePathLen is the deepest base a page has; a key whose path is longer gets
 // a leaf. maxPageSuffix is the longest part of a key a page holds from its
 // base.
 const (
-	maxPageDepth  = 255
-	maxPageSuffix = 255
+	maxPagePathLen = 255
+	maxPageSuffix  = 255
 )
 
 func asPage(h *header) *vpage.Page  { return (*vpage.Page)(unsafe.Pointer(h)) }
 func pageHdr(p *vpage.Page) *header { return (*header)(unsafe.Pointer(p)) }
 
-// pageable reports whether the key of a page at depth may go into a page.
-func (t *Tree) pageable(key []byte, depth int) bool {
-	return t.small && depth <= maxPageDepth && len(key)-depth <= maxPageSuffix
+// pageable reports whether the key of a page at pathLen may go into a page.
+func (t *Tree) pageable(key []byte, pathLen int) bool {
+	return t.small && pathLen <= maxPagePathLen && len(key)-pathLen <= maxPageSuffix
 }
 
-// pageBase returns the base of a page at depth whose shortest key has minLen
-// bytes: the depth, unless that leaves less than a head word of 8 bytes of the
+// pageBase returns the base of a page at pathLen whose shortest key has minLen
+// bytes: the pathLen, unless that leaves less than a head word of 8 bytes of the
 // shortest key in the page. A head word costs 8 bytes whatever it holds, so the
 // page then starts earlier and holds a whole head word of each key, which the
 // lookup takes from the key in one load, instead of a few bytes that it has to
-// shift into place; the page's keys share the bytes before the depth, which the
+// shift into place; the page's keys share the bytes before the pathLen, which the
 // nodes above have checked and the page checks once more. Keys of at most 8
 // bytes, such as integers, are held whole.
-func pageBase(depth, minLen int) int {
-	return min(depth, max(0, minLen-8))
+func pageBase(pathLen, minLen int) int {
+	return min(pathLen, max(0, minLen-8))
 }
 
-// newPageFor returns a page at depth that holds key and its raw value v.
-func newPageFor(key []byte, depth int, v uint64) *vpage.Page {
-	base := pageBase(depth, len(key))
+// newPageFor returns a page at pathLen that holds key and its raw value v.
+func newPageFor(key []byte, pathLen int, v uint64) *vpage.Page {
+	base := pageBase(pathLen, len(key))
 	return vpage.Build(base, 1, func(int) []byte { return key[base:] }, func(int) uint64 { return v })
 }
 
@@ -74,21 +74,21 @@ func pageItems(p *vpage.Page, pre []byte) []item {
 	return out
 }
 
-// pageFor returns the page that holds items, which share their first depth
+// pageFor returns the page that holds items, which share their first pathLen
 // bytes, or nil if they do not fit one: there are too many, one of them has a
 // leaf, or one has too long a path or suffix.
-func pageFor(items []item, depth int) *vpage.Page {
-	if depth > maxPageDepth || len(items) > 255 {
+func pageFor(items []item, pathLen int) *vpage.Page {
+	if pathLen > maxPagePathLen || len(items) > 255 {
 		return nil
 	}
 	minLen := len(items[0].key)
 	for _, it := range items {
-		if it.leaf != nil || len(it.key)-depth > maxPageSuffix {
+		if it.leaf != nil || len(it.key)-pathLen > maxPageSuffix {
 			return nil
 		}
 		minLen = min(minLen, len(it.key))
 	}
-	base := pageBase(depth, minLen)
+	base := pageBase(pathLen, minLen)
 	return vpage.Build(base, len(items), func(i int) []byte { return items[i].key[base:] }, func(i int) uint64 { return items[i].val })
 }
 

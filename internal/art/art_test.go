@@ -117,8 +117,8 @@ func keySets() map[string][][]byte {
 	// Keys whose pages lie deep, or that no page can hold: 200 shared bytes, a
 	// byte that splits the keys in two families, 69 more bytes that each family
 	// shares, and two bytes of 8 symbols. A page that forks the two families
-	// holds the 70 bytes below it, a page that is full rebuilds at a depth
-	// beyond 255 (where pages end, see maxPageDepth), and a key of 300 bytes,
+	// holds the 70 bytes below it, a page that is full rebuilds at a pathLen
+	// beyond 255 (where pages end, see maxPagePathLen), and a key of 300 bytes,
 	// with no part of it in a page, comes along.
 	top, mid := bytes.Repeat([]byte("t"), 200), bytes.Repeat([]byte("m"), 69)
 	deep := [][]byte{ // the first two keys fork at byte 200, so that pages hold the others
@@ -693,7 +693,7 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	if term != nil {
 		checkLeaf(t, term, end)
 		if term.keyLen() != len(end) {
-			t.Fatalf("term key of %d bytes does not end at depth %d", term.keyLen(), len(end))
+			t.Fatalf("term key of %d bytes does not end at pathLen %d", term.keyLen(), len(end))
 		}
 		leaves++
 	}
@@ -947,7 +947,7 @@ func pinned(n *header) bool {
 // checkRangeNode checks the ranges of range node n, whose path ends at end, and
 // returns the number of keys below them: the first range starts at byte 0, the
 // starts and their counts agree, and every key below a range's child has its
-// byte at depth len(end) within the range.
+// byte at pathLen len(end) within the range.
 func checkRangeNode(t *testing.T, n *header, end []byte) int {
 	t.Helper()
 	r := asR(n)
@@ -978,7 +978,7 @@ func checkRangeNode(t *testing.T, n *header, end []byte) int {
 		w.walk(rg.c, len(end))
 		for _, it := range w.out {
 			if len(it.key) <= len(end) || int(it.key[len(end)]) < lo || int(it.key[len(end)]) >= hi {
-				t.Fatalf("key %q below range [%d, %d) at depth %d", it.key, lo, hi, len(end))
+				t.Fatalf("key %q below range [%d, %d) at pathLen %d", it.key, lo, hi, len(end))
 			}
 		}
 	}

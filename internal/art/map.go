@@ -98,21 +98,21 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), off))
 }
 
-// rekey returns a leaf with l's values that holds its key from depth on (see
+// rekey returns a leaf with l's values that holds its key from pathLen on (see
 // rekeyFunc). It captures nothing, so passing it allocates no closure. It
 // keeps l where it is when the longer remainder fits its size class, and
 // builds the whole key only when it has to copy l.
-func rekey[T comparable](l *leafHead, pre []byte, b, depth int) *leafHead {
+func rekey[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
 	if l.kind != kSet {
-		if flatPrepend[T](l, pre, b, depth) {
+		if flatPrepend[T](l, pre, b, pathLen) {
 			return l
 		}
-		return reflat[T](l, wholeKey(l, pre, b), depth)
+		return reflat[T](l, wholeKey(l, pre, b), pathLen)
 	}
-	if setPrepend(l, pre, b, depth) {
+	if setPrepend(l, pre, b, pathLen) {
 		return l
 	}
-	nl := newSetLeaf[T](wholeKey(l, pre, b), depth)
+	nl := newSetLeaf[T](wholeKey(l, pre, b), pathLen)
 	*vals[T](nl) = *vals[T](l)
 	return nl
 }
@@ -129,18 +129,18 @@ func setKeyCap(klen int) int {
 	return 256
 }
 
-// setPrepend makes set leaf l hold its key from depth on in place when the
+// setPrepend makes set leaf l hold its key from pathLen on in place when the
 // longer remainder still fits the key area of l's class, which keeps its value
 // set where it is. It saves rekey the allocation of a new leaf, see
 // flatPrepend, and reports whether it did.
-func setPrepend(l *leafHead, pre []byte, b, depth int) bool {
-	old, klen := int(l.klen), l.keyLen()-depth // a string leaf holds its whole key, and never gets here
+func setPrepend(l *leafHead, pre []byte, b, pathLen int) bool {
+	old, klen := int(l.klen), l.keyLen()-pathLen // a string leaf holds its whole key, and never gets here
 	if klen > maxInline || klen > setKeyCap(old) {
 		return false
 	}
 	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
 	copy(area[klen-old:], area[:old])
-	fillHead(area[:klen-old], pre, b, depth)
+	fillHead(area[:klen-old], pre, b, pathLen)
 	l.klen = uint8(klen)
 	return true
 }
@@ -226,7 +226,7 @@ func (m *Map[T]) Add(key []byte, v T) {
 		if *(*T)(unsafe.Pointer(old)) == v {
 			return
 		}
-		l := m.t.mk(key, sp.depth, *old)
+		l := m.t.mk(key, sp.pathLen, *old)
 		slot := leafHdr(l)
 		m.addToLeaf(&slot, l, v)
 		m.t.promote(sp, asLeaf(slot), key)

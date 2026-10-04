@@ -36,13 +36,13 @@ func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 // project's usual function size.
 func (t *Tree) find(key []byte) (*header, int) {
 	n := t.root
-	depth := 0
+	pathLen := 0
 	for n != nil {
 		if n.kind <= kLastPage {
 			if n.kind > kLastLeaf {
 				return findInPage(asPage(n), key)
 			}
-			// The nodes have checked the key up to depth; the leaf holds the
+			// The nodes have checked the key up to pathLen; the leaf holds the
 			// rest.
 			if asLeaf(n).matches(key) {
 				return n, 0
@@ -51,14 +51,14 @@ func (t *Tree) find(key []byte) (*header, int) {
 		}
 		if n.plen != 0 {
 			pl := int(n.plen)
-			if !swar.Match8(&n.prefix, pl, key, depth) {
-				if pl = longMatch(n, key, depth); pl < 0 {
+			if !swar.Match8(&n.prefix, pl, key, pathLen) {
+				if pl = longMatch(n, key, pathLen); pl < 0 {
 					return nil, 0
 				}
 			}
-			depth += pl
+			pathLen += pl
 		}
-		if depth == len(key) {
+		if pathLen == len(key) {
 			t := termOf(n)
 			if t == nil {
 				return nil, 0
@@ -66,8 +66,8 @@ func (t *Tree) find(key []byte) (*header, int) {
 			n = leafHdr(t)
 			continue
 		}
-		b := key[depth]
-		depth++
+		b := key[pathLen]
+		pathLen++
 		switch n.kind {
 		case kN5:
 			x := asN5(n)
@@ -102,7 +102,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 			n = asN256(n).child[b]
 		default:
 			// A range node: the child checks byte b itself (see rnode.go).
-			depth--
+			pathLen--
 			x := asR(n)
 			n = *(**header)(unsafe.Add(unsafe.Pointer(x), rChildOff+ptrSize*uintptr(x.index(b))))
 		}
@@ -123,19 +123,19 @@ func findInPage(p *vpage.Page, key []byte) (*header, int) {
 // Since the key is present, its common prefixes need no checking: the descent only
 // follows them.
 func (t *Tree) findSlot(key []byte) **header {
-	loc, depth := &t.root, 0
+	loc, pathLen := &t.root, 0
 	for !isLeaf((*loc).kind) {
 		n := *loc
-		depth += n.prefixLen()
+		pathLen += n.prefixLen()
 		switch {
-		case depth == len(key):
+		case pathLen == len(key):
 			loc = termSlot(n)
 		case isRange(n.kind):
 			x := asR(n)
-			loc = &x.children()[x.index(key[depth])]
+			loc = &x.children()[x.index(key[pathLen])]
 		default:
-			loc = findLoc(n, key[depth])
-			depth++
+			loc = findLoc(n, key[pathLen])
+			pathLen++
 		}
 	}
 	return loc
@@ -178,14 +178,14 @@ func findLoc(n *header, b byte) **header {
 	return &asN12(n).child[i]
 }
 
-// longMatch returns the length of n's common prefix if key[depth:] starts with it, and
+// longMatch returns the length of n's common prefix if key[pathLen:] starts with it, and
 // -1 otherwise. It is kept out of find, whose loop stays small for the common
 // prefixes of at most eight bytes.
 //
 //go:noinline
-func longMatch(n *header, key []byte, depth int) int {
+func longMatch(n *header, key []byte, pathLen int) int {
 	pl := n.prefixLen()
-	if !prefixMatches(n, pl, key, depth) {
+	if !prefixMatches(n, pl, key, pathLen) {
 		return -1
 	}
 	return pl

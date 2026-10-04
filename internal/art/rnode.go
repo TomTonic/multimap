@@ -26,9 +26,9 @@ import (
 // ranges of trie pointers.
 //
 // Unlike an inner node, a range node does not consume the byte it branches
-// on: its children start at the same depth and check that byte themselves.
+// on: its children start at the same pathLen and check that byte themselves.
 // Pages hold full keys, a leaf holds its key from a base that is at most that
-// depth, and a node below a range node has that byte as the first byte of its
+// pathLen, and a node below a range node has that byte as the first byte of its
 // common prefix. So a child's range may be wider than its keys, and no range needs an
 // empty child: a key whose byte falls into a range belongs to that range's
 // child, and a lookup that finds nothing there is a miss.
