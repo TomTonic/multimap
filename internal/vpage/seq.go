@@ -7,16 +7,16 @@ import (
 
 // Run is a sorted sequence of pages: the leaf level of a B+ tree, without the
 // levels above. It stands in for the range nodes of the tree in the
-// experiments of PLAN step 1 and in the tests: it finds the page of a suffix
+// experiments of PLAN step 1 and in the tests: it finds the page of a remainder
 // by its separators, splits a page that is full and merges thin neighbours.
 // The tree splits at a byte boundary, and keeps its own fill; the
 // experiments approximate that.
 type Run struct {
 	pages []*Page
-	seps  [][]byte // seps[i] is the first suffix of pages[i+1] when it was split off
+	seps  [][]byte // seps[i] is the first remainder of pages[i+1] when it was split off
 }
 
-// page returns the index of the page that suffix s belongs to.
+// page returns the index of the page that remainder s belongs to.
 func (r *Run) page(s []byte) int {
 	return sort.Search(len(r.seps), func(i int) bool { return bytes.Compare(r.seps[i], s) > 0 })
 }
@@ -30,7 +30,7 @@ func (r *Run) Len() int {
 	return n
 }
 
-// PageFor returns the page that suffix s belongs to, or nil if the run is empty.
+// PageFor returns the page that remainder s belongs to, or nil if the run is empty.
 // Benchmarks use it to take the choice of the page out of the timed part.
 func (r *Run) PageFor(s []byte) *Page {
 	if len(r.pages) == 0 {
@@ -42,7 +42,7 @@ func (r *Run) PageFor(s []byte) *Page {
 // Pages returns the pages in order.
 func (r *Run) Pages() []*Page { return r.pages }
 
-// Get returns the value of suffix s.
+// Get returns the value of remainder s.
 func (r *Run) Get(s []byte) (uint64, bool) {
 	if len(r.pages) == 0 {
 		return 0, false
@@ -50,9 +50,9 @@ func (r *Run) Get(s []byte) (uint64, bool) {
 	return r.pages[r.page(s)].Get(s)
 }
 
-// Insert sets the value of suffix s.
+// Insert sets the value of remainder s.
 func (r *Run) Insert(s []byte, v uint64) error {
-	if len(s) > maxSuffix {
+	if len(s) > maxRemainder {
 		return ErrTooLong
 	}
 	if len(r.pages) == 0 {
@@ -72,7 +72,7 @@ func (r *Run) Insert(s []byte, v uint64) error {
 	if p.Len() < 2 {
 		// one long key fills the page: s goes into a page of its own, before or after it
 		q, _, _ := New(0, 0).Insert(s, v)
-		var buf [maxSuffix]byte
+		var buf [maxRemainder]byte
 		left, right, placed = p, q, true
 		if bytes.Compare(s, p.Key(0, &buf)) < 0 {
 			left, right = q, p
@@ -80,7 +80,7 @@ func (r *Run) Insert(s []byte, v uint64) error {
 	} else {
 		left, right, _ = p.Split() // at least two keys: it cannot fail
 	}
-	var sep [maxSuffix]byte
+	var sep [maxRemainder]byte
 	sepKey := append([]byte(nil), right.Key(0, &sep)...)
 	r.pages[i] = left
 	r.pages = append(r.pages, nil)
@@ -95,7 +95,7 @@ func (r *Run) Insert(s []byte, v uint64) error {
 	return r.Insert(s, v)
 }
 
-// Delete removes suffix s and reports whether it was there. A page that has
+// Delete removes remainder s and reports whether it was there. A page that has
 // become thin is merged into a neighbour if the two fit one page.
 func (r *Run) Delete(s []byte) bool {
 	if len(r.pages) == 0 {
@@ -139,7 +139,7 @@ func (r *Run) mergeAround(i int) {
 	}
 }
 
-// Each calls fn for the suffixes from from on, in order, until fn returns false.
+// Each calls fn for the remainders from from on, in order, until fn returns false.
 func (r *Run) Each(from []byte, fn func(s []byte, v uint64) bool) {
 	if len(r.pages) == 0 {
 		return

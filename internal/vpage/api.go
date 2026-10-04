@@ -11,18 +11,18 @@ import "math/bits"
 // may be (see Build).
 var BuildFill = 100
 
-// Locate returns the position of suffix s, and whether it is there, or the
-// position where it would go, for a suffix of any length. It is the ordered search, used where the position
+// Locate returns the position of remainder s, and whether it is there, or the
+// position where it would go, for a remainder of any length. It is the ordered search, used where the position
 // among other keys matters; Find is the faster test for a key's presence.
 func (p *Page) Locate(s []byte) (int, bool) { return p.find(s) }
 
 // LocateIn is Locate for the part of key from the page's base on.
 func (p *Page) LocateIn(key []byte) (int, bool) { return p.findAt(key, int(p.base)) }
 
-// Find returns the position of suffix s if it is in the page. It compares the
+// Find returns the position of remainder s if it is in the page. It compares the
 // tags of the directory instead of searching the heads. A page without a prefix,
 // the common case for integers, goes the short way. For a prefix of up to
-// maxFast bytes Find takes the head word of the stripped suffix and compares the
+// maxFast bytes Find takes the head word of the stripped remainder and compares the
 // prefix by shifting and masking words, without a branch that depends on the
 // length of the page's prefix: such a branch, if the next page makes it go the
 // other way, would flush the lookups the CPU has started on other keys while
@@ -32,10 +32,10 @@ func (p *Page) Find(s []byte) (int, bool) { return p.findTag(s, 0) }
 // FindIn is Find for the part of key from the page's base on.
 func (p *Page) FindIn(key []byte) (int, bool) { return p.findTag(key, int(p.base)) }
 
-// findTag is Find for the suffix key[off:].
+// findTag is Find for the remainder key[off:].
 func (p *Page) findTag(key []byte, off int) (int, bool) {
 	plen := int(p.plen)
-	if len(key)-off > maxSuffix || len(key)-off < plen {
+	if len(key)-off > maxRemainder || len(key)-off < plen {
 		return 0, false
 	}
 	var w uint64
@@ -71,7 +71,7 @@ func (p *Page) findTag(key []byte, off int) (int, bool) {
 	return p.lookup(key[off+plen:], w)
 }
 
-// findUniform is findTag for a page of equal suffixes without a prefix, which is
+// findUniform is findTag for a page of equal remainders without a prefix, which is
 // the page of integer keys: it compares the key's tag with those of the page 8
 // at a time and then its head with that of the entries that have the tag, with
 // no slices and no calls in between.
@@ -112,7 +112,7 @@ func (p *Page) ByteAt(i, off int) byte {
 // Build returns a page of base base that holds the n keys that key returns, in
 // sorted order, with the values val returns, or nil if they do not fit a page of
 // the largest class with BuildFill percent of it. key must return slices that
-// stay valid until Build returns; a key is the suffix from the base.
+// stay valid until Build returns; a key is the remainder from the base.
 func Build(base, n int, key func(i int) []byte, val func(i int) uint64) *Page {
 	if n == 0 || n > 255 {
 		return nil
@@ -121,7 +121,7 @@ func Build(base, n int, key func(i int) []byte, val func(i int) uint64) *Page {
 		pl := plan{n: n, plen: q}
 		tails, uni := 0, -1
 		for i := range n {
-			if len(key(i)) > maxSuffix {
+			if len(key(i)) > maxRemainder {
 				return plan{n: -1}
 			}
 			tails, uni = see(tails, uni, len(key(i))-q)
@@ -154,15 +154,15 @@ func Build(base, n int, key func(i int) []byte, val func(i int) uint64) *Page {
 	return q
 }
 
-// Rebase returns a page with the same entries whose suffixes start at the
+// Rebase returns a page with the same entries whose remainders start at the
 // shallower depth base: pre are the bytes of the path between base and the
-// page's base, which each suffix gets in front. It returns nil if they do not fit
+// page's base, which each remainder gets in front. It returns nil if they do not fit
 // a page.
 func (p *Page) Rebase(base int, pre []byte) *Page {
-	var buf [maxSuffix]byte
+	var buf [maxRemainder]byte
 	keys := make([][]byte, p.Len())
 	for i := range keys {
-		keys[i] = append(append(make([]byte, 0, len(pre)+maxSuffix), pre...), p.Key(i, &buf)...)
+		keys[i] = append(append(make([]byte, 0, len(pre)+maxRemainder), pre...), p.Key(i, &buf)...)
 	}
 	return Build(base, len(keys), func(i int) []byte { return keys[i] }, p.Val)
 }
@@ -171,7 +171,7 @@ func (p *Page) Rebase(base int, pre []byte) *Page {
 // read or set.
 func (p *Page) ValPtr(i int) *uint64 { return &p.slots()[i].Val }
 
-// AppendKey appends the suffix at position i, with the page's prefix, to dst
+// AppendKey appends the remainder at position i, with the page's prefix, to dst
 // and returns the result.
 func (p *Page) AppendKey(dst []byte, i int) []byte {
 	dst = append(dst, p.prefix()...)

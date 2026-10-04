@@ -25,11 +25,11 @@ import (
 func init() { vpage.KindBase = uint8(kPage) }
 
 // maxPagePathLen is the deepest base a page has; a key whose path is longer gets
-// a leaf. maxPageSuffix is the longest part of a key a page holds from its
+// a leaf. maxPageRemainder is the longest part of a key a page holds from its
 // base.
 const (
-	maxPagePathLen = 255
-	maxPageSuffix  = 255
+	maxPagePathLen   = 255
+	maxPageRemainder = 255
 )
 
 func asPage(h *header) *vpage.Page  { return (*vpage.Page)(unsafe.Pointer(h)) }
@@ -37,7 +37,7 @@ func pageHdr(p *vpage.Page) *header { return (*header)(unsafe.Pointer(p)) }
 
 // pageable reports whether the key of a page at pathLen may go into a page.
 func (t *Tree) pageable(key []byte, pathLen int) bool {
-	return t.small && pathLen <= maxPagePathLen && len(key)-pathLen <= maxPageSuffix
+	return t.small && pathLen <= maxPagePathLen && len(key)-pathLen <= maxPageRemainder
 }
 
 // pageBase returns the base of a page at pathLen whose shortest key has minLen
@@ -64,7 +64,7 @@ func pageItems(p *vpage.Page, pre []byte) []item {
 	n := p.Len()
 	out := make([]item, n)
 	arena := make([]byte, 0, n*(p.Base()+16))
-	var buf [maxPageSuffix]byte
+	var buf [maxPageRemainder]byte
 	for i := range out {
 		start := len(arena)
 		arena = append(append(arena, pre[:p.Base()]...), p.Key(i, &buf)...)
@@ -76,14 +76,14 @@ func pageItems(p *vpage.Page, pre []byte) []item {
 
 // pageFor returns the page that holds items, which share their first pathLen
 // bytes, or nil if they do not fit one: there are too many, one of them has a
-// leaf, or one has too long a path or suffix.
+// leaf, or one has too long a path or remainder.
 func pageFor(items []item, pathLen int) *vpage.Page {
 	if pathLen > maxPagePathLen || len(items) > 255 {
 		return nil
 	}
 	minLen := len(items[0].key)
 	for _, it := range items {
-		if it.leaf != nil || len(it.key)-pathLen > maxPageSuffix {
+		if it.leaf != nil || len(it.key)-pathLen > maxPageRemainder {
 			return nil
 		}
 		minLen = min(minLen, len(it.key))

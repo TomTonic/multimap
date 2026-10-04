@@ -10,9 +10,9 @@ import (
 	"unsafe"
 )
 
-// shapes generate the suffixes the pages are tested with: integers (uniform
-// pages), short suffixes of several lengths whose zero padding makes their heads
-// equal, suffixes that share their first 8 bytes and so need their tails
+// shapes generate the remainders the pages are tested with: integers (uniform
+// pages), short remainders of several lengths whose zero padding makes their heads
+// equal, remainders that share their first 8 bytes and so need their tails
 // compared, and strings of every length up to the longest a page holds.
 var shapes = map[string]func(r *rand.Rand) []byte{
 	"u64":         func(r *rand.Rand) []byte { return rbytes(r, 8, 256) },
@@ -45,7 +45,7 @@ var shapes = map[string]func(r *rand.Rand) []byte{
 	},
 	"long":  func(r *rand.Rand) []byte { return rbytes(r, 200+r.IntN(56), 2) },
 	"zeros": func(r *rand.Rand) []byte { return make([]byte, r.IntN(12)) },
-	"any":   func(r *rand.Rand) []byte { return rbytes(r, r.IntN(maxSuffix+1), 256) },
+	"any":   func(r *rand.Rand) []byte { return rbytes(r, r.IntN(maxRemainder+1), 256) },
 }
 
 // rbytes returns n random bytes below alphabet.
@@ -72,7 +72,7 @@ func check(t *testing.T, p *Page) {
 			t.Fatalf("head %d past the count is not padded", i)
 		}
 	}
-	var prev, buf [maxSuffix]byte
+	var prev, buf [maxRemainder]byte
 	var prevKey []byte
 	type span struct{ from, to int }
 	var spans []span
@@ -220,14 +220,14 @@ func verify(t *testing.T, run *Run, ref reference, gen func(*rand.Rand) []byte, 
 func TestPageGrowth(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		suffix    func(i int) []byte
+		remainder func(i int) []byte
 		wantFull  int // keys when the largest class is full, at least
 		uniform   bool
 		wantClass int
 	}{
 		{"uniform integers fill 29 slots of 512 bytes", func(i int) []byte { return []byte{0, 0, 0, 0, 0, 0, byte(i >> 8), byte(i)} }, 29, true, 2},
 		{"short keys of several lengths", func(i int) []byte { return bytes.Repeat([]byte{byte(i)}, 1+i%7) }, 20, false, 2},
-		{"suffixes with tails use the heap", func(i int) []byte { return []byte(fmt.Sprintf("%03d-a-suffix-with-a-tail", i)) }, 12, false, 2},
+		{"remainders with tails use the heap", func(i int) []byte { return []byte(fmt.Sprintf("%03d-a-remainder-with-a-tail", i)) }, 12, false, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := New(0, 0)
@@ -237,7 +237,7 @@ func TestPageGrowth(t *testing.T) {
 			classes := map[int]bool{}
 			i := 0
 			for ; ; i++ {
-				q, res, err := p.Insert(tc.suffix(i), uint64(i))
+				q, res, err := p.Insert(tc.remainder(i), uint64(i))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -258,7 +258,7 @@ func TestPageGrowth(t *testing.T) {
 				t.Errorf("the page grew through classes %v, want more than one", classes)
 			}
 			for j := range i {
-				if v, ok := p.Get(tc.suffix(j)); !ok || v != uint64(j) {
+				if v, ok := p.Get(tc.remainder(j)); !ok || v != uint64(j) {
 					t.Fatalf("Get(%d) = %d, %v", j, v, ok)
 				}
 			}
@@ -304,26 +304,26 @@ func TestPageFlavors(t *testing.T) {
 }
 
 // TestPageEdges makes sure that a page copes with what a tree will hand it by
-// mistake or by design: a suffix too long for any page, an empty suffix, a
+// mistake or by design: a remainder too long for any page, an empty remainder, a
 // delete of what is not there, updating a value in place, and the last key
 // going. It belongs to the page prototype of the redesign (docs/redesign,
 // step 1).
 func TestPageEdges(t *testing.T) {
 	p := New(0, 0)
-	long := make([]byte, maxSuffix+1)
+	long := make([]byte, maxRemainder+1)
 	if _, _, err := p.Insert(long, 1); err != ErrTooLong {
 		t.Errorf("Insert of 256 bytes: %v, want ErrTooLong", err)
 	}
 	if _, ok := p.Get(long); ok {
-		t.Error("Get found a suffix that is too long")
+		t.Error("Get found a remainder that is too long")
 	}
 	if _, ok := p.Delete(long); ok {
-		t.Error("Delete found a suffix that is too long")
+		t.Error("Delete found a remainder that is too long")
 	}
-	p, _, _ = p.Insert(nil, 7) // the empty suffix: the key ends where the page starts
+	p, _, _ = p.Insert(nil, 7) // the empty remainder: the key ends where the page starts
 	p, res, _ := p.Insert([]byte{}, 8)
 	if res != Updated {
-		t.Errorf("the second insert of the empty suffix: %v, want Updated", res)
+		t.Errorf("the second insert of the empty remainder: %v, want Updated", res)
 	}
 	if v, ok := p.Get(nil); !ok || v != 8 {
 		t.Errorf("Get(empty) = %d, %v; want 8", v, ok)
@@ -366,7 +366,7 @@ func TestSplitAndMerge(t *testing.T) {
 		}
 		check(t, left)
 		check(t, right)
-		var lb, rb [maxSuffix]byte
+		var lb, rb [maxRemainder]byte
 		if bytes.Compare(left.Key(left.Len()-1, &lb), right.Key(0, &rb)) >= 0 {
 			t.Errorf("the pages of the split are not in order")
 		}
@@ -469,8 +469,8 @@ func TestEach(t *testing.T) {
 	}
 	var r Run
 	r.Each(nil, func([]byte, uint64) bool { t.Error("an empty run called fn"); return true })
-	if err := r.Insert(make([]byte, maxSuffix+1), 1); err != ErrTooLong {
-		t.Errorf("Run.Insert of a suffix that is too long: %v", err)
+	if err := r.Insert(make([]byte, maxRemainder+1), 1); err != ErrTooLong {
+		t.Errorf("Run.Insert of a remainder that is too long: %v", err)
 	}
 	for i := range 200 {
 		_ = r.Insert([]byte(fmt.Sprintf("run-key-%03d", i)), uint64(i))
@@ -566,7 +566,7 @@ func TestStats(t *testing.T) {
 	for i := range 10 {
 		u, _, _ = u.Insert([]byte{0, 0, 0, 0, 0, 0, 0, byte(i)}, 1)
 	}
-	// the keys share 7 bytes, but short suffixes have no tails to shorten: no prefix
+	// the keys share 7 bytes, but short remainders have no tails to shorten: no prefix
 	if got, want := u.Stats(), (Stats{Keys: 10, Size: 256, Used: arraysEnd(10, true, 0), Uniform: true}); got != want {
 		t.Errorf("uniform page: %+v, want %+v", got, want)
 	}
@@ -597,7 +597,7 @@ func TestStats(t *testing.T) {
 // prefix: a prefix that is too long would corrupt keys, one that is too short
 // wastes memory. The test builds pages of every shape of key and compares what
 // the page computes from its head words and tails, for the keys of a range of
-// positions with and without one more suffix, with the common prefix of the
+// positions with and without one more remainder, with the common prefix of the
 // keys written out in full.
 func TestSharedBy(t *testing.T) {
 	defer func(a, b int) { MinPrefix, MinGain = a, b }(MinPrefix, MinGain)
@@ -619,7 +619,7 @@ func TestSharedBy(t *testing.T) {
 			if p.Len() < 2 {
 				t.Fatalf("the page holds %d keys, want at least 2", p.Len())
 			}
-			var buf [maxSuffix]byte
+			var buf [maxRemainder]byte
 			full := func(i int) []byte { return bytes.Clone(p.Key(i, &buf)) }
 			for from := range p.Len() {
 				for to := from; to <= p.Len(); to++ {
@@ -629,7 +629,7 @@ func TestSharedBy(t *testing.T) {
 							k := full(from)
 							n := r.IntN(len(k) + 1)
 							s = append(k[:n:n], s...)
-							s = s[:min(len(s), maxSuffix)]
+							s = s[:min(len(s), maxRemainder)]
 						}
 						group := [][]byte{}
 						for i := from; i < to; i++ {

@@ -4,14 +4,14 @@
 // page, below a range node or at the root; the page was first built and measured
 // alone (docs/redesign/step1-results.md, cmd/pagefill).
 //
-// A page holds the suffixes of its keys from its base on, the depth the tree
+// A page holds the remainders of its keys from its base on, the depth the tree
 // created it at (Page.Base); the bytes before are the path to it, which the nodes
 // above have checked. It comes in two flavors, told by Page.ulen:
 //
-//   - uniform (ulen 1..8): all suffixes have that length. A key is a head
-//     word, its suffix big endian and zero padded, and a value word: 16
+//   - uniform (ulen 1..8): all remainders have that length. A key is a head
+//     word, its remainder big endian and zero padded, and a value word: 16
 //     bytes, and one byte in the directory. This is the page of integer keys.
-//   - general (ulen 0): a suffix has any length up to 255. The head word
+//   - general (ulen 0): a remainder has any length up to 255. The head word
 //     holds its first 8 bytes, zero padded; the bytes beyond them, the tail,
 //     are in a heap that grows down from the end of the page. A key costs
 //     head, value, and a directory entry of 4 bytes, and its tail.
@@ -23,7 +23,7 @@
 // manner of a file allocation table: the header of 8 bytes, the prefix, then an
 // entry for each key, in the order of the keys. In the uniform flavor it is a
 // tag, one byte, a hash of the key's head word. In the general flavor it is 4
-// bytes: the tag, the length of the suffix, and the offset of its tail in the
+// bytes: the tag, the length of the remainder, and the offset of its tail in the
 // heap. A lookup reads that directory, which is in the first line or two of the
 // page, compares the tag of its key with the tags of all keys, and learns the
 // position of the key, or that it is not there, and for a key with a tail, where
@@ -49,10 +49,10 @@ import (
 )
 
 const (
-	hdr       = 8   // size of the page header
-	headLen   = 8   // bytes of a suffix that a head word holds
-	maxSuffix = 255 // the longest suffix a page holds
-	pad       = ^uint64(0)
+	hdr          = 8   // size of the page header
+	headLen      = 8   // bytes of a remainder that a head word holds
+	maxRemainder = 255 // the longest remainder a page holds
+	pad          = ^uint64(0)
 )
 
 // sizes are the sizes of the page classes in bytes: Go size classes that are
@@ -63,8 +63,8 @@ var sizes = [...]int{128, 256, 512, 1024}
 // is full has to be split. Experiments may lower it.
 var MaxClass = 2
 
-// ErrTooLong is returned for a suffix longer than a page can hold.
-var ErrTooLong = errors.New("vpage: suffix longer than 255 bytes")
+// ErrTooLong is returned for a remainder longer than a page can hold.
+var ErrTooLong = errors.New("vpage: remainder longer than 255 bytes")
 
 // KindBase is the kind byte of a page of the smallest class: the page of class
 // c has the kind KindBase+c, which is how the tree tells pages from its other
@@ -76,17 +76,17 @@ type Page struct {
 	kind  uint8  // KindBase + the index of the class in sizes
 	count uint8  // keys
 	cap   uint8  // slots in the arrays
-	ulen  uint8  // stored length of every suffix in the uniform flavor, else 0
+	ulen  uint8  // stored length of every remainder in the uniform flavor, else 0
 	plen  uint8  // length of the prefix all keys of the page share, stored once behind the header
-	base  uint8  // the depth in the tree's keys where the page's suffixes start
+	base  uint8  // the depth in the tree's keys where the page's remainders start
 	top   uint16 // start of the heap
 }
 
 func (p *Page) class() int { return int(p.kind - KindBase) }
 
-// Base returns the depth in the tree's keys where the suffixes of the page
+// Base returns the depth in the tree's keys where the remainders of the page
 // start: the key of an entry is the first Base bytes of the path to the page,
-// followed by the entry's suffix.
+// followed by the entry's remainder.
 func (p *Page) Base() int { return int(p.base) }
 
 // Size returns the size of the page's object in bytes.
@@ -135,7 +135,7 @@ func (p *Page) mem() []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), si
 func (p *Page) tags() []uint8 { return unsafe.Slice((*uint8)(p.at(dirAt(int(p.plen)))), p.cap) }
 
 // fat returns the directory of a general page: for each key its tag, in the
-// low byte, the length of its suffix, and the offset of its tail.
+// low byte, the length of its remainder, and the offset of its tail.
 func (p *Page) fat() []uint32 { return unsafe.Slice((*uint32)(p.at(dirAt(int(p.plen)))), p.cap) }
 
 // Slot is the head word of a key and its value, side by side: a lookup that has
@@ -169,7 +169,7 @@ func entry(t uint8, length int, off int) uint32 {
 // heapFree is the room between the arrays and the heap.
 func (p *Page) heapFree() int { return int(p.top) - arraysEnd(int(p.cap), p.ulen != 0, int(p.plen)) }
 
-// word returns the head word of suffix s: its first 8 bytes, zero padded.
+// word returns the head word of remainder s: its first 8 bytes, zero padded.
 func word(s []byte) uint64 {
 	if len(s) >= headLen {
 		return binary.BigEndian.Uint64(s)
@@ -219,7 +219,7 @@ func lower(h []Slot, w uint64) int {
 	return start + c
 }
 
-// length returns the length of the suffix at position i.
+// length returns the length of the remainder at position i.
 func (p *Page) length(i int) int {
 	if p.ulen != 0 {
 		return int(p.ulen)
@@ -227,7 +227,7 @@ func (p *Page) length(i int) int {
 	return int(p.fat()[i] >> 8 & 0xff)
 }
 
-// tail returns the bytes of the suffix at position i beyond its head word.
+// tail returns the bytes of the remainder at position i beyond its head word.
 func (p *Page) tail(i int) []byte {
 	if p.ulen != 0 {
 		return nil
@@ -241,9 +241,9 @@ func (p *Page) tail(i int) []byte {
 	return p.mem()[off : off+l]
 }
 
-// cmpEntry compares the suffix at position i, whose head word equals the one
+// cmpEntry compares the remainder at position i, whose head word equals the one
 // of s, with s: negative if the entry is below s. Entries of equal head words
-// are ordered by their suffixes: a short one, which the zero padding makes
+// are ordered by their remainders: a short one, which the zero padding makes
 // equal to a prefix, before longer ones.
 func (p *Page) cmpEntry(i int, s []byte) int {
 	la, lb := p.length(i), len(s)
@@ -268,14 +268,14 @@ func compare(a, b []byte) int {
 	return len(a) - len(b)
 }
 
-// find returns the position of suffix s and whether it is there, or the
-// position where it would go, also for a suffix that does not start with the
+// find returns the position of remainder s and whether it is there, or the
+// position where it would go, also for a remainder that does not start with the
 // page's prefix.
 func (p *Page) find(s []byte) (int, bool) { return p.findAt(s, 0) }
 
 // headWord returns the head word of key[off:]: its first 8 bytes, zero padded.
-// A suffix shorter than 8 bytes is taken from the last 8 bytes of the key, in
-// one load and a shift, if the key has them (a loop over the bytes of a suffix
+// A remainder shorter than 8 bytes is taken from the last 8 bytes of the key, in
+// one load and a shift, if the key has them (a loop over the bytes of a remainder
 // of a length that changes from page to page mispredicts).
 func headWord(key []byte, off int) uint64 {
 	n := len(key) - off
@@ -288,7 +288,7 @@ func headWord(key []byte, off int) uint64 {
 	return word(key[off:])
 }
 
-// findAt is find for the suffix key[off:], the part of a key that starts at the
+// findAt is find for the remainder key[off:], the part of a key that starts at the
 // page's base.
 func (p *Page) findAt(key []byte, off int) (int, bool) {
 	n := int(p.plen)
@@ -306,9 +306,9 @@ func (p *Page) findAt(key []byte, off int) (int, bool) {
 	return p.findRest(key[off:], headWord(key, off))
 }
 
-// findRest is find for a suffix without the prefix, whose head word is w. In a
-// uniform page a suffix of another length is never there, but has a position,
-// between the suffixes it shares a head with.
+// findRest is find for a remainder without the prefix, whose head word is w. In a
+// uniform page a remainder of another length is never there, but has a position,
+// between the remainders it shares a head with.
 func (p *Page) findRest(s []byte, w uint64) (int, bool) {
 	h := p.slots()
 	i := lower(h, w)
@@ -332,7 +332,7 @@ const maxFast = 3*headLen - 1
 
 func bswap(x uint64) uint64 { return bits.ReverseBytes64(x) }
 
-// Get returns the value of suffix s.
+// Get returns the value of remainder s.
 func (p *Page) Get(s []byte) (uint64, bool) {
 	if i, ok := p.Find(s); ok {
 		return p.slots()[i].Val, true
@@ -345,7 +345,7 @@ const (
 	highs = 0x8080808080808080
 )
 
-// lookup finds the position of suffix s, whose head word is w, by the
+// lookup finds the position of remainder s, whose head word is w, by the
 // directory. In a uniform page it compares the tag of s with 8 tags at a time (a
 // byte is zero in x ^ pattern where the tags are equal, which the subtraction
 // marks in the high bit, with false marks possible above a true one); in a
@@ -379,7 +379,7 @@ func (p *Page) lookup(s []byte, w uint64) (int, bool) {
 	return 0, false
 }
 
-// sameGeneral reports whether the suffix at position i of a general page, whose
+// sameGeneral reports whether the remainder at position i of a general page, whose
 // directory entry is e and whose tag is the one of s, is s.
 func (p *Page) sameGeneral(i int, e uint32, s []byte, w uint64) bool {
 	l := int(e >> 8 & 0xff)
@@ -393,8 +393,8 @@ func (p *Page) sameGeneral(i int, e uint32, s []byte, w uint64) bool {
 	return string(p.mem()[off:off+l-headLen]) == string(s[headLen:])
 }
 
-// Key returns the suffix at position i, with the page's prefix; buf backs it.
-func (p *Page) Key(i int, buf *[maxSuffix]byte) []byte {
+// Key returns the remainder at position i, with the page's prefix; buf backs it.
+func (p *Page) Key(i int, buf *[maxRemainder]byte) []byte {
 	pl := int(p.plen)
 	copy(buf[:], p.prefix())
 	l := p.length(i)

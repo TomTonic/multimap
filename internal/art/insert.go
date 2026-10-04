@@ -135,13 +135,13 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, pathLen int, v 
 	p := asPage(*loc)
 	base := p.Base()
 	full := false // the key fits the page but for its room
-	if len(key)-base <= maxPageSuffix {
+	if len(key)-base <= maxPageRemainder {
 		i, ok := p.LocateIn(key)
 		if ok {
 			t.at = spot{loc: loc, i: i, pathLen: pathLen, par: par, pi: pi}
 			return loc
 		}
-		q, res := p.InsertIn(i, key, v) // the suffix is not too long: checked above
+		q, res := p.InsertIn(i, key, v) // the remainder is not too long: checked above
 		if res != vpage.Full {
 			*loc = pageHdr(q)
 			t.size++
@@ -177,7 +177,7 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, pathLen int, v 
 // and a new page or leaf for key (see fork). Either way no key of the page is
 // copied: it replaces a rebuild of the subtree from its keys.
 func (t *Tree) burst(loc **header, p *vpage.Page, key []byte, pathLen int, v uint64, nl newLeafFunc) **header {
-	var buf [maxPageSuffix]byte
+	var buf [maxPageRemainder]byte
 	base, d := p.Base(), p.Base()+p.Shared()
 	first := p.Key(0, &buf)[pathLen-base:] // the first key, from pathLen on: it holds the shared bytes
 	shared := first[:d-pathLen]

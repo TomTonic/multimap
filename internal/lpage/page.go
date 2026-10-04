@@ -9,7 +9,7 @@
 // multi-key page with multi-value entries) is parked on the branch
 // mkmv-experiment; see docs/redesign/step3-tree-pages.md.
 //
-// A page holds the stripped suffixes of keys, each with one value, in one object
+// A page holds the stripped remainders of keys, each with one value, in one object
 // of 128, 256, 384 or 512 bytes without pointers:
 //
 //	header | common prefix | remainder 1 .. remainder n | value 1 .. value n
@@ -20,7 +20,7 @@
 // different lengths, one length byte per value. Its size is the smallest multiple
 // of 8 of 8 to MaxHeader (at most 64) that has room for the entries: with values
 // of different lengths 3, 7, 11, 15 and so on up to 31 entries, with values of one
-// width (4, 8 or 16 bytes; a scalar specialization) 6, 14, 22 or 30 and up to 31. The common prefix is the part all suffixes of
+// width (4, 8 or 16 bytes; a scalar specialization) 6, 14, 22 or 30 and up to 31. The common prefix is the part all remainders of
 // the page share, stored once; a remainder is what follows it and is at least one
 // byte long. A value is a string of up to 255 bytes (a longer one needs another
 // form, which the prototype does not have).
@@ -68,13 +68,13 @@ var MinHeader = 8
 // there after a removal, in percent.
 var ShrinkFill = 70
 
-// ErrTooLong is returned for suffixes or values that do not fit a page.
-var ErrTooLong = errors.New("lpage: suffix or value longer than 255 bytes, or too many entries")
+// ErrTooLong is returned for remainders or values that do not fit a page.
+var ErrTooLong = errors.New("lpage: remainder or value longer than 255 bytes, or too many entries")
 
-// ErrEmpty is returned for an empty suffix: a length of 0 in the header ends the
+// ErrEmpty is returned for an empty remainder: a length of 0 in the header ends the
 // entries, so every remainder has at least one byte. A key that ends where the
 // page starts is not an entry of a page.
-var ErrEmpty = errors.New("lpage: empty suffix")
+var ErrEmpty = errors.New("lpage: empty remainder")
 
 // Result says what Insert did.
 type Result int
@@ -83,7 +83,7 @@ const (
 	Inserted Result = iota
 	Updated
 	Full // the page is of the largest class or has the most entries: split it
-	// Present is the result of TryInsert for a suffix that is already there, and
+	// Present is the result of TryInsert for a remainder that is already there, and
 	// of AddValueAt for a value that is already there: nothing changed.
 	Present
 	// Added is the result of AddValueAt that adds a value to a key.
@@ -280,7 +280,7 @@ func (p *Page) Used() int {
 	return used
 }
 
-// tooBig reports whether suffix s and value val do not fit a page of the
+// tooBig reports whether remainder s and value val do not fit a page of the
 // largest class together, with the smallest header.
 func tooBig(s, val []byte) bool {
 	return len(s) > maxRem || len(val) > maxField || len(s)+len(val) > sizes[len(sizes)-1]-8
@@ -296,7 +296,7 @@ func lcp(a, b []byte) int {
 	return n
 }
 
-// Build returns a page that holds the sorted, distinct suffixes keys with
+// Build returns a page that holds the sorted, distinct remainders keys with
 // their values, or an error if they do not fit one. keys must not be empty.
 func Build(keys, vals [][]byte) (*Page, error) {
 	if len(keys) > maxEnts {
@@ -315,7 +315,7 @@ func Build(keys, vals [][]byte) (*Page, error) {
 	return nil, ErrTooLong
 }
 
-// Get returns the value of suffix s, the first one if it has several. The slice
+// Get returns the value of remainder s, the first one if it has several. The slice
 // aliases the page and is valid until the page changes.
 func (p *Page) Get(s []byte) ([]byte, bool) {
 	m := p.mem()
@@ -378,7 +378,7 @@ func (p *Page) locate(s []byte) (i, off int, found bool) {
 	return i, off, false
 }
 
-// Entries returns the suffixes and values of the page in order, as copies.
+// Entries returns the remainders and values of the page in order, as copies.
 func (p *Page) Entries() (keys, vals [][]byte) {
 	m := p.mem()
 	h, cp := p.hdr(), int(p.cp)
@@ -402,10 +402,10 @@ func (p *Page) Entries() (keys, vals [][]byte) {
 	return keys, vals
 }
 
-// Insert sets the value of suffix s and returns the page that holds the result,
+// Insert sets the value of remainder s and returns the page that holds the result,
 // which is p itself unless the page had to move to another class or lay out its
 // entries anew. Full means the page is as big as it gets and has no room: split
-// it (the result is p). A suffix or value longer than 255 bytes is an error. A
+// it (the result is p). A remainder or value longer than 255 bytes is an error. A
 // page of values of one width takes a value of another length by laying its
 // entries out anew.
 func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
@@ -413,7 +413,7 @@ func (p *Page) Insert(s, val []byte) (*Page, Result, error) {
 	return q, res, err
 }
 
-// TryInsert adds suffix s with value val if it is not there, and returns the
+// TryInsert adds remainder s with value val if it is not there, and returns the
 // page that holds the result. If s is there it changes nothing and returns
 // Present and the position of s; the position of a new entry is not reported. It
 // serves a tree that keeps one value per key in its pages and moves a key with a
@@ -611,7 +611,7 @@ func (p *Page) insertSlow(s, val []byte) (*Page, Result, error) {
 	return p, Full, nil
 }
 
-// Delete removes suffix s, its first entry if it has several values, and returns
+// Delete removes remainder s, its first entry if it has several values, and returns
 // the page that holds the rest, nil if it is empty, and whether s was there. A
 // page that has become thin moves to a smaller class.
 func (p *Page) Delete(s []byte) (*Page, bool) {

@@ -246,10 +246,10 @@ func TestTryInsert(t *testing.T) {
 		t.Fatal("the page never got full")
 	}
 	if _, _, _, err := p.TryInsert(nil, nil, false); err != ErrEmpty {
-		t.Errorf("empty suffix: %v", err)
+		t.Errorf("empty remainder: %v", err)
 	}
 	if _, _, _, err := p.TryInsert(make([]byte, 300), nil, false); err != ErrTooLong {
-		t.Errorf("long suffix: %v", err)
+		t.Errorf("long remainder: %v", err)
 	}
 	// a page of values of one width, and a key that is there with a value of
 	// another length: present, not replaced

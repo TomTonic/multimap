@@ -89,7 +89,7 @@ func BenchmarkGet(b *testing.B) {
 		})
 		b.Run(g.name+"/page hot", func(b *testing.B) {
 			p := w.pages[len(w.pages)/2]
-			var buf [maxSuffix]byte
+			var buf [maxRemainder]byte
 			ks := make([][]byte, p.Len())
 			for i := range ks {
 				ks[i] = bytes.Clone(p.Key(i, &buf))
@@ -226,7 +226,7 @@ func getTrace(p *Page, s []byte) (lines map[int]bool, rounds int, v uint64, ok b
 	pl := int(p.plen)
 	read(0, dirAt(pl)+8*((stride*n+7)/8)) // the header, the prefix and the directory
 	rounds = 1
-	if len(s) > maxSuffix {
+	if len(s) > maxRemainder {
 		return lines, rounds, 0, false
 	}
 	s, rel := stripPrefix(p, s)
@@ -306,7 +306,7 @@ func TestLinesPerGet(t *testing.T) {
 	}
 }
 
-// stripPrefix returns suffix s without the page's prefix and 0, or nil and -1 if
+// stripPrefix returns remainder s without the page's prefix and 0, or nil and -1 if
 // s sorts below all keys of the page, +1 if above (it does not start with the
 // prefix).
 func stripPrefix(p *Page, s []byte) ([]byte, int) {

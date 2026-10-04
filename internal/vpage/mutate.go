@@ -53,7 +53,7 @@ const (
 
 // plan describes a page to be built: its entries and the bytes of their
 // tails, the length of the prefix they share (the prefix itself is cut from the
-// first key when the page is built), and the length all suffixes have after
+// first key when the page is built), and the length all remainders have after
 // it, if they have one of 1 to 8.
 type plan struct {
 	n, tails, ulen, plen int
@@ -64,7 +64,7 @@ func need(pl plan) int {
 	return arraysEnd(pl.n, pl.ulen != 0, pl.plen) + pl.tails
 }
 
-// shape returns the bytes of the tails and the common length of the suffixes
+// shape returns the bytes of the tails and the common length of the remainders
 // of the entries from to to of p once the first q bytes of each are cut off
 // (-2 if they differ, -1 if there are none).
 func (p *Page) shape(from, to, q int) (tails, uni int) {
@@ -75,7 +75,7 @@ func (p *Page) shape(from, to, q int) (tails, uni int) {
 	return tails, uni
 }
 
-// see adds a suffix of length l to the tails and the common length.
+// see adds a remainder of length l to the tails and the common length.
 func see(tails, uni, l int) (int, int) {
 	if l > headLen {
 		tails += l - headLen
@@ -89,7 +89,7 @@ func see(tails, uni, l int) (int, int) {
 	return tails, uni
 }
 
-// lcpEntries returns the length of the longest common prefix of the suffixes
+// lcpEntries returns the length of the longest common prefix of the remainders
 // at positions i and j, not counting the page's prefix; it compares head words,
 // and the tails only if the heads are equal.
 func (p *Page) lcpEntries(i, j int) int {
@@ -122,10 +122,10 @@ func (p *Page) lcpWith(i int, s []byte) int {
 }
 
 // sharedBy returns how many bytes the keys from to to of p, and if extra one
-// more suffix s, share and might be stored once (0 if none).
+// more remainder s, share and might be stored once (0 if none).
 func (p *Page) sharedBy(from, to int, s []byte, extra bool) (q int) {
 	m := to - from
-	if m == 0 || m == 1 && !extra || MinPrefix > maxSuffix {
+	if m == 0 || m == 1 && !extra || MinPrefix > maxRemainder {
 		return 0
 	}
 	q = int(p.plen) + p.length(from) // the whole first key
@@ -153,7 +153,7 @@ func lcp(a, b []byte) int {
 }
 
 // planWith returns the plan of the entries from to to of p and, if extra, of one
-// more suffix s, as if they had a prefix of q bytes (setPrefix fills it in).
+// more remainder s, as if they had a prefix of q bytes (setPrefix fills it in).
 func (p *Page) planWith(from, to int, s []byte, extra bool, q int) plan {
 	pl := plan{n: to - from, plen: q}
 	tails, uni := p.shape(from, to, q)
@@ -169,14 +169,14 @@ func (p *Page) planWith(from, to int, s []byte, extra bool, q int) plan {
 }
 
 // planFor returns the plan of the entries from to to of p and, if extra, of one
-// more suffix s: with the prefix they share if that saves MinGain bytes.
+// more remainder s: with the prefix they share if that saves MinGain bytes.
 func (p *Page) planFor(from, to int, s []byte, extra bool) plan {
 	if p.ulen != 0 && p.plen == 0 && (!extra || len(s) == int(p.ulen)) {
-		// A page of equal short suffixes stays what it is: there are no tails
+		// A page of equal short remainders stays what it is: there are no tails
 		// for a prefix to shorten.
 		return plan{n: to - from + b2i(extra), ulen: int(p.ulen)}
 	}
-	// The prefix the page has stays, as far as the new suffix starts with it: a
+	// The prefix the page has stays, as far as the new remainder starts with it: a
 	// plan that dropped it, because the keys left are too few for it to save
 	// MinGain, would need more room than the page has.
 	q0 := int(p.plen)
@@ -236,7 +236,7 @@ func newPage(c int, pl plan, pfx []byte) *Page {
 	return q
 }
 
-// New returns an empty page of class c for suffixes of length ulen, 1 to 8,
+// New returns an empty page of class c for remainders of length ulen, 1 to 8,
 // or of any length if ulen is 0.
 func New(c, ulen int) *Page { return newPage(c, plan{ulen: ulen}, nil) }
 
@@ -268,7 +268,7 @@ func (q *Page) appendFull(key []byte, v uint64) {
 	q.appendEntry(word(rest), v, len(rest), tail)
 }
 
-// insertion is a suffix that rebuild adds in front of the entry at position pos.
+// insertion is a remainder that rebuild adds in front of the entry at position pos.
 type insertion struct {
 	pos int
 	s   []byte
@@ -276,11 +276,11 @@ type insertion struct {
 }
 
 // rebuild returns a page of class c and plan pl that holds the entries from to
-// to of p and, if in is not nil, its suffix, in order. They must fit. If the
+// to of p and, if in is not nil, its remainder, in order. They must fit. If the
 // new prefix is as long as the old one the entries are copied; else every key is
 // cut anew, since its head word changes.
 func (p *Page) rebuild(c int, pl plan, from, to int, in *insertion) *Page {
-	var buf [maxSuffix]byte
+	var buf [maxRemainder]byte
 	var pfx []byte
 	if pl.plen > 0 { // the keys share it: any of them tells it
 		pfx = p.Key(from, &buf)[:pl.plen]
@@ -348,7 +348,7 @@ func (p *Page) compactFor(tail int) bool {
 }
 
 // copyGeneral fills q, an empty page of the same general flavor and prefix as p,
-// with all entries of p and, if in is not nil, its suffix: the heads and values
+// with all entries of p and, if in is not nil, its remainder: the heads and values
 // in two block copies and the heap in one, with the offsets of the tails moved by
 // the difference of the page sizes. It copies the garbage in the heap, too, and
 // reports false, having changed nothing, if that leaves no room for the new
@@ -384,7 +384,7 @@ func (p *Page) copyGeneral(q *Page, in *insertion) bool {
 }
 
 // copyUniform fills q, an empty page of the same uniform flavor and prefix as p,
-// with the entries from to to of p and, if in is not nil, its suffix before the
+// with the entries from to to of p and, if in is not nil, its remainder before the
 // entry at position in.pos: three block copies, since the entries of uniform
 // pages need no heap.
 func (p *Page) copyUniform(q *Page, from, to int, in *insertion) {
@@ -410,12 +410,12 @@ func (p *Page) copyUniform(q *Page, from, to int, in *insertion) {
 	q.count = n
 }
 
-// Insert sets the value of suffix s, adding it if it is not there. It returns
+// Insert sets the value of remainder s, adding it if it is not there. It returns
 // the page, or the larger page that replaces it; the old page must not be used
 // any more then. Full means that nothing changed because the page holds as much
 // as its largest class can.
 func (p *Page) Insert(s []byte, v uint64) (*Page, Result, error) {
-	if len(s) > maxSuffix {
+	if len(s) > maxRemainder {
 		return p, Inserted, ErrTooLong
 	}
 	i, found := p.find(s)
@@ -427,7 +427,7 @@ func (p *Page) Insert(s []byte, v uint64) (*Page, Result, error) {
 	return q, res, nil
 }
 
-// InsertAt adds suffix s, which is not in the page and goes at position i (see
+// InsertAt adds remainder s, which is not in the page and goes at position i (see
 // Locate), with the value v: what Insert does after its search. s must not be
 // longer than 255 bytes.
 func (p *Page) InsertAt(i int, s []byte, v uint64) (*Page, Result) { return p.insertKey(i, s, 0, v) }
@@ -437,7 +437,7 @@ func (p *Page) InsertIn(i int, key []byte, v uint64) (*Page, Result) {
 	return p.insertKey(i, key, int(p.base), v)
 }
 
-// insertKey adds the suffix key[off:] at position i.
+// insertKey adds the remainder key[off:] at position i.
 func (p *Page) insertKey(i int, key []byte, off int, v uint64) (*Page, Result) {
 	plen := int(p.plen)
 	has := len(key)-off >= plen && (plen == 0 || string(key[off:off+plen]) == string(p.prefix())) // s starts with the prefix
@@ -457,7 +457,7 @@ func (p *Page) insertKey(i int, key []byte, off int, v uint64) (*Page, Result) {
 	return p.rebuild(c, pl, 0, int(p.count), &insertion{i, s, v}), Inserted
 }
 
-// insertAt puts suffix s at position i of a page with room for it.
+// insertAt puts remainder s at position i of a page with room for it.
 func (p *Page) insertAt(i int, w, v uint64, s []byte) {
 	n := int(p.count)
 	h := p.slots()
@@ -481,10 +481,10 @@ func (p *Page) insertAt(i int, w, v uint64, s []byte) {
 	p.count++
 }
 
-// Delete removes suffix s. It returns the page, or the smaller page that
+// Delete removes remainder s. It returns the page, or the smaller page that
 // replaces it, or nil once the page is empty, and whether s was there.
 func (p *Page) Delete(s []byte) (*Page, bool) {
-	if len(s) > maxSuffix {
+	if len(s) > maxRemainder {
 		return p, false
 	}
 	i, found := p.find(s)
@@ -534,7 +534,7 @@ func (p *Page) cost(i int) int {
 
 // Split divides a page of at least two keys into the page of its first keys and
 // the page of the others, at the middle of the count or, with SplitByBytes, of
-// the bytes. The first suffix of the second page is the separator.
+// the bytes. The first remainder of the second page is the separator.
 func (p *Page) Split() (left, right *Page, err error) {
 	n := int(p.count)
 	if n < 2 {
@@ -568,7 +568,7 @@ func (p *Page) SplitAt(m int) (left, right *Page) {
 func (p *Page) half(from, to int) *Page {
 	pl := p.planFor(from, to, nil, false)
 	c := fitClass(pl, 0, SplitFill)
-	if c < 0 { // two long suffixes: no room to spare, but a half never needs more than the page had
+	if c < 0 { // two long remainders: no room to spare, but a half never needs more than the page had
 		c = fitClass(pl, 0, 100)
 	}
 	return p.rebuild(c, pl, from, to, nil)
@@ -615,7 +615,7 @@ func Merge(a, b *Page) *Page {
 	if arraysEnd(pl.n, true, 0) > MergeFill*sizes[MaxClass]/100 { // too much even for the leanest page: no prefix helps
 		return nil
 	}
-	var fb, lb [maxSuffix]byte
+	var fb, lb [maxRemainder]byte
 	first, last := a.Key(0, &fb), b.Key(int(b.count)-1, &lb)
 	if q := lcp(first, last) - PrefixSlack; pl.tails >= MinGain && q >= max(MinPrefix, 1) {
 		if cand := with(q); need(cand)+MinGain <= need(pl) {
@@ -629,7 +629,7 @@ func Merge(a, b *Page) *Page {
 	m := newPage(c, pl, first[:pl.plen])
 	m.base = a.base
 	Counts.Merges++
-	var buf [maxSuffix]byte
+	var buf [maxRemainder]byte
 	for _, src := range []*Page{a, b} {
 		for i := range int(src.count) {
 			m.appendFull(src.Key(i, &buf), src.slots()[i].Val)
@@ -638,14 +638,14 @@ func Merge(a, b *Page) *Page {
 	return m
 }
 
-// Each calls fn for the suffixes from from on, in order, with their values,
+// Each calls fn for the remainders from from on, in order, with their values,
 // until fn returns false. A nil from starts at the first.
 func (p *Page) Each(from []byte, fn func(s []byte, v uint64) bool) {
 	i := 0
 	if from != nil {
 		i, _ = p.find(from)
 	}
-	var buf [maxSuffix]byte
+	var buf [maxRemainder]byte
 	for ; i < int(p.count); i++ {
 		if !fn(p.Key(i, &buf), p.slots()[i].Val) {
 			return

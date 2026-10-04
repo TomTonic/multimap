@@ -66,7 +66,7 @@ func TestBuild(t *testing.T) {
 				if p.Base() != 7 || p.Len() != len(ks) {
 					t.Fatalf("base %d, %d keys, want 7 and %d", p.Base(), p.Len(), len(ks))
 				}
-				var buf [maxSuffix]byte
+				var buf [maxRemainder]byte
 				for i, k := range ks {
 					if !bytes.Equal(p.Key(i, &buf), k) || p.Val(i) != uint64(100+i) {
 						t.Fatalf("entry %d is %x = %d, want %x = %d", i, p.Key(i, &buf), p.Val(i), k, 100+i)
@@ -85,12 +85,12 @@ func TestBuild(t *testing.T) {
 	if Build(0, len(ks), func(i int) []byte { return ks[i] }, func(int) uint64 { return 0 }) != nil {
 		t.Error("300 keys made a page")
 	}
-	long := [][]byte{make([]byte, maxSuffix+1)}
+	long := [][]byte{make([]byte, maxRemainder+1)}
 	if Build(0, 1, func(i int) []byte { return long[i] }, func(int) uint64 { return 0 }) != nil {
-		t.Error("a suffix of 256 bytes made a page")
+		t.Error("a remainder of 256 bytes made a page")
 	}
-	if p := pageOf(t, 0, [][]byte{bytes.Repeat([]byte("x"), maxSuffix)}); p.Len() != 1 {
-		t.Error("a suffix of 255 bytes did not make a page")
+	if p := pageOf(t, 0, [][]byte{bytes.Repeat([]byte("x"), maxRemainder)}); p.Len() != 1 {
+		t.Error("a remainder of 255 bytes did not make a page")
 	}
 }
 
@@ -113,7 +113,7 @@ func TestLocateAndFind(t *testing.T) {
 					t.Fatalf("Locate(%x) = %d, %v, want %d", k, j, ok, i)
 				}
 			}
-			probes := append(sortedKeys(r, gen, 50), bytes.Repeat([]byte{0xff}, maxSuffix+20), nil,
+			probes := append(sortedKeys(r, gen, 50), bytes.Repeat([]byte{0xff}, maxRemainder+20), nil,
 				ks[0][:len(ks[0])/2], append(bytes.Clone(ks[0]), 7)) // a prefix of a key, and a key and a byte
 			for _, k := range probes {
 				want, found := sort2(ks, k)
@@ -195,7 +195,7 @@ func TestRebase(t *testing.T) {
 		t.Fatalf("rebased page %v", q)
 	}
 	check(t, q)
-	var buf [maxSuffix]byte
+	var buf [maxRemainder]byte
 	for i, k := range ks {
 		if got := q.Key(i, &buf); !bytes.Equal(got, append([]byte("pqrstu"), k...)) {
 			t.Fatalf("key %d is %q after the rebase", i, got)
@@ -226,7 +226,7 @@ func TestDeleteAtAndSplitAt(t *testing.T) {
 	if l.Len() != 5 || rt.Len() != len(ks)-5 || l.Base() != 0 || rt.Base() != 0 {
 		t.Fatalf("halves of %d and %d keys", l.Len(), rt.Len())
 	}
-	var buf [maxSuffix]byte
+	var buf [maxRemainder]byte
 	for i := range 5 {
 		if !bytes.Equal(l.Key(i, &buf), ks[i]) {
 			t.Fatalf("left key %d is wrong", i)
@@ -253,10 +253,10 @@ func TestDeleteAtAndSplitAt(t *testing.T) {
 }
 
 // TestKeyBasedCalls makes sure that the calls that take a whole key and cut it
-// at the page's base give the answers of those that take the suffix. It belongs
+// at the page's base give the answers of those that take the remainder. It belongs
 // to the page of the redesign (docs/redesign, step 2), whose tree holds the keys
 // of a page from a base on and passes the whole key down: the head word is
-// taken from the key's last 8 bytes when the suffix is shorter, so the keys here
+// taken from the key's last 8 bytes when the remainder is shorter, so the keys here
 // are short, 8 bytes and long, and their bases are zero and below their length.
 func TestKeyBasedCalls(t *testing.T) {
 	r := rand.New(rand.NewPCG(21, 22))
@@ -430,9 +430,9 @@ func TestSplitFullPages(t *testing.T) {
 	}
 }
 
-// TestRunPageFor makes sure that a benchmark can learn which page a suffix
+// TestRunPageFor makes sure that a benchmark can learn which page a remainder
 // belongs to. It belongs to the page prototype (docs/redesign, PLAN step 1) and
-// its run of pages, which stands in for the range nodes: the page of a suffix is
+// its run of pages, which stands in for the range nodes: the page of a remainder is
 // the one that holds it, and an empty run has none.
 func TestRunPageFor(t *testing.T) {
 	var r Run

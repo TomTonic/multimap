@@ -273,12 +273,12 @@ func TestPageLayout(t *testing.T) {
 	}
 }
 
-// TestPageLongSuffix makes sure that a key with as much below its page as a page
+// TestPageLongRemainder makes sure that a key with as much below its page as a page
 // holds, and one with more, keep their values, also when they get a second
 // one. It covers the limits of the pages of the ART behind multimap.Ordered
 // (255 bytes below the base) and the leaf a key gets that is too long for a page,
 // a flat leaf up to 254 bytes of its key and a set leaf beyond.
-func TestPageLongSuffix(t *testing.T) {
+func TestPageLongRemainder(t *testing.T) {
 	r := rand.New(rand.NewPCG(5, 6))
 	var m Map[uint64]
 	ref := reference{}

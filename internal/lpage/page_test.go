@@ -18,7 +18,7 @@ func rbytes(r *rand.Rand, n, alphabet int) []byte {
 	return b
 }
 
-// shapes are generators of suffixes that stress the page differently; u64, uuid
+// shapes are generators of remainders that stress the page differently; u64, uuid
 // and path are those of the benchmarks of internal/vpage.
 var shapes = map[string]func(*rand.Rand) []byte{
 	"u64": func(r *rand.Rand) []byte { return rbytes(r, 8, 256) },
@@ -188,14 +188,14 @@ func TestPageAgainstModel(t *testing.T) {
 
 // TestPageEdges makes sure that the page says no where it has to and behaves at
 // its limits. It belongs to the multi-key page candidate with a header of lengths
-// (docs/redesign, PLAN step 3): an entry cannot have an empty suffix, a suffix or
+// (docs/redesign, PLAN step 3): an entry cannot have an empty remainder, a remainder or
 // value beyond 255 bytes, or more than a page holds; a page with the most
 // entries or in the largest class has to be split; a miss is a miss whether the
 // prefix or the remainder differs; a value of another length changes the form of
 // the page; and a page that thins out moves to a smaller class.
 func TestPageEdges(t *testing.T) {
 	one := []byte{1}
-	t.Run("rejects an empty suffix and what does not fit", func(t *testing.T) {
+	t.Run("rejects an empty remainder and what does not fit", func(t *testing.T) {
 		if _, err := Build([][]byte{{}}, [][]byte{one}); err != ErrEmpty {
 			t.Errorf("Build empty: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestPageEdges(t *testing.T) {
 			t.Errorf("Build long: %v", err)
 		}
 		p, _ := Build([][]byte{{1}}, [][]byte{one})
-		for name, s := range map[string][2][]byte{"empty": {nil, one}, "long suffix": {make([]byte, 256), one}, "long value": {{1}, make([]byte, 256)}, "both together": {make([]byte, 250), make([]byte, 255)}} {
+		for name, s := range map[string][2][]byte{"empty": {nil, one}, "long remainder": {make([]byte, 256), one}, "long value": {{1}, make([]byte, 256)}, "both together": {make([]byte, 250), make([]byte, 255)}} {
 			if _, _, err := p.Insert(s[0], s[1]); err == nil {
 				t.Errorf("Insert with %s was accepted", name)
 			}
@@ -363,9 +363,9 @@ func FuzzOperations(f *testing.F) {
 	})
 }
 
-// TestRunPageFor makes sure that a benchmark can learn which page a suffix
+// TestRunPageFor makes sure that a benchmark can learn which page a remainder
 // belongs to. It belongs to the multi-key page candidate with a header of lengths
-// (docs/redesign, PLAN step 3) and its run of pages: the page of a suffix is the
+// (docs/redesign, PLAN step 3) and its run of pages: the page of a remainder is the
 // one that holds it, and an empty run has none.
 func TestRunPageFor(t *testing.T) {
 	var r Run
