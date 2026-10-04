@@ -1,25 +1,31 @@
 # Status
 
-## 2026-10-04 night: the multi-key page hangs in the tree (strings), measured; the user's rule does not hold up on real data
+## 2026-10-04 night: the multi-key page hangs in the tree (strings), measured; the rule does not hold up on real data
 
 The user asked (2026-10-03, evening) for the multi-key page for strings in the tree, measured against
-today's tree, SKMV afterwards. Done on the PC, report in [step3-tree-pages.md](step3-tree-pages.md), raw
-results in `bench/results-layout/step3-tree/`:
+today's tree, SKMV afterwards. Done on the PC (the M1 follows), report in
+[step3-tree-pages.md](step3-tree-pages.md), raw results in `bench/results-layout/step3-tree/`:
 
 - `internal/artstr` (experiment, a copy of `internal/art` for `Map[string]`) with pages of `internal/lpage`;
   candidates `ordered-lpage`, `-zc` (immutable pages, strings that are views), `-mv` (several values per
-  key inside the page), `-mvzc` in the bench (`-tags strvals -vs ...`).
-- One value per key: memory per key 67 to 40 bytes (street), scanned bytes 63 to 8, ranges 1.1 to 1.7 times as
-  fast as today's tree (up to 2.6 with zero-copy); `build` 1.6 to 2.9 times and `churn` 1.1 to 2.5 times
-  slower, lookups on small trees 1.4 to 1.7 times slower.
-- **The natural mix (`multi`) with one value per entry in the pages, as decided: the tree is today's tree.**
-  One entry in five with several values (street: 21 %) is enough for the fall back to take every page away.
-- With several values per key inside the page (an option, not the decision): memory -27 to -29 % (strings
-  counted for both sides), scanned bytes half, GC cycle 2 to 3 times cheaper; speed mixed (see the
-  document), `build` 0.4 to 0.5 and `churn` 0.4 to 0.8 of today's tree.
-- M1: jobs `l1` to `l4` are in the queue (pushed), the user runs them in the morning.
+  key inside the page), `-mvzc` in the bench (`-tags strvals -vs ...`). `lpage` grew: a 384-byte class,
+  headers of up to 64 bytes (default 48), entries that repeat the key before them.
+- **The natural mix (`multi`) with one value per entry in the pages, as decided: the tree is today's tree**
+  (speed 0.89 to 1.06, memory the same). One entry in five with several values is enough for the fall back
+  to take every page away.
+- **With several values per key inside the page (an option, not the decision):** memory per key with the
+  string bytes counted on both sides -40 % (`street`) and -36 % (`dirs`), scanned bytes 40 %, GC cycle 3 to
+  4 times cheaper; against `btree-sets` ranges 2.4 to 6 times as fast, lookups 1.1 to 1.9, `churn` 0.8 to
+  1.2, `build` 0.7 to 0.9; against today's tree lookups 0.5 to 1.1, `build` 0.4 to 0.6, `churn` 0.5 to 0.9.
+- One value per key: memory -61 % and -42 %, ranges 0.9 to 2.6 times today's, `build` 0.5 to 0.7.
+- Nearly half the heap of the several-values tree is the value sets of the 1.5 to 2 % of keys with more
+  values than a page holds: that is the value overflow, no page layout touches it.
+- **A crash in `internal/art` found and fixed** (a range node left with a page that cannot move up; its last
+  key removed; since step 2): `TestRemoveLongKeysOneByOne`.
+- M1: jobs `l1` to `l4` are in the queue (pushed at `c4dc4b6`), the user runs them in the morning.
 - Open for the user: give up the rule "no page holds entries with different numbers of values" (the data
-  says it empties the idea on the real mix); then SKMV is only for what does not fit a page.
+  says it empties the idea on the real mix); then SKMV is only the value overflow. Zero-copy strings: yes or
+  no. Then tuning of the mutation, and the range node for few children (step 4).
 - Housekeeping to tell the user: seven unpushed local commits were rewritten with `git filter-branch` to
   drop a 5.6 MB test binary (`internal/artstr/artstr.test`) that went into a commit by accident; the local
   branch `backup-before-filter` still holds the old state. `.gitignore` now ignores `*.test`.
