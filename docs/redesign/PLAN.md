@@ -192,7 +192,7 @@ Measure against `node-layout` and the competitors on `street` and `dirs`, multi 
 sizes, with memory and the object statistic; plus one run of the fixed-size layout with
 `T = string` (see above). Report against the prediction. **Stop for the user.**
 
-### 3.4 Value overflow
+### 3.4 Value overflow (decided 2026-10-04: the set leaf holds a `Set3` on its own; no new hash set, see step3-overflow-design.md section 0)
 
 On the real data, 1.5 to 2.5 % of the keys hold about half of the values (step3-tree-pages.md), and
 their value sets were nearly half of the heap in the experiment. Design note first: the existing

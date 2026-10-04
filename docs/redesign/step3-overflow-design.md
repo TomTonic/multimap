@@ -1,8 +1,30 @@
 # Step 3.4: design note of the value overflow for string values
 
-Status: **for the user's approval, no code yet** (PLAN.md, step 3.4). Written 2026-10-04. Words as in
+Status: **decided 2026-10-04 (user): no new hash set.** Step 3.4 is option **B** of section 3a: the set leaf of a string map
+holds a `Set3` on its own, `vset` is gone from it. The block set (C) and the arena (D) of sections 2 to 6 are **not built in this
+step**; they stay in this note as a candidate for the profile after version 0.8, next to the dictionary of values (H). Section 0
+says what B is; sections 1 and 3a still hold. Written 2026-10-04. Words as in
 [GLOSSARY.md](GLOSSARY.md). Numbers from `bench/cmd/skmodel -overflow` (a model on the real keys and values), the
 measurement of step 3.3 and `internal/vset`.
+
+## 0. What is built: the set leaf of a string map holds a `Set3`
+
+- **One overflow form.** The set leaf of a map of strings (`Map.flat == 3`) holds, behind the leaf head and the key area, **a pointer to a
+  `Set3[string]`** (github.com/TomTonic/Set3, a swiss-table hash set that exists, is tested and is the user's) instead of the 64-byte `vset.Set[string]`
+  with its inline stage and array stage. It takes any string, so the second form of the block design (values of 255 bytes or more)
+  is not needed: **one** form for every key that does not fit a page, and for keys of more than 254 bytes.
+- **Created** with room for what the page held (`EmptyWithCapacity` of 1.5 times its values, so the spill does not rehash).
+- **Transitions** as in the table of section 2, with the block-set leaf left out: page -> set leaf when the content no longer fits
+  512 bytes or a value of 255 bytes or more arrives; set leaf -> page when the content is 256 bytes or less and every value is shorter than 255
+  bytes (the check of step 3.3, `unspillSK`).
+- **`vset` stays** for `Hashed` and for the maps of other value types; nothing in it changes (option F).
+- **Prediction** (from the measurement of section 3a): the containers are 15 to 40 % faster than `vset` (a hit 55 against 65 ns, a miss 17
+  against 31, add + remove 38 against 63) and a leaf is 56 bytes smaller; the heap stays where it is, **+2 B a value** (50.4 against 48.6 on `street`), so the
+  memory of the natural mix does not fall: `street` about 113 B/key, `dirs` about 163, as measured in 3.3. What this step does *not* bring: the third of the
+  heap that is value sets, and the pointer to every string.
+- **How it is checked:** the tests of 3.3 for the transitions run on the new leaf (the reference test with values that overflow, the fuzz test,
+  the rekey test), the object statistic knows the new leaf, `go test -race`, the coverage of `internal/art` stays 100 %; measurement as
+  in 3.3 against this prediction.
 
 ## 1. The problem, with the data
 
