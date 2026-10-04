@@ -33,14 +33,14 @@ func TestPairsFor(t *testing.T) {
 		count   int
 		skip    []pair
 	}{
-		{name: "compares ordered with all three others in every operation", profile: multi, n: 4096, count: 12},
+		{name: "compares ordered with all three others in every operation", profile: natural, n: 4096, count: 12},
 		{
-			name: "drops scanning range queries and builds for large scenarios", profile: multi, n: 1 << 20, count: 7,
+			name: "drops scanning range queries and builds for large scenarios", profile: natural, n: 1 << 20, count: 7,
 			skip: []pair{{"valuesBetween", ordered, hashed}, {"valuesBetween", ordered, mapSets}, {"build", ordered, btreeSets}},
 		},
-		{name: "compares ordered with btree-map for unique values", profile: unique, n: 4096, count: 4},
+		{name: "compares ordered with btree-map with one value per key", profile: singleValue, n: 4096, count: 4},
 		{
-			name: "keeps range queries on btree-map for large scenarios", profile: unique, n: 1 << 20, count: 3,
+			name: "keeps range queries on btree-map for large scenarios", profile: singleValue, n: 1 << 20, count: 3,
 			skip: []pair{{"build", ordered, btreeMapC}},
 		},
 	}
@@ -69,7 +69,7 @@ func TestPairsFor(t *testing.T) {
 // benchmark driver turns rtcompare's workload streams into insertions and
 // deletions of values (see newPairs), for both value profiles: every
 // insertion adds a value the key does not hold, every deletion removes one
-// it holds, the multimap ends up holding exactly the corpus, and with unique
+// it holds, the multimap ends up holding exactly the corpus, and with single-value
 // values no key ever holds two, up to the largest ratio the driver accepts.
 func TestWorkloads(t *testing.T) {
 	const n = 3000
@@ -77,7 +77,7 @@ func TestWorkloads(t *testing.T) {
 		key uint32
 		val V
 	}
-	for _, profile := range []string{multi, unique} {
+	for _, profile := range []string{natural, singleValue} {
 		nums, offs := profileValues(keys.Corpus{}, profile, n)
 		vals := toVs(nums, nil)
 		corpus := map[kv]bool{}
@@ -86,12 +86,12 @@ func TestWorkloads(t *testing.T) {
 				corpus[kv{uint32(i), v}] = true
 			}
 		}
-		for _, sh := range []stream{{1.5, 0}, {maxUniqueRatio, 0.25}, {3, 0.9}, {maxUniqueRatio, 0.9}} {
+		for _, sh := range []stream{{1.5, 0}, {maxSingleValueRatio, 0.25}, {3, 0.9}, {maxSingleValueRatio, 0.9}} {
 			r, pc := sh.ratio, sh.permChurn
-			if profile == unique && r > maxUniqueRatio {
+			if profile == singleValue && r > maxSingleValueRatio {
 				continue
 			}
-			p := newPairs(n, vals, offs, r, profile == unique)
+			p := newPairs(n, vals, offs, r, profile == singleValue)
 			build, err := workload.Build(len(vals), workloadConfig(stream{r, pc}))
 			if err != nil {
 				t.Fatal(err)
@@ -117,7 +117,7 @@ func TestWorkloads(t *testing.T) {
 						}
 						if op.Kind == workload.Insert {
 							state[x] = true
-							if perKey[x.key]++; profile == unique && perKey[x.key] > 1 {
+							if perKey[x.key]++; profile == singleValue && perKey[x.key] > 1 {
 								t.Fatalf("operation %d: key %d holds %d values", i, x.key, perKey[x.key])
 							}
 						} else {
@@ -156,7 +156,7 @@ func TestResultRows(t *testing.T) {
 			ValidationB:  rtcompare.HarnessValidation{Deltas: []float64{0.001, 0.003 - float64(i)/1000}},
 			Quantization: 0.0004, Seed: uint64(i) + 7}
 		orig = append(orig, r)
-		rows = append(rows, rowOf("u64", multi, 4096, p, i+1, uint64(i), first, 12, r))
+		rows = append(rows, rowOf("u64", natural, 4096, p, i+1, uint64(i), first, 12, r))
 	}
 	b, err := encodeLines(rows)
 	if err != nil {
@@ -195,12 +195,12 @@ func TestResultRows(t *testing.T) {
 	}
 }
 
-// TestProfileValues makes sure the unique profile really gives every key
-// exactly one value, taken from the same values as the multi profile. It
+// TestProfileValues makes sure the single-value profile really gives every key
+// exactly one value, taken from the same values as the natural profile. It
 // covers the value profiles of the benchmark driver.
 func TestProfileValues(t *testing.T) {
-	mv, mo := profileValues(keys.Corpus{}, multi, 1000)
-	uv, uo := profileValues(keys.Corpus{}, unique, 1000)
+	mv, mo := profileValues(keys.Corpus{}, natural, 1000)
+	uv, uo := profileValues(keys.Corpus{}, singleValue, 1000)
 	if len(uv) != 1000 || len(uo) != 1001 {
 		t.Fatalf("unique: %d values, %d offsets; want 1000 and 1001", len(uv), len(uo))
 	}
@@ -220,19 +220,19 @@ func TestValidate(t *testing.T) {
 		c       config
 		wantErr bool
 	}{
-		{"accepts the defaults", config{profiles: []string{multi, unique}, ops: []string{"churn"}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1}, false},
-		{"rejects fewer than three processes", config{profiles: []string{multi}, ratio: 2, minProcs: 2, maxProcs: 5, parallel: 1}, true},
-		{"rejects fewer processes at most than at least", config{profiles: []string{multi}, ratio: 2, minProcs: 6, maxProcs: 5, parallel: 1}, true},
+		{"accepts the defaults", config{profiles: []string{natural, singleValue}, ops: []string{"churn"}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1}, false},
+		{"rejects fewer than three processes", config{profiles: []string{natural}, ratio: 2, minProcs: 2, maxProcs: 5, parallel: 1}, true},
+		{"rejects fewer processes at most than at least", config{profiles: []string{natural}, ratio: 2, minProcs: 6, maxProcs: 5, parallel: 1}, true},
 		{"rejects an unknown profile", config{profiles: []string{"few"}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1}, true},
-		{"rejects a ratio below 1", config{profiles: []string{multi}, ratio: 0.5, minProcs: 5, maxProcs: 5, parallel: 1}, true},
-		{"rejects churn with ratio 1", config{profiles: []string{multi}, ops: []string{"churn"}, ratio: 1, minProcs: 5, maxProcs: 5, parallel: 1}, true},
-		{"accepts a large ratio for multi", config{profiles: []string{multi}, ratio: 10, minProcs: 5, maxProcs: 5, parallel: 1}, false},
-		{"accepts rtcompare's default number of processes at most", config{profiles: []string{multi}, ratio: 2, minProcs: 6, maxProcs: 0, parallel: 1}, false},
-		{"accepts a parallel run of twelve", config{profiles: []string{multi}, ratio: 2, minProcs: 12, parallel: 12}, false},
-		{"rejects a parallel run of none", config{profiles: []string{multi}, ratio: 2, minProcs: 6, maxProcs: 6}, true},
-		{"rejects permanent churn of everything", config{profiles: []string{multi}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1, permChurn: 1}, true},
-		{"rejects negative permanent churn", config{profiles: []string{multi}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1, permChurn: -0.1}, true},
-		{"rejects a ratio beyond the extra keys for unique", config{profiles: []string{unique}, ratio: maxUniqueRatio + 1, minProcs: 5, maxProcs: 5, parallel: 1}, true},
+		{"rejects a ratio below 1", config{profiles: []string{natural}, ratio: 0.5, minProcs: 5, maxProcs: 5, parallel: 1}, true},
+		{"rejects churn with ratio 1", config{profiles: []string{natural}, ops: []string{"churn"}, ratio: 1, minProcs: 5, maxProcs: 5, parallel: 1}, true},
+		{"accepts a large ratio for natural", config{profiles: []string{natural}, ratio: 10, minProcs: 5, maxProcs: 5, parallel: 1}, false},
+		{"accepts rtcompare's default number of processes at most", config{profiles: []string{natural}, ratio: 2, minProcs: 6, maxProcs: 0, parallel: 1}, false},
+		{"accepts a parallel run of twelve", config{profiles: []string{natural}, ratio: 2, minProcs: 12, parallel: 12}, false},
+		{"rejects a parallel run of none", config{profiles: []string{natural}, ratio: 2, minProcs: 6, maxProcs: 6}, true},
+		{"rejects permanent churn of everything", config{profiles: []string{natural}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1, permChurn: 1}, true},
+		{"rejects negative permanent churn", config{profiles: []string{natural}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1, permChurn: -0.1}, true},
+		{"rejects a ratio beyond the extra keys for single-value", config{profiles: []string{singleValue}, ratio: maxSingleValueRatio + 1, minProcs: 5, maxProcs: 5, parallel: 1}, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := tt.c.validate(); (err != nil) != tt.wantErr {
@@ -254,7 +254,7 @@ func TestWriteSpeed(t *testing.T) {
 		d := 0.5 + float64(i%2)/100
 		r := rtcompare.Report{NsPerOpA: 50, NsPerOpB: 100, Validated: true, NoiseFloor: 0.01,
 			Estimate: rtcompare.Estimate{Delta: d, Low: d - 0.01, High: d + 0.01, Level: 0.95}}
-		rows = append(rows, rowOf("u64", multi, 4096, p, i+1, uint64(i), 4, 1, r))
+		rows = append(rows, rowOf("u64", natural, 4096, p, i+1, uint64(i), 4, 1, r))
 	}
 	for _, tt := range []struct {
 		name string
@@ -369,7 +369,7 @@ func TestPairsForPrefix(t *testing.T) {
 		{"drops the scanning candidates for large scenarios", keys.Path, 1 << 20, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := pairsFor(tt.kind, tt.n, multi, ops, 1<<16, 1<<16); len(got) != tt.count {
+			if got := pairsFor(tt.kind, tt.n, natural, ops, 1<<16, 1<<16); len(got) != tt.count {
 				t.Errorf("%d pairs, want %d: %v", len(got), tt.count, got)
 			}
 		})
@@ -414,18 +414,18 @@ func TestApplySuite(t *testing.T) {
 }
 
 // TestProfileValuesNatural makes sure street names keep their real
-// localities as values under the multi profile, and one value each under
-// unique. It covers how the benchmark driver chooses values for a corpus
+// localities as values under the natural profile, and one value each under
+// single-value. It covers how the benchmark driver chooses values for a corpus
 // with natural values.
 func TestProfileValuesNatural(t *testing.T) {
 	c := keys.Generate(keys.Street, 1000, 1)
-	vals, offs := profileValues(c, multi, 1000)
+	vals, offs := profileValues(c, natural, 1000)
 	for i := range 1000 {
 		if !slices.Equal(vals[offs[i]:offs[i+1]], c.Natural[i]) {
 			t.Fatalf("key %q: values %v, want its localities %v", c.Keys.S[i], vals[offs[i]:offs[i+1]], c.Natural[i])
 		}
 	}
-	if uv, uo := profileValues(c, unique, 1000); len(uv) != 1000 || uo[1000] != 1000 {
+	if uv, uo := profileValues(c, singleValue, 1000); len(uv) != 1000 || uo[1000] != 1000 {
 		t.Errorf("unique: %d values for 1000 keys", len(uv))
 	}
 }

@@ -11,8 +11,8 @@ type V = *rec
 // rec is a record of 16 bytes, an object of its own in the Go heap.
 type rec struct{ id, aux uint64 }
 
-// valueTag marks results of this build: they are reported as multi-ptr and
-// unique-ptr.
+// valueTag marks results of this build: they are reported as natural-ptr and
+// single-value-ptr.
 const valueTag = "-ptr"
 
 // toVs returns the values for the value numbers u: one record for each

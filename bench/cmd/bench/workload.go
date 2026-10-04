@@ -34,13 +34,13 @@ type pairs struct {
 // newPairs lays out the elements of a corpus of n keys whose key i holds
 // vals[offs[i]:offs[i+1]], and of the transient values a stream with ratio r
 // inserts in all: (r-1) times as many as the corpus holds, each with its own
-// value. Under unique, transient value t takes extra key t, so no key ever
+// value. Under single-value, transient value t takes extra key t, so no key ever
 // holds two values and every transient insertion creates a key; that needs
 // one extra key per transient value, which extraKeys provides for r <= 2.
 // Otherwise half of them go to random corpus keys, whose value sets then grow
 // and shrink, and half to n/2 extra keys, which appear and disappear as whole
 // keys.
-func newPairs(n int, vals []V, offs []int, r float64, unique bool) pairs {
+func newPairs(n int, vals []V, offs []int, r float64, singleValue bool) pairs {
 	target := len(vals)
 	t := int((r-1)*float64(target) + 0.5)
 	key, trans := make([]uint32, target+t), make([]uint64, t)
@@ -53,7 +53,7 @@ func newPairs(n int, vals []V, offs []int, r float64, unique bool) pairs {
 	extra := uint64(max(1, n/2))
 	for i := range t {
 		k := uint64(n + i)
-		if !unique {
+		if !singleValue {
 			k = rng.Uint64() % uint64(n)
 			if rng.Uint64()&1 == 1 {
 				k = uint64(n) + rng.Uint64()%extra

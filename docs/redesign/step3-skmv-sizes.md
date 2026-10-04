@@ -16,10 +16,10 @@ Summary (bytes per key, the page only; header of 4 bytes in this table, the desi
 
 | data | values | keys | remainder | values a key | value bytes | content | page in the grid 128..512 | page in Go's classes | content over 512 B | content up to 64 B |
 |---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| street | multi | 212449 | 5.2 | 2.73 | 27.6 | 39.5 | 132.9 | 38.7 | 0.51 % | 95 % |
-| street | unique | 212449 | 5.2 | 1.00 | 9.9 | 20.1 | 128.0 | 27.9 | 0.00 % | 100 % |
-| dirs | multi | 86215 | 8.9 | 3.44 | 67.9 | 84.3 | 144.4 | 64.9 | 1.61 % | 81 % |
-| dirs | unique | 86215 | 8.9 | 1.00 | 15.4 | 29.3 | 128.0 | 37.0 | 0.00 % | 98 % |
+| street | natural | 212449 | 5.2 | 2.73 | 27.6 | 39.5 | 132.9 | 38.7 | 0.51 % | 95 % |
+| street | single-value | 212449 | 5.2 | 1.00 | 9.9 | 20.1 | 128.0 | 27.9 | 0.00 % | 100 % |
+| dirs | natural | 86215 | 8.9 | 3.44 | 67.9 | 84.3 | 144.4 | 64.9 | 1.61 % | 81 % |
+| dirs | single-value | 86215 | 8.9 | 1.00 | 15.4 | 29.3 | 128.0 | 37.0 | 0.00 % | 98 % |
 
 For comparison, measured: the whole tree of today (nodes, pages and leaves, strings not counted) takes 119 B/key on `street` and 149 on `dirs` in the natural mix, 67 and 78 with one value per key (step3-tree-pages.md).
 
@@ -27,7 +27,7 @@ For comparison, measured: the whole tree of today (nodes, pages and leaves, stri
 
 How the content spreads over the size classes, and keys at quantiles of the content size.
 
-street, multi: content of the page of a key
+street, natural: content of the page of a key
 
 | content bytes | keys | share | content B/key | grid 128..512 B/key | Go classes B/key |
 |---|--:|--:|--:|--:|--:|
@@ -52,7 +52,7 @@ examples (key; remainder bytes; values; content bytes):
 - p90: "Rottalblick"; remainder 4 B; ["Achstetten" "Großerlach" "Schwendi"]; content 40 B
 - p99: "Flandernstr."; remainder 3 B; ["Albstadt" "Augsburg" "Erkelenz" "Essen" "Esslingen am Neckar" "Geilenkirchen" "... (22 values)"]; content 263 B
 
-street, unique: content of the page of a key
+street, single-value: content of the page of a key
 
 | content bytes | keys | share | content B/key | grid 128..512 B/key | Go classes B/key |
 |---|--:|--:|--:|--:|--:|
@@ -71,7 +71,7 @@ examples (key; remainder bytes; values; content bytes):
 - p90: "Brethausstr."; remainder 7 B; ["Lauter-Bernsbach"]; content 28 B
 - p99: "Eugenie-von-Soden-Str."; remainder 13 B; ["Esslingen am Neckar"]; content 37 B
 
-dirs, multi: content of the page of a key
+dirs, natural: content of the page of a key
 
 | content bytes | keys | share | content B/key | grid 128..512 B/key | Go classes B/key |
 |---|--:|--:|--:|--:|--:|
@@ -96,7 +96,7 @@ examples (key; remainder bytes; values; content bytes):
 - p90: "/usr/share/doc/liblgooddatepicker-java/api/com/github/lgooddatepicker/components/"; remainder 10 B; ["CalendarPanelBeanInfo.html" "TimePickerSettings.TimeIncrement.html" "package-summary.html"]; content 100 B
 - p99: "/usr/share/kicad/footprints/Connector_PCBEdge.pretty/"; remainder 13 B; ["BUS_AT.kicad_mod" "BUS_PCIexpress_x1.kicad_mod" "Samtec_MECF-05-01-L-DV-WT_2x05_P1.27mm_Polarized_Socket_Horizontal.kicad_mod" "Samtec_MECF-05-02-L-DV-WT_2x05_P1.27mm_Polarized_Socket_Horizontal.kicad_mod" "Samtec_MECF-05-02-NP-L-DV-WT_2x05_P1.27mm_Socket_Horizontal.kicad_mod" "Samtec_MECF-05-02-NP-L-DV_2x05_P1.27mm_Socket_Horizontal.kicad_mod" "... (12 values)"]; content 789 B
 
-dirs, unique: content of the page of a key
+dirs, single-value: content of the page of a key
 
 | content bytes | keys | share | content B/key | grid 128..512 B/key | Go classes B/key |
 |---|--:|--:|--:|--:|--:|
@@ -123,7 +123,7 @@ Same model, what a page per key takes with other size classes. "Content" is capp
 rest is a value set), "fill" is content over page bytes.
 
 
-street, multi: sets of size classes
+street, natural: sets of size classes
 
 | size classes | page B/key | content B/key | fill | keys per class |
 |---|--:|--:|--:|---|
@@ -134,9 +134,9 @@ street, multi: sets of size classes
 | 32, 64, 96, 128, 192, 256, 384, 512 | 44.2 | 30.7 | 70 % | 32: 83.6 %, 64: 11.6 %, 96: 1.9 %, 128: 0.8 %, 192: 0.8 %, 256: 0.4 %, 384: 0.3 %, 512: 0.7 % |
 | 16, 32, 48, 64 + plan | 40.6 | 30.7 | 76 % | 16: 20.2 %, 32: 63.4 %, 48: 9.1 %, 64: 2.5 %, 128: 2.7 %, 256: 1.1 %, 384: 0.3 %, 512: 0.7 % |
 | Go's classes up to 512 | 38.7 | 30.7 | 80 % | 16: 20.2 %, 32: 63.4 %, 48: 9.1 %, 64: 2.5 %, 80: 1.2 %, 96: 0.7 %, 112: 0.5 %, 128: 0.3 %, 144: 0.3 %, 160: 0.2 %, 176: 0.2 %, 192: 0.1 %, 208: 0.1 %, 224: 0.1 %, 240: 0.1 %, 256: 0.1 %, 288: 0.1 %, 320: 0.1 %, 352: 0.1 %, 384: 0.1 %, 416: 0.1 %, 448: 0.1 %, 480: 0.0 %, 512: 0.6 % |
-| street | multi | 212449 | 5.2 | 2.73 | 27.6 | 39.5 | 132.9 | 38.7 | 0.51 % | 95 % |
+| street | natural | 212449 | 5.2 | 2.73 | 27.6 | 39.5 | 132.9 | 38.7 | 0.51 % | 95 % |
 
-street, unique: sets of size classes
+street, single-value: sets of size classes
 
 | size classes | page B/key | content B/key | fill | keys per class |
 |---|--:|--:|--:|---|
@@ -147,9 +147,9 @@ street, unique: sets of size classes
 | 32, 64, 96, 128, 192, 256, 384, 512 | 33.1 | 20.1 | 61 % | 32: 96.7 %, 64: 3.3 %, 96: 0.0 % |
 | 16, 32, 48, 64 + plan | 28.0 | 20.1 | 72 % | 16: 28.7 %, 32: 68.0 %, 48: 3.3 %, 64: 0.0 %, 128: 0.0 % |
 | Go's classes up to 512 | 27.9 | 20.1 | 72 % | 16: 28.7 %, 32: 68.0 %, 48: 3.3 %, 64: 0.0 %, 80: 0.0 %, 96: 0.0 % |
-| street | unique | 212449 | 5.2 | 1.00 | 9.9 | 20.1 | 128.0 | 27.9 | 0.00 % | 100 % |
+| street | single-value | 212449 | 5.2 | 1.00 | 9.9 | 20.1 | 128.0 | 27.9 | 0.00 % | 100 % |
 
-dirs, multi: sets of size classes
+dirs, natural: sets of size classes
 
 | size classes | page B/key | content B/key | fill | keys per class |
 |---|--:|--:|--:|---|
@@ -160,9 +160,9 @@ dirs, multi: sets of size classes
 | 32, 64, 96, 128, 192, 256, 384, 512 | 73.0 | 57.3 | 79 % | 32: 46.8 %, 64: 34.4 %, 96: 8.3 %, 128: 3.2 %, 192: 2.7 %, 256: 1.2 %, 384: 1.1 %, 512: 2.2 % |
 | 16, 32, 48, 64 + plan | 72.5 | 57.3 | 79 % | 16: 6.4 %, 32: 40.5 %, 48: 24.0 %, 64: 10.5 %, 128: 11.5 %, 256: 3.9 %, 384: 1.1 %, 512: 2.2 % |
 | Go's classes up to 512 | 64.9 | 57.3 | 88 % | 16: 6.4 %, 32: 40.5 %, 48: 24.0 %, 64: 10.5 %, 80: 5.3 %, 96: 3.0 %, 112: 1.9 %, 128: 1.3 %, 144: 1.0 %, 160: 0.8 %, 176: 0.5 %, 192: 0.5 %, 208: 0.4 %, 224: 0.3 %, 240: 0.3 %, 256: 0.2 %, 288: 0.4 %, 320: 0.3 %, 352: 0.2 %, 384: 0.2 %, 416: 0.2 %, 448: 0.1 %, 480: 0.1 %, 512: 1.7 % |
-| dirs | multi | 86215 | 8.9 | 3.44 | 67.9 | 84.3 | 144.4 | 64.9 | 1.61 % | 81 % |
+| dirs | natural | 86215 | 8.9 | 3.44 | 67.9 | 84.3 | 144.4 | 64.9 | 1.61 % | 81 % |
 
-dirs, unique: sets of size classes
+dirs, single-value: sets of size classes
 
 | size classes | page B/key | content B/key | fill | keys per class |
 |---|--:|--:|--:|---|
@@ -173,4 +173,4 @@ dirs, unique: sets of size classes
 | 32, 64, 96, 128, 192, 256, 384, 512 | 42.6 | 29.3 | 69 % | 32: 68.7 %, 64: 29.5 %, 96: 1.7 %, 128: 0.1 %, 192: 0.0 % |
 | 16, 32, 48, 64 + plan | 37.8 | 29.3 | 78 % | 16: 9.9 %, 32: 58.8 %, 48: 24.1 %, 64: 5.4 %, 128: 1.8 %, 256: 0.0 % |
 | Go's classes up to 512 | 37.0 | 29.3 | 79 % | 16: 9.9 %, 32: 58.8 %, 48: 24.1 %, 64: 5.4 %, 80: 1.3 %, 96: 0.4 %, 112: 0.1 %, 128: 0.0 %, 144: 0.0 %, 160: 0.0 %, 176: 0.0 % |
-| dirs | unique | 86215 | 8.9 | 1.00 | 15.4 | 29.3 | 128.0 | 37.0 | 0.00 % | 98 % |
+| dirs | single-value | 86215 | 8.9 | 1.00 | 15.4 | 29.3 | 128.0 | 37.0 | 0.00 % | 98 % |

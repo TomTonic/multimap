@@ -39,7 +39,9 @@ and how many values they hold. The order of the work follows them (PLAN.md, 2026
     pointers, the page is an object of a Go type the garbage collector scans.
 - **entry**: a key with all its values. The unit that objects store.
 - **single-value entry**, **multi-value entry**: an entry with exactly one value, or with two or
-  more. (Before: single-value or multi-value *key*; in the bench: `unique` and `multi`.)
+  more. (Before: single-value or multi-value *key*.) The bench's value profiles are `single-value` (every entry has
+  one value) and `natural` (the real mix of both); until 2026-10-04 they were `unique` and `multi`, and results
+  from before keep those names. SKSV, SKMV, MKSV and MKMV name page types, not workloads.
 
 ## Where a key is cut: path, remainder, common prefix
 

@@ -24,7 +24,7 @@ func TestRun(t *testing.T) {
 		cells := strings.Split(strings.Trim(line, "| "), " | ")
 		rows[cells[0]] = cells
 	}
-	for _, name := range []string{"u64 multi 4K", "u64 unique 4K", "u64 multi-str 4K", "u64 unique-str 4K"} {
+	for _, name := range []string{"u64 natural 4K", "u64 single-value 4K", "u64 natural-str 4K", "u64 single-value-str 4K"} {
 		if rows[name] == nil {
 			t.Fatalf("no row for %q in\n%s", name, out.String())
 		}
@@ -32,13 +32,13 @@ func TestRun(t *testing.T) {
 	if len(rows) != 4 {
 		t.Errorf("%d rows, want 4:\n%s", len(rows), out.String())
 	}
-	if r := rows["u64 unique 4K"]; r[3] != "0.0 %" || r[4] != "0.0 %" || !strings.Contains(r[6], "page") {
+	if r := rows["u64 single-value 4K"]; r[3] != "0.0 %" || r[4] != "0.0 %" || !strings.Contains(r[6], "page") {
 		t.Errorf("integer keys with one value should live in pages without violations: %v", r)
 	}
-	if r := rows["u64 multi 4K"]; r[3] == "0.0 %" || !strings.Contains(r[6], "flat leaf") {
+	if r := rows["u64 natural 4K"]; r[3] == "0.0 %" || !strings.Contains(r[6], "flat leaf") {
 		t.Errorf("integer keys with several values should live in leaves, which are not all multiples of 64 bytes: %v", r)
 	}
-	if r := rows["u64 multi-str 4K"]; !strings.Contains(r[6], "typed leaf") {
+	if r := rows["u64 natural-str 4K"]; !strings.Contains(r[6], "typed leaf") {
 		t.Errorf("keys with several string values should live in typed leaves: %v", r)
 	}
 }
@@ -54,8 +54,8 @@ func TestRunMaximum(t *testing.T) {
 		args []string
 		want int // rows
 	}{
-		{"measures at the corpus maximum with -max", []string{"-keys", "street", "-values", "unique", "-strvals=false", "-sizes", "1000000"}, 1},
-		{"leaves the size out without -max", []string{"-keys", "street", "-values", "unique", "-strvals=false", "-sizes", "1000000", "-max=false"}, 0},
+		{"measures at the corpus maximum with -max", []string{"-keys", "street", "-values", "single-value", "-strvals=false", "-sizes", "1000000"}, 1},
+		{"leaves the size out without -max", []string{"-keys", "street", "-values", "single-value", "-strvals=false", "-sizes", "1000000", "-max=false"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
@@ -153,7 +153,7 @@ func TestHuman(t *testing.T) {
 // and with 8-byte values and short integer keys the bytes never decide.
 func TestRunEntries(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(&out, []string{"-keys", "u64", "-values", "multi", "-strvals=false", "-sizes", "16384", "-entries"}); err != nil {
+	if err := run(&out, []string{"-keys", "u64", "-values", "natural", "-strvals=false", "-sizes", "16384", "-entries"}); err != nil {
 		t.Fatal(err)
 	}
 	_, table, ok := strings.Cut(out.String(), "\n\n")
@@ -166,7 +166,7 @@ func TestRunEntries(t *testing.T) {
 	}
 	head := strings.Split(strings.Trim(lines[0], "| "), " | ")
 	row := strings.Split(strings.Trim(lines[2], "| "), " | ")
-	if len(head) != len(row) || row[0] != "u64 multi 16K" {
+	if len(head) != len(row) || row[0] != "u64 natural 16K" {
 		t.Fatalf("header %v and row %v do not match", head, row)
 	}
 	last := -1.0

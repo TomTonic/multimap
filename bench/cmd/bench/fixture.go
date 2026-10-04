@@ -25,11 +25,11 @@ const (
 	btreeMapC = "btree-map"
 )
 
-// The value profiles: multi gives keys a skewed number of values (see
-// keys.Values), unique exactly one value per key.
+// The value profiles: natural gives keys a skewed number of values (see
+// keys.Values), single-value exactly one value per key.
 const (
-	multi  = "multi"
-	unique = "unique"
+	natural     = "natural"
+	singleValue = "single-value"
 )
 
 // vsOnly, if not empty, limits the candidates ordered is compared with to
@@ -41,7 +41,7 @@ var vsOnly []string
 // built with it (see kit.go), all of them limited by vsOnly.
 func implsFor(profile string) []string {
 	others := []string{hashed, btreeSets, mapSets}
-	if profile == unique {
+	if profile == singleValue {
 		others = []string{btreeMapC}
 	}
 	if baseKit != nil {
@@ -118,7 +118,7 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream
 	}
 	f.ck = keys.Pack(append(slices.Clone(f.c.Keys.B), f.c.Misses.B[:extraKeys(profile, n)]...))
 	f.stream = st
-	f.pairs = newPairs(n, f.vals, f.offs, st.ratio, profile == unique)
+	f.pairs = newPairs(n, f.vals, f.offs, st.ratio, profile == singleValue)
 	return f
 }
 
@@ -137,7 +137,7 @@ func buildOrder(p *multiproc.Process) func([]string) {
 }
 
 // profileValues returns the value numbers of the n keys of c under a value
-// profile: key i holds vals[offs[i]:offs[i+1]], which toVs turns into values. Under multi, keys with natural values
+// profile: key i holds vals[offs[i]:offs[i+1]], which toVs turns into values. Under natural, keys with natural values
 // (street names: their localities) hold those, others a skewed number of
 // synthetic ones (see keys.Values).
 func profileValues(c keys.Corpus, profile string, n int) (vals []uint64, offs []int) {
@@ -149,10 +149,10 @@ func profileValues(c keys.Corpus, profile string, n int) (vals []uint64, offs []
 			offs[i+1] = len(vals)
 		}
 	}
-	if profile != unique {
+	if profile != singleValue {
 		return vals, offs
 	}
-	// one value per key: the first of each key's multi values
+	// one value per key: the first of each key's natural values
 	one, idx := make([]uint64, n), make([]int, n+1)
 	for i := range n {
 		one[i], idx[i+1] = vals[offs[i]], i+1
@@ -161,10 +161,10 @@ func profileValues(c keys.Corpus, profile string, n int) (vals []uint64, offs []
 }
 
 // extraKeys is the number of keys that only the index workloads use: n/2 for
-// multi, where transient values also go to corpus keys; n for unique, where
+// natural, where transient values also go to corpus keys; n for single-value, where
 // each transient value needs a key of its own (see newPairs).
 func extraKeys(profile string, n int) int {
-	if profile == unique {
+	if profile == singleValue {
 		return n
 	}
 	return max(1, n/2)

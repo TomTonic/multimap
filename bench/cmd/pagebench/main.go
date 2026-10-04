@@ -3,7 +3,7 @@
 // internal/vpage (a directory of tags, 16-byte slots, one 8-byte value per key)
 // and the page of internal/lpage (a header of lengths, values of any length, or
 // of one width for numbers), with the keys of the corpora street and dirs and
-// the first value of each key (the unique profile) as the value: the number of
+// the first value of each key (the single-value profile) as the value: the number of
 // the locality or the file name, or its name as a string.
 //
 //	go run ./cmd/pagebench -keys street,dirs -validation 10

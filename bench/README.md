@@ -60,17 +60,18 @@ are documented. `path` and `street` hold enough keys for 262,144 and 212,000
 keys respectively, and larger scenarios are skipped; `dirs` holds enough for 86,215; `url` has no limit.
 
 Values are `uint64`, and their number per key is skewed like a real index
-(`-values multi`): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and
+(`-values natural`, called `multi` until 2026-10-04): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and
 3% hold 17-200. Street names hold their real localities instead: 79% of the
 names have one, "Hauptstr." has 5,913. Directories hold the names of the files in them: 62% of the
 directories hold one file, 89% at most four, and the biggest holds 6,372 (the sample thins directories
 out, so real directories hold more).
 
-With `-values unique`, every key holds exactly one value, like an index on a
+With `-values single-value` (before 2026-10-04: `unique`), every key holds exactly one value, like an index on a
 unique column, and `ordered` is compared with `btree-map`. In `churn` and
 `build`, every new value then goes to a key of its own, which appears with
 the value and disappears with it; there are as many such keys as corpus
-keys, so `-ratio` is at most 2 with unique values.
+keys, so `-ratio` is at most 2 with single-value entries. The old names `multi` and `unique` are still accepted
+by `-values`, and result files of before keep them.
 
 Built with the tag `strvals`, the bench uses `string` values instead: each
 value number as 16 hex digits, like a record ID (for `street` and `dirs` the real names instead: the
@@ -79,7 +80,7 @@ churn and build stay hex)
 (`go run -tags strvals ./cmd/bench`). Values that hold a pointer take other
 paths than integers in some candidates, `ordered` among them, and the
 garbage collector has to scan them. The profiles are then reported as
-`multi-str` and `unique-str`. All value strings are views into one buffer
+`natural-str` and `single-value-str`. All value strings are views into one buffer
 that no candidate owns, as the key corpus is, so the memory figures count
 each value's 16-byte string header but not its bytes. The timed loops add
 up each value's length and first and last byte, which reads the bytes
@@ -92,7 +93,7 @@ bytes itself). The checks compare an FNV hash of all bytes.
 Built with the tag `ptrvals`, the values are pointers to records of 16 bytes
 (`*rec`, one object per different value, allocated one by one), as an
 application indexes its objects by key. The profiles are reported as
-`multi-ptr` and `unique-ptr`. The records are the caller's and cost every
+`natural-ptr` and `single-value-ptr`. The records are the caller's and cost every
 candidate the same, so the memory figures do not count them; the timed loops
 read the record's id. `strvals` and `ptrvals` are exclusive. All three builds
 share one source; the `uint64` build compiles its timed loops exactly as before.
@@ -166,12 +167,12 @@ input; medians of 3 rounds):
 
 | values | candidate | heap u64 | heap str | scannable u64 | scannable str | GC u64 | GC str | heap after removing half, u64 | str |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| multi | `ordered` | 149 | 177 | 83 | 111 | 215 ms | 305 ms | 72 | 86 |
-| multi | `hashed` | 177 | 196 | 101 | 101 | 218 ms | 236 ms | 115 | 121 |
-| multi | `btree-sets` | 343 | 363 | 74 | 72 | 351 ms | 364 ms | 172 | 178 |
-| multi | `map-sets` | 360 | 379 | 85 | 87 | 316 ms | 340 ms | 206 | 212 |
-| unique | `ordered` | 73 | 101 | 81 | 109 | 179 ms | 264 ms | 35 | 48 |
-| unique | `btree-map` | 37 | 56 | 37 | 37 | 59 ms | 76 ms | 19 | 25 |
+| natural | `ordered` | 149 | 177 | 83 | 111 | 215 ms | 305 ms | 72 | 86 |
+| natural | `hashed` | 177 | 196 | 101 | 101 | 218 ms | 236 ms | 115 | 121 |
+| natural | `btree-sets` | 343 | 363 | 74 | 72 | 351 ms | 364 ms | 172 | 178 |
+| natural | `map-sets` | 360 | 379 | 85 | 87 | 316 ms | 340 ms | 206 | 212 |
+| single-value | `ordered` | 73 | 101 | 81 | 109 | 179 ms | 264 ms | 35 | 48 |
+| single-value | `btree-map` | 37 | 56 | 37 | 37 | 59 ms | 76 ms | 19 | 25 |
 
 What follows for a choice:
 - **Integer or other short fixed-size keys:** `ordered` is as fast as `hashed` (0.96-1.09×) and adds range queries.
@@ -276,7 +277,7 @@ Every process builds all candidates of its scenario and, for `churn`, the
 workload's structures next to them, so a process at 1M keys is large:
 a process of `url` keys with several values each, 1M keys, needs 4.4 GB
 with `uint64` values and 5.1 GB with string values against a baseline, and up
-to 8 GB with all four candidates of the multi profile (measured as the
+to 8 GB with all four candidates of the natural profile (measured as the
 largest resident set of a wave of four processes, `-ops valuesFor,churn`).
 Most of it is the garbage collector's headroom over two live structures and
 the streams. Eight processes at 1M keys therefore need 35-41 GB, twelve 53-61

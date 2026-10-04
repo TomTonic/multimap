@@ -9,7 +9,7 @@
 // not after churn:
 //
 //	go run ./cmd/objstat                                  # every case of the release suite
-//	go run ./cmd/objstat -keys u64,uuid -values unique    # a subset
+//	go run ./cmd/objstat -keys u64,uuid -values single-value    # a subset
 //	go run ./cmd/objstat -sizes 4096,16384 -max=false     # smaller sizes only
 //
 // With -entries it prints a second table: for the entries with several values
@@ -22,7 +22,7 @@
 //   - block: the Go size class an object occupies, with the 8-byte malloc
 //     header of objects with pointers above 512 bytes (art.Block). The tool
 //     counts the index only: not what a value set of a set leaf allocates for
-//     itself (2% of the leaves of multi maps), nor the keys and values the
+//     itself (2% of the leaves of natural maps), nor the keys and values the
 //     caller owns.
 //   - not x64, not x128: the share of objects whose block is not a multiple of
 //     64 or of 128 bytes.
@@ -57,7 +57,7 @@ func main() {
 func run(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("objstat", flag.ContinueOnError)
 	kindsF := fs.String("keys", "u64,str,uuid,email,url,path,street,dirs", "key kinds")
-	valuesF := fs.String("values", "multi,unique", "value profiles: multi (a skewed number of values per key) and unique (one value per key)")
+	valuesF := fs.String("values", "natural,single-value", "value profiles: natural (a skewed number of values per key) and single-value (one value per key)")
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
 	entriesF := fs.Bool("entries", false, "print the table of entries with several values (the single-key page statistic) after the object table")
@@ -75,8 +75,8 @@ func run(w io.Writer, args []string) error {
 	}
 	var profiles []string
 	for _, p := range strings.Split(*valuesF, ",") {
-		if p != "multi" && p != "unique" {
-			return fmt.Errorf("unknown value profile %q (multi or unique)", p)
+		if p != "natural" && p != "single-value" {
+			return fmt.Errorf("unknown value profile %q (natural or single-value)", p)
 		}
 		profiles = append(profiles, p)
 		if *strF {
@@ -253,17 +253,17 @@ func (s *stat) row(name string, n int) string {
 
 // measure builds the index of a case, and counts its objects.
 func measure(kind keys.Kind, profile string, n int) *stat {
-	unique := strings.HasPrefix(profile, "unique")
+	singleValue := strings.HasPrefix(profile, "single-value")
 	if strings.HasSuffix(profile, "-str") {
-		return build(kind, n, unique, func(v uint64) string { return fmt.Sprintf("%016x", v) })
+		return build(kind, n, singleValue, func(v uint64) string { return fmt.Sprintf("%016x", v) })
 	}
-	return build(kind, n, unique, func(v uint64) uint64 { return v })
+	return build(kind, n, singleValue, func(v uint64) uint64 { return v })
 }
 
 // build fills an index with the keys of the corpus and the values of the
 // profile, as the benchmark's fixture does (cmd/bench: profileValues), and
 // counts its objects.
-func build[T comparable](kind keys.Kind, n int, unique bool, value func(uint64) T) *stat {
+func build[T comparable](kind keys.Kind, n int, singleValue bool, value func(uint64) T) *stat {
 	c := keys.Generate(kind, n, 0x5EED)
 	vals, offs := keys.Values(n, 0xFA11)
 	if c.Natural != nil { // street names hold the localities they have
@@ -276,7 +276,7 @@ func build[T comparable](kind keys.Kind, n int, unique bool, value func(uint64) 
 	var m art.Map[T]
 	for i, key := range c.Keys.B {
 		vs := vals[offs[i]:offs[i+1]]
-		if unique {
+		if singleValue {
 			vs = vs[:1]
 		}
 		for _, v := range vs {
@@ -324,13 +324,13 @@ func headerBytes(n int) int { return (2 + n + 7) / 8 * 8 }
 // behind a header of 8 bytes: they would be oversized objects. The remainder
 // is the one the leaf of the tree holds now, from its base on.
 func (s *stat) entryRow(name string, n int) string {
-	multi, small, mid, big, long := 0, 0, 0, 0, 0
+	natural, small, mid, big, long := 0, 0, 0, 0, 0
 	fits := make([]int, len(entryNs))
 	for _, l := range s.leaves {
 		if l.values < 2 {
 			continue
 		}
-		multi++
+		natural++
 		switch {
 		case l.values <= 4:
 			small++
@@ -354,9 +354,9 @@ func (s *stat) entryRow(name string, n int) string {
 		}
 		return strconv.FormatFloat(100*float64(x)/float64(of), 'f', 1, 64) + " %"
 	}
-	cells := []string{name, strconv.Itoa(len(s.leaves)), pct(multi, n), pct(small, multi), pct(mid, multi), pct(big, multi), pct(long, multi)}
+	cells := []string{name, strconv.Itoa(len(s.leaves)), pct(natural, n), pct(small, natural), pct(mid, natural), pct(big, natural), pct(long, natural)}
 	for _, f := range fits {
-		cells = append(cells, pct(f, multi))
+		cells = append(cells, pct(f, natural))
 	}
 	return "| " + strings.Join(cells, " | ") + " |"
 }

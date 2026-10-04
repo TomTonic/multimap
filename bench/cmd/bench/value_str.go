@@ -12,7 +12,7 @@ import (
 type V = string
 
 // valueTag marks results of this build: its value profiles are reported as
-// multi-str and unique-str.
+// natural-str and single-value-str.
 const valueTag = "-str"
 
 // toVs returns the values for the value numbers u: each number as 16 hex

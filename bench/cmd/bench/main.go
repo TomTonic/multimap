@@ -4,7 +4,7 @@
 // values, range queries, the insertions and deletions of a database index
 // (churn and build), memory, GC cost, and memory after removing keys. For
 // keys that hold exactly one value, it also compares multimap.Ordered with a
-// plain tidwall/btree.Map (-values unique).
+// plain tidwall/btree.Map (-values single-value).
 //
 // Every speed comparison runs in separate processes, through rtcompare's
 // multiproc package, because rtcompare's interval covers only the noise
@@ -65,7 +65,7 @@ func main() {
 	memChild := flag.String("memchild", "", "internal: run one memory process for this candidate")
 	suite := flag.String("suite", "dev", "presets for the flags not given: dev (small and medium sizes, fewer processes and A/A runs, for frequent runs) or release (all sizes up to 1M at full precision)")
 	kindsF := flag.String("keys", strings.Join(kindNames(), ","), "key kinds ("+strings.Join(kindNames(), ", ")+"); a single kind for -child")
-	profilesF := flag.String("values", "multi,unique", "value profiles: multi (a skewed number of values per key), unique (one value per key); a single profile for -child")
+	profilesF := flag.String("values", "natural,single-value", "value profiles: natural (a skewed number of values per key), single-value (one value per key); a single profile for -child")
 	sizesF := flag.String("sizes", "4096,1048576", "numbers of keys for the speed comparisons")
 	n := flag.Int("n", 4096, "internal: number of keys of a -child or -memchild process")
 	opsF := flag.String("ops", "valuesFor,valuesBetween,prefix,churn,build", "operations to compare")
@@ -93,6 +93,7 @@ func main() {
 		os.Exit(2)
 	}
 
+	*profilesF = canonicalProfiles(*profilesF)
 	c.kinds, c.ops, c.profiles = split(*kindsF), split(*opsF), split(*profilesF)
 	vsOnly = split(*vsF)
 	err := c.validate()
@@ -160,10 +161,10 @@ func kindNames() []string {
 	return out
 }
 
-// maxUniqueRatio bounds -ratio for the unique profile: every transient value
+// maxSingleValueRatio bounds -ratio for the single-value profile: every transient value
 // takes an extra key of its own, and there are as many extra keys as corpus
 // keys (see newPairs and extraKeys).
-const maxUniqueRatio = 2
+const maxSingleValueRatio = 2
 
 // stream is the shape of the churn and build streams the flags ask for.
 func (c config) stream() stream { return stream{c.ratio, c.permChurn} }
@@ -178,7 +179,7 @@ func (c *config) validate() error {
 		}
 	}
 	for _, p := range c.profiles {
-		if p != multi && p != unique {
+		if p != natural && p != singleValue {
 			return fmt.Errorf("-values: unknown profile %q", p)
 		}
 	}
@@ -191,8 +192,8 @@ func (c *config) validate() error {
 		return fmt.Errorf("-parallel %d: must be at least 1", c.parallel)
 	case c.permChurn < 0 || c.permChurn >= 1:
 		return fmt.Errorf("-permchurn %v: must be at least 0 and below 1", c.permChurn)
-	case c.ratio > maxUniqueRatio && slices.Contains(c.profiles, unique):
-		return fmt.Errorf("-ratio %v: at most %d with -values unique", c.ratio, maxUniqueRatio)
+	case c.ratio > maxSingleValueRatio && slices.Contains(c.profiles, singleValue):
+		return fmt.Errorf("-ratio %v: at most %d with -values single-value", c.ratio, maxSingleValueRatio)
 	}
 	return nil
 }
@@ -217,4 +218,11 @@ func atoiAll(ss []string) ([]int, error) {
 		out[i] = v
 	}
 	return out, nil
+}
+
+// canonicalProfiles returns the -values list with the names the profiles had
+// until 2026-10-04 (multi, unique) replaced by their names now (natural,
+// single-value), so that queue jobs and scripts from before still run.
+func canonicalProfiles(list string) string {
+	return strings.NewReplacer("multi", natural, "unique", singleValue).Replace(list)
 }

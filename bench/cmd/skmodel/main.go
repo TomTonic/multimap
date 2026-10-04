@@ -47,8 +47,8 @@ func main() {
 	fmt.Fprintln(w, "| data | values | keys | rem. B | values a key | value B | content B | page B (grid 128..512) | page B (Go classes) | keys over 512 B | keys up to 64 B content |")
 	fmt.Fprintln(w, "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
 	for _, kind := range []keys.Kind{keys.Street, keys.Dirs} {
-		for _, unique := range []bool{false, true} {
-			row(kind, keys.Capacity(kind), unique)
+		for _, singleValue := range []bool{false, true} {
+			row(kind, keys.Capacity(kind), singleValue)
 		}
 	}
 }
@@ -60,7 +60,7 @@ type entry struct {
 
 func es2(es []entry) []entry { return es }
 
-func row(kind keys.Kind, n int, unique bool) {
+func row(kind keys.Kind, n int, singleValue bool) {
 	c := keys.Generate(kind, n, 0x5EED)
 	if c.Natural == nil {
 		fmt.Fprintf(os.Stderr, "skmodel: %s has no natural values\n", kind)
@@ -70,7 +70,7 @@ func row(kind keys.Kind, n int, unique bool) {
 	es := make([]entry, n)
 	for i, k := range c.Keys.B {
 		vs := c.Natural[i]
-		if unique {
+		if singleValue {
 			vs = vs[:1]
 		}
 		es[i] = entry{k, vs}
@@ -111,18 +111,18 @@ func row(kind keys.Kind, n int, unique bool) {
 		goB += float64(classFor(goClasses, size))
 	}
 	f := float64(n)
-	name := "multi"
-	if unique {
-		name = "unique"
+	name := "natural"
+	if singleValue {
+		name = "single-value"
 	}
 	if *nodesF {
-		wholeTree(kind, unique, c, es)
+		wholeTree(kind, singleValue, c, es)
 	}
 	if *sets {
-		classSets(kind, unique, sizes)
+		classSets(kind, singleValue, sizes)
 	}
 	if *detail {
-		histogram(kind, unique, sizes)
+		histogram(kind, singleValue, sizes)
 		examples(c, es2(es), sizes, rems)
 	}
 	fmt.Printf("| %s | %s | %d | %.1f | %.2f | %.1f | %.1f | %.1f | %.1f | %.2f %% | %.0f %% |\n", kind, name, n, rem/f, nv/f, vb/f, content/f, gridB/f, goB/f, 100*over/f, 100*small/f)
@@ -159,7 +159,7 @@ func classFor(classes []int, size int) int {
 // with their length bytes) spread over the size classes: the share of keys,
 // the bytes of content, and the bytes a page per key takes in the grid
 // 128..512 and in Go's classes.
-func histogram(kind keys.Kind, unique bool, sizes []int) {
+func histogram(kind keys.Kind, singleValue bool, sizes []int) {
 	bounds := []int{16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 1 << 30}
 	type bucket struct{ keys, content, grid, gocls int }
 	bs := make([]bucket, len(bounds))
@@ -172,9 +172,9 @@ func histogram(kind keys.Kind, unique bool, sizes []int) {
 		b.grid += classFor(grid, c)
 		b.gocls += classFor(goClasses, c)
 	}
-	name := "multi"
-	if unique {
-		name = "unique"
+	name := "natural"
+	if singleValue {
+		name = "single-value"
 	}
 	fmt.Printf("\n%s, %s: content of the page of a key\n\n| content bytes | keys | share | content B/key | grid 128..512 B/key | Go classes B/key |\n|---|--:|--:|--:|--:|--:|\n", kind, name)
 	lo := 0
@@ -236,10 +236,10 @@ var classSets_ = []classSet{
 
 // classSets prints, for each set of size classes, the bytes a page per key
 // takes, how full the pages are, and the share of keys in each class.
-func classSets(kind keys.Kind, unique bool, sizes []int) {
-	name := "multi"
-	if unique {
-		name = "unique"
+func classSets(kind keys.Kind, singleValue bool, sizes []int) {
+	name := "natural"
+	if singleValue {
+		name = "single-value"
 	}
 	fmt.Printf("\n%s, %s: sets of size classes\n\n| size classes | page B/key | content B/key | fill | keys per class |\n|---|--:|--:|--:|---|\n", kind, name)
 	for _, cs := range classSets_ {
@@ -265,7 +265,7 @@ func classSets(kind keys.Kind, unique bool, sizes []int) {
 
 // wholeTree builds the trie of the model and prints the bytes a key takes in
 // nodes and in pages (the classes 32, 64 and the plan's grid).
-func wholeTree(kind keys.Kind, unique bool, c keys.Corpus, es []entry) {
+func wholeTree(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 	ks := make([][]byte, len(es))
 	for i, e := range es {
 		ks[i] = e.key
@@ -298,9 +298,9 @@ func wholeTree(kind keys.Kind, unique bool, c keys.Corpus, es []entry) {
 	}
 	t.build(0, len(ks), 0)
 	n := float64(len(ks))
-	name := "multi"
-	if unique {
-		name = "unique"
+	name := "natural"
+	if singleValue {
+		name = "single-value"
 	}
 	fmt.Printf("\n%s, %s: the whole tree (byte nodes of internal/art and pages of 32, 64, 128, 256, 384, 512)\n\n| nodes | node B/key | page B/key | total B/key |\n|--:|--:|--:|--:|\n| %d (%.2f a key) | %.1f | %.1f | %.1f |\n\nvalue overflow (content over 512 B): %d keys (%.2f %%) with %d values (%.0f %% of all); their value sets, estimated at 24 B a value up to 64 values and 40 B beyond: %.1f B/key. Total with them: %.1f B/key.\n", kind, name, t.count, float64(t.count)/n, float64(t.bytes)/n, float64(pageB)/n, float64(t.bytes+pageB)/n, ovKeys, 100*float64(ovKeys)/n, ovVals, 100*float64(ovVals)/float64(allVals), float64(ovBytes)/n, float64(t.bytes+pageB+ovBytes)/n)
 }
