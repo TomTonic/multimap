@@ -1,6 +1,7 @@
 package art
 
 import (
+	"bytes"
 	"reflect"
 	"runtime"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/TomTonic/multimap/internal/skpage"
 	"github.com/TomTonic/multimap/internal/vpage"
 )
 
@@ -121,6 +123,18 @@ func TestObjectSizes(t *testing.T) {
 			t.Errorf("%s of %d bytes: Block %d, runtime allocated %d", o.Label, o.Size, b, got)
 		}
 	}
+	t.Run("single-key pages", func(t *testing.T) {
+		var pages Map[string]
+		pages.flat = 3
+		for _, n := range []int{20, 50, 100, 240, 254} { // 32, 64, 128, 256 and 384 bytes
+			rest := bytes.Repeat([]byte("k"), n)
+			check(t, &pages, func() unsafe.Pointer { return unsafe.Pointer(newSK(rest, 0)) })
+		}
+		long := bytes.Repeat([]byte("v"), 251)
+		check(t, &pages, func() unsafe.Pointer { // 512 bytes
+			return unsafe.Pointer(skLeaf(skpage.New(bytes.Repeat([]byte("k"), 254), 300, long)))
+		})
+	})
 	t.Run("nodes, with and without a prefix tail", func(t *testing.T) {
 		for k, label := range kindLabels {
 			if label == "" {
@@ -205,7 +219,7 @@ func TestObjects(t *testing.T) {
 			if o.Label == "" || o.Size < 16 || o.Size%8 != 0 {
 				t.Errorf("%s: object %+v is not an object of the tree", name, o)
 			}
-			if leaf := strings.HasSuffix(o.Label, "leaf"); leaf != (o.Values > 0) || !leaf && o.Remainder != 0 {
+			if leaf := strings.HasSuffix(o.Label, "leaf") || o.Label == "single-key page"; leaf != (o.Values > 0) || !leaf && o.Remainder != 0 {
 				t.Errorf("%s: object %+v: only a leaf has values and a remainder", name, o)
 			}
 		})
@@ -223,6 +237,8 @@ func TestObjects(t *testing.T) {
 		fill(t, name+"/flat", keys, true, func(k []byte, v uint64) { flat.Add(k, v) }, flat.Objects, flat.Len)
 		fill(t, name+"/typed", keys, true, func(k []byte, v uint64) { typed.Add(k, str(v)) }, typed.Objects, typed.Len)
 		fill(t, name+"/sets", keys, true, func(k []byte, v uint64) { sets.Add(k, v) }, sets.Objects, sets.Len)
+		var strPages Map[string]
+		fill(t, name+"/single-key pages", keys, true, func(k []byte, v uint64) { strPages.Add(k, str(v)) }, strPages.Objects, strPages.Len)
 		if name == "u64-dense" { // one value per integer key: pages below range nodes
 			seen := map[string]bool{}
 			pages.Objects(func(o Object) { seen[o.Label] = true })

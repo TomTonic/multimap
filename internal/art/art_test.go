@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -169,7 +170,9 @@ func (r reference) sortedKeys() []string {
 // values with a pointer get, and with set leaves, which all other values get.
 func TestAgainstReference(t *testing.T) {
 	str := func(v uint64) string { return fmt.Sprint("value ", v) }
-	for _, mode := range []int8{0, 1, 2, -1, -2} {
+	// values of 20 to 140 bytes, so that a key with a few of them outgrows a page
+	longStr := func(v uint64) string { return fmt.Sprint("value ", v, strings.Repeat("x", 20+int(v%120))) }
+	for _, mode := range []int8{0, 1, 2, -1, -2, 3, 4} {
 		for name, keys := range keySets() {
 			t.Run(fmt.Sprintf("%s/leaves=%d", name, mode), func(t *testing.T) {
 				if underRace && name == "paths-over-64k" && mode != 0 && mode != -2 {
@@ -183,6 +186,10 @@ func TestAgainstReference(t *testing.T) {
 					againstReference(t, keys, &Map[uint64]{flat: mode}, id)
 				case 2:
 					againstReference(t, keys, &Map[string]{flat: 2}, str)
+				case 3:
+					againstReference(t, keys, &Map[string]{}, str) // single-key pages
+				case 4:
+					againstReference(t, keys, &Map[string]{}, longStr) // single-key pages that overflow
 				default:
 					againstReference(t, keys, &Map[string]{flat: -1}, str)
 				}
@@ -801,6 +808,8 @@ func FuzzOperations(f *testing.F) {
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		m := Map[uint64]{flat: 1}
 		s := Map[string]{flat: 2} // the same operations on typed leaves
+		var p Map[string]         // and on single-key pages, with values of up to 200 bytes
+		lstr := func(v uint64) string { return fmt.Sprint("value ", v, strings.Repeat("x", int(v%7)*33)) }
 		if len(ops) > 0 && ops[0]&1 == 1 {
 			m.flat = -1
 		}
@@ -828,14 +837,17 @@ func FuzzOperations(f *testing.F) {
 			case 0, 1:
 				m.Add(k, v)
 				s.Add(k, str(v))
+				p.Add(k, lstr(v))
 				ref.add(k, v)
 			case 2:
 				m.Remove(k, v)
 				s.Remove(k, str(v))
+				p.Remove(k, lstr(v))
 				ref.remove(k, v)
 			default:
 				m.RemoveKey(k)
 				s.RemoveKey(k)
+				p.RemoveKey(k)
 				delete(ref, string(k))
 			}
 		}
@@ -843,6 +855,8 @@ func FuzzOperations(f *testing.F) {
 		checkInvariants(t, &m.t)
 		compare(t, &s, ref, str, rand.New(rand.NewPCG(1, 1)))
 		checkInvariants(t, &s.t)
+		compare(t, &p, ref, lstr, rand.New(rand.NewPCG(1, 1)))
+		checkInvariants(t, &p.t)
 	})
 }
 

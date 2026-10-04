@@ -151,7 +151,7 @@ func TestFlatValueTypes(t *testing.T) {
 		{"[2]uint64", 1, roundTrip(func(i int) [2]uint64 { return [2]uint64{uint64(i), ^uint64(i)} })},
 		{"struct of uint32 and uint16", 1, roundTrip(func(i int) small { return small{uint32(i), uint16(i)} })},
 		{"[3]uint64 is too large", -1, roundTrip(func(i int) [3]uint64 { return [3]uint64{uint64(i)} })},
-		{"string has a pointer", 2, roundTrip(func(i int) string { return fmt.Sprint(i) })},
+		{"string takes single-key pages", 3, roundTrip(func(i int) string { return fmt.Sprint(i) })},
 		{"pointer", 2, roundTrip(func(i int) *int { return &ptrs[i%300] })},
 		{"interface", 2, roundTrip(func(i int) any { return i })},
 		{"struct of a string and a number", 2, roundTrip(func(i int) named { return named{fmt.Sprint(i), i} })},

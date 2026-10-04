@@ -98,6 +98,8 @@ func (m *Map[T]) leafKind(l *leafHead) Object {
 	switch {
 	case l.cls() > 0 && m.flat == 1:
 		return Object{Label: "flat leaf", Size: int(flatSizes[l.cls()]), Keys: 1}
+	case l.cls() > 0 && m.flat == 3:
+		return Object{Label: "single-key page", Size: asSK(l).Size(), Keys: 1}
 	case l.cls() > 0 && m.flat == 2:
 		return Object{Label: "typed leaf", Size: int(typedOff(int(l.klen))) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), Pointers: true, Keys: 1}
 	}

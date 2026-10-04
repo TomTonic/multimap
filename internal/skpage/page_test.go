@@ -520,3 +520,25 @@ func sum(b []byte) int {
 	}
 	return s
 }
+
+// TestEmpty covers the page the tree makes for a key that has just arrived, to
+// which it adds the first value at once: a page for the remainder, in the
+// smallest class that can take a value of one byte, nil for a remainder that is
+// too long.
+func TestEmpty(t *testing.T) {
+	if Empty(bytes.Repeat([]byte("a"), 255), keyLen) != nil {
+		t.Error("a remainder of 255 bytes does not fit")
+	}
+	p := Empty([]byte("abc"), keyLen)
+	if p.Len() != 0 || p.Size() != 32 || string(p.Rest()) != "abc" || p.KeyLen() != keyLen {
+		t.Fatalf("got %d values, %d bytes, remainder %q", p.Len(), p.Size(), p.Rest())
+	}
+	q, res := p.Add([]byte("v"))
+	if q != p || res != Added {
+		t.Fatalf("got %p, %v", q, res)
+	}
+	verify(t, q, model{"abc", []string{"v"}})
+	if big := Empty(bytes.Repeat([]byte("a"), 30), keyLen); big.Size() != 64 {
+		t.Errorf("a remainder of 30 bytes and a value need %d bytes", big.Size())
+	}
+}

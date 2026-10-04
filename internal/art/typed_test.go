@@ -48,7 +48,7 @@ func TestTypedLeafLayout(t *testing.T) {
 // growth through the classes, the spill into a set leaf, the return from it,
 // and the shrinking of a leaf whose values have gone.
 func TestTypedLeafLife(t *testing.T) {
-	var m Map[string]
+	m := Map[string]{flat: 2}
 	key := []byte("key")
 	val := func(i int) string { return fmt.Sprint("value ", i) }
 	check := func(n int) {
@@ -97,7 +97,7 @@ func TestTypedLeafLife(t *testing.T) {
 // the value points to. It covers the removal from a typed leaf: the slot the
 // last value moved out of is empty again.
 func TestTypedLeafForgets(t *testing.T) {
-	var m Map[string]
+	m := Map[string]{flat: 2}
 	key := []byte("key")
 	for i := range 5 {
 		m.Add(key, fmt.Sprint("value ", i))
@@ -225,7 +225,7 @@ func TestTypedLeafOffsets(t *testing.T) {
 // value its leaf holds four, and it keeps that leaf while its values come and
 // go within them.
 func TestTypedLeafHovers(t *testing.T) {
-	var m Map[string]
+	m := Map[string]{flat: 2}
 	key := []byte("key")
 	m.Add(key, "a")
 	if c := findLeaf(&m.t, key).cls(); typedCaps[c] != 1 {

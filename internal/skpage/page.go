@@ -137,6 +137,19 @@ func New(rest []byte, keyLen int, val []byte) *Page {
 	return p
 }
 
+// Empty returns a page without values for the key of keyLen bytes whose end is
+// rest, or nil if rest is longer than MaxRemainder. The tree makes it when a key
+// arrives and adds the first value at once with Add; a page without values is
+// not a state a key stays in. Do not use any other operation on it.
+func Empty(rest []byte, keyLen int) *Page {
+	if len(rest) > MaxRemainder {
+		return nil
+	}
+	p := newPage(classFor(Header+len(rest)+1), len(rest), keyLen)
+	copy(p.mem()[Header:], rest)
+	return p
+}
+
 // Build returns a page for the key of keyLen bytes whose end is rest, with the
 // values vals (all different),
 // or nil if they do not fit. The tree calls Build when the value set of a key

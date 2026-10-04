@@ -13,7 +13,7 @@ import (
 // value is an empty map.
 type Map[T comparable] struct {
 	t    Tree
-	flat int8 // 1: T takes flat leaves, 2: typed leaves, -1: set leaves only, 0: not decided yet
+	flat int8 // 1: T takes flat leaves, 2: typed leaves, 3: single-key pages (string), -1: set leaves only, 0: not decided yet
 }
 
 // newSetLeaf allocates a set leaf that holds key from base on, in the
@@ -155,6 +155,8 @@ func (m *Map[T]) decide() {
 			m.t.small = true
 			m.t.mk = leafWith[T]
 		}
+	case stringType[T]():
+		m.flat = 3
 	case typedType[T]():
 		m.flat = 2
 	default:
@@ -202,6 +204,8 @@ func (m *Map[T]) Add(key []byte, v T) {
 		nl = newFlatLeaf[T]
 	case 2:
 		nl = newTypedLeaf[T]
+	case 3:
+		nl = newSK
 	}
 	var raw uint64
 	if m.t.small {
@@ -212,7 +216,7 @@ func (m *Map[T]) Add(key []byte, v T) {
 	n := *loc
 	switch {
 	case isLeaf(n.kind):
-		m.addToLeaf(loc, asLeaf(n), v)
+		m.addToLeaf(loc, asLeaf(n), key, v)
 		if m.t.size != size && m.t.small && isRange(m.t.root.kind) {
 			// A new leaf among pages: keys that need leaves may crowd them.
 			m.t.fallBack(key)
@@ -228,16 +232,18 @@ func (m *Map[T]) Add(key []byte, v T) {
 		}
 		l := m.t.mk(key, sp.pathLen, *old)
 		slot := leafHdr(l)
-		m.addToLeaf(&slot, l, v)
+		m.addToLeaf(&slot, l, key, v)
 		m.t.promote(sp, asLeaf(slot), key)
 	}
 }
 
-// addToLeaf adds v to the values of leaf l, which sits in slot loc.
-func (m *Map[T]) addToLeaf(loc **header, l *leafHead, v T) {
+// addToLeaf adds v to the values of leaf l of key, which sits in slot loc.
+func (m *Map[T]) addToLeaf(loc **header, l *leafHead, key []byte, v T) {
 	switch {
 	case l.kind == kSet:
 		vals[T](l).Add(v)
+	case m.flat == 3:
+		addSK(loc, l, key, *(*string)(unsafe.Pointer(&v)))
 	case m.flat == 2:
 		if nl := typedAdd(l, v); nl != nil {
 			*loc = leafHdr(nl)
@@ -257,10 +263,7 @@ func (m *Map[T]) addToLeaf(loc **header, l *leafHead, v T) {
 func (m *Map[T]) Remove(key []byte, v T) {
 	// Chosen here, as in Add: a function value that does not escape stays on
 	// the stack.
-	var rk rekeyFunc = rekey[T]
-	if m.flat == 2 {
-		rk = rekeyTyped[T]
-	}
+	rk := m.rekeyFunc()
 	if m.t.hasPages() {
 		var raw uint64
 		*(*T)(unsafe.Pointer(&raw)) = v
@@ -274,6 +277,10 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	}
 	l := asLeaf(n)
 	if l.kind != kSet {
+		if m.flat == 3 {
+			m.t.removeSK(l, key, *(*string)(unsafe.Pointer(&v)), rk)
+			return
+		}
 		if m.flat == 2 {
 			m.removeTyped(l, key, v, rk)
 			return
@@ -299,6 +306,10 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		if c := unspillTypedClass[T](l); c != 0 {
 			*m.t.findSlot(key) = leafHdr(unspillTyped[T](l, c))
 		}
+	case m.flat == 3:
+		if p := unspillSK(l); p != nil {
+			*m.t.findSlot(key) = leafHdr(skLeaf(p))
+		}
 	}
 }
 
@@ -314,11 +325,18 @@ func (m *Map[T]) removeTyped(l *leafHead, key []byte, v T, rk rekeyFunc) {
 
 // RemoveKey removes key and all its values. An absent key is ignored.
 func (m *Map[T]) RemoveKey(key []byte) {
-	var rk rekeyFunc = rekey[T]
-	if m.flat == 2 {
-		rk = rekeyTyped[T]
+	m.t.remove(key, m.rekeyFunc())
+}
+
+// rekeyFunc returns the map's rekeyFunc: the one for its kind of leaf.
+func (m *Map[T]) rekeyFunc() rekeyFunc {
+	switch m.flat {
+	case 2:
+		return rekeyTyped[T]
+	case 3:
+		return rekeySK
 	}
-	m.t.remove(key, rk)
+	return rekey[T]
 }
 
 // Has reports whether key holds any values.
@@ -336,15 +354,18 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 	case isPage(n.kind):
 		yield(*(*T)(unsafe.Pointer(asPage(n).ValPtr(i))))
 	default:
-		eachValue(asLeaf(n), yield)
+		eachValue(asLeaf(n), m.flat, yield)
 	}
 }
 
 // eachValue calls yield for every value of leaf l and reports whether it ran
 // to completion.
-func eachValue[T comparable](l *leafHead, yield func(T) bool) bool {
+func eachValue[T comparable](l *leafHead, flat int8, yield func(T) bool) bool {
 	if l.kind == kSet {
 		return vals[T](l).Each(yield)
+	}
+	if flat == 3 { // T is string
+		return asSK(l).Strings(*(*func(string) bool)(unsafe.Pointer(&yield)))
 	}
 	for _, v := range flatVals[T](l) {
 		if !yield(v) {
@@ -365,6 +386,8 @@ func (m *Map[T]) leafTail() uintptr {
 		return flatSizes[1] - 1
 	case 2:
 		return typedOff(0) + unsafe.Sizeof(z) - 1
+	case 3:
+		return 32 - 1 // the smallest page
 	}
 	return unsafe.Sizeof(leaf[T, [16]byte]{}) - 1
 }
@@ -394,7 +417,7 @@ func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 	m.t.scan(b, m.leafTail(), nil, func(n *header, i, j int) bool {
 		if isLeaf(n.kind) {
-			return eachValue(asLeaf(n), yield)
+			return eachValue(asLeaf(n), m.flat, yield)
 		}
 		sl := asPage(n).Slots(i, j)
 		for k := range sl {
