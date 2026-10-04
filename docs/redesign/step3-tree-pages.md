@@ -218,6 +218,11 @@ little slower small lookups. The first two rows are from before the 384-byte cla
 | 48 (default) | 88 | 44 | 0.56 / 1.05* | 1.09 / 1.54* | 0.94 / 1.47 | 0.56 / 0.85 | 0.50 |
 | 64 | 83 | 41 | 0.54 / 1.03* | 1.12 / 1.67 | 0.95 / 1.56 | 0.56 / 0.86 | 0.49 |
 
+A second run of the default (`lp9-multi-street-again`) gives the same numbers to within 0.03 in every cell
+(`valuesFor` 0.49 / 0.57 / 1.05, `valuesBetween` 1.05 / 1.11 / 1.54, `build` 0.43 / 0.51, 88 bytes a key), so the
+differences in the table above are not noise; the sweep has only been done on `street`, and `dirs` with 64 bytes
+(`lp9-multi-dirs-h64`) has the same memory as with 48 (137 against 139 bytes a key).
+
 ### The shape of the page tree (`objstat -pages -detail`, corpus size, header 48)
 
 Bytes a key by kind of object, strings included for the pages; "used" is the share of a page's bytes that
