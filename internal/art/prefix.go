@@ -7,17 +7,17 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// Every byte of a compressed path is stored in its node (pessimistic path
+// Every byte of a common prefix is stored in its node (pessimistic prefix
 // compression): the first PrefixLen bytes in the header, the rest in a tail
 // right after the node's fixed part, in the same object. A lookup therefore
 // checks every key byte on its way down, and a leaf needs to hold only the
 // part of its key below its parent.
 //
-// Long paths are rare and short: with real URLs and file paths, 2-5% of the
+// Long prefixes are rare and short: with real URLs and file paths, 2-5% of the
 // inner nodes have one, 18-20 bytes on average. The tail comes in a few
 // classes, 16, 48 or 112 bytes inline or a string beyond, and the class
-// follows from the path length, so the node needs no field for it. A node
-// moves to a new object only when a path change crosses a class.
+// follows from the prefix length, so the node needs no field for it. A node
+// moves to a new object only when a prefix change crosses a class.
 
 // Tail classes, see tailClass.
 const (
@@ -28,12 +28,12 @@ const (
 	tailStr
 )
 
-// pathBuf is the size of the stack buffers that hold a copy of a path while the
-// tree code changes the node it came from: it takes the paths of the first two
+// prefixBuf is the size of the stack buffers that hold a copy of a prefix while the
+// tree code changes the node it came from: it takes the prefixes of the first two
 // tail classes without an allocation, and longer ones grow it onto the heap.
-const pathBuf = swar.PrefixLen + 48
+const prefixBuf = swar.PrefixLen + 48
 
-// tailClass returns the tail class of a node with a path of plen bytes.
+// tailClass returns the tail class of a node with a prefix of plen bytes.
 func tailClass(plen int) int {
 	switch t := plen - swar.PrefixLen; {
 	case t <= 0:
@@ -70,7 +70,7 @@ type tailKinds interface {
 	[16]byte | [48]byte | [112]byte | string
 }
 
-// tailed is a node of kind N with a path tail of type T. Every node kind is a
+// tailed is a node of kind N with a prefix tail of type T. Every node kind is a
 // multiple of 8 bytes, so the tail starts right at fixedSize.
 type tailed[N nodeKinds, T tailKinds] struct {
 	n N
@@ -93,8 +93,8 @@ func allocOf[N nodeKinds](tc int) *header {
 	return (*header)(unsafe.Pointer(new(tailed[N, string])))
 }
 
-// newNode allocates an empty node of kind k with room for a path of plen
-// bytes; the caller stores the path (storePath).
+// newNode allocates an empty node of kind k with room for a prefix of plen
+// bytes; the caller stores the prefix (storePrefix).
 func newNode(k kind, plen int) *header {
 	tc := tailClass(plen)
 	var h *header
@@ -127,10 +127,10 @@ func newNode(k kind, plen int) *header {
 	return h
 }
 
-// newLike allocates a node of kind k with n's header and path, for n to grow
+// newLike allocates a node of kind k with n's header and prefix, for n to grow
 // or shrink into. The caller copies the children.
 func newLike(n *header, k kind) *header {
-	pl := n.pathLen()
+	pl := n.prefixLen()
 	y := newNode(k, pl)
 	*y = *n
 	y.kind = k
@@ -139,7 +139,7 @@ func newLike(n *header, k kind) *header {
 	case tailStr:
 		*(*string)(tailPtr(y)) = *(*string)(tailPtr(n))
 	default:
-		copy(unsafe.Slice((*byte)(tailPtr(y)), pl-swar.PrefixLen), pathTail(n))
+		copy(unsafe.Slice((*byte)(tailPtr(y)), pl-swar.PrefixLen), prefixTail(n))
 	}
 	return y
 }
@@ -149,18 +149,18 @@ func tailPtr(n *header) unsafe.Pointer {
 	return unsafe.Add(unsafe.Pointer(n), fixedSize[n.kind&kindMask])
 }
 
-// pathLen returns the length of n's compressed path.
-func (n *header) pathLen() int {
-	if n.plen != longPath {
+// prefixLen returns the length of n's common prefix.
+func (n *header) prefixLen() int {
+	if n.plen != longPrefix {
 		return int(n.plen)
 	}
 	return swar.PrefixLen + len(*(*string)(tailPtr(n)))
 }
 
-// pathTail returns the bytes of n's path beyond the first PrefixLen; n's path
+// prefixTail returns the bytes of n's prefix beyond the first PrefixLen; n's prefix
 // must be longer than that.
-func pathTail(n *header) []byte {
-	pl := n.pathLen()
+func prefixTail(n *header) []byte {
+	pl := n.prefixLen()
 	if tailClass(pl) == tailStr {
 		s := *(*string)(tailPtr(n))
 		return unsafe.Slice(unsafe.StringData(s), len(s))
@@ -168,19 +168,19 @@ func pathTail(n *header) []byte {
 	return unsafe.Slice((*byte)(tailPtr(n)), pl-swar.PrefixLen)
 }
 
-// appendPath appends n's whole path to dst.
-func appendPath(dst []byte, n *header) []byte {
-	pl := n.pathLen()
+// appendPrefix appends n's whole prefix to dst.
+func appendPrefix(dst []byte, n *header) []byte {
+	pl := n.prefixLen()
 	dst = append(dst, n.prefix[:min(pl, swar.PrefixLen)]...)
 	if pl > swar.PrefixLen {
-		dst = append(dst, pathTail(n)...)
+		dst = append(dst, prefixTail(n)...)
 	}
 	return dst
 }
 
-// storePath stores path p in n, whose object must have p's tail class.
-func storePath(n *header, p []byte) {
-	n.plen = uint16(min(len(p), longPath))
+// storePrefix stores prefix p in n, whose object must have p's tail class.
+func storePrefix(n *header, p []byte) {
+	n.plen = uint16(min(len(p), longPrefix))
 	n.prefix = [swar.PrefixLen]byte{}
 	copy(n.prefix[:], p)
 	switch tailClass(len(p)) {
@@ -192,15 +192,15 @@ func storePath(n *header, p []byte) {
 	}
 }
 
-// withPath gives n the path p and returns n, or a copy of n in a new object
+// withPrefix gives n the prefix p and returns n, or a copy of n in a new object
 // when p needs another tail class. p must not alias n.
-func withPath(n *header, p []byte) *header {
-	if tailClass(len(p)) != tailClass(n.pathLen()) {
+func withPrefix(n *header, p []byte) *header {
+	if tailClass(len(p)) != tailClass(n.prefixLen()) {
 		m := newNode(n.kind, len(p))
 		copyFixed(m, n)
 		n = m
 	}
-	storePath(n, p)
+	storePrefix(n, p)
 	return n
 }
 
@@ -230,18 +230,18 @@ func copyFixed(dst, src *header) {
 	}
 }
 
-// pathMatches reports whether key[depth:] starts with n's whole path of pl
+// prefixMatches reports whether key[depth:] starts with n's whole prefix of pl
 // bytes, pl > 0.
-func pathMatches(n *header, pl int, key []byte, depth int) bool {
+func prefixMatches(n *header, pl int, key []byte, depth int) bool {
 	if !swar.MatchPrefix(&n.prefix, pl, key, depth) {
 		return false
 	}
-	return pl <= swar.PrefixLen || bytes.Equal(pathTail(n), key[depth+swar.PrefixLen:depth+pl])
+	return pl <= swar.PrefixLen || bytes.Equal(prefixTail(n), key[depth+swar.PrefixLen:depth+pl])
 }
 
-// pathLcp returns the length m of the common prefix of n's path of pl bytes
-// and rest, and, if m < pl, n's path byte at m.
-func pathLcp(n *header, pl int, rest []byte) (m int, c byte) {
+// prefixLcp returns the length m of the common prefix of n's prefix of pl bytes
+// and rest, and, if m < pl, n's prefix byte at m.
+func prefixLcp(n *header, pl int, rest []byte) (m int, c byte) {
 	h := min(pl, swar.PrefixLen)
 	if m = swar.Lcp(n.prefix[:h], rest); m < h {
 		return m, n.prefix[m]
@@ -249,7 +249,7 @@ func pathLcp(n *header, pl int, rest []byte) (m int, c byte) {
 	if pl == h {
 		return m, 0
 	}
-	t := pathTail(n)
+	t := prefixTail(n)
 	if len(rest) > h {
 		m += swar.Lcp(t, rest[h:])
 	}

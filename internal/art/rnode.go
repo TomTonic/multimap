@@ -29,14 +29,14 @@ import (
 // on: its children start at the same depth and check that byte themselves.
 // Pages hold full keys, a leaf holds its key from a base that is at most that
 // depth, and a node below a range node has that byte as the first byte of its
-// path. So a child's range may be wider than its keys, and no range needs an
+// common prefix. So a child's range may be wider than its keys, and no range needs an
 // empty child: a key whose byte falls into a range belongs to that range's
 // child, and a lookup that finds nothing there is a miss.
 //
 // Only trees with pages have range nodes. Such a tree creates range nodes
 // wherever keys hold one value, and inner nodes below where keys with several
 // values crowd it (see settle.go); an inner node below a range node starts its
-// path with its byte, like every child of a range node.
+// common prefix with its byte, like every child of a range node.
 //
 // Layout: the header, a 256-bit bitmap of the range starts (bit 0 is always
 // set), the number of starts in the words before each word, and the children
@@ -156,11 +156,11 @@ func rClass(n int) int {
 	return c
 }
 
-// makeR returns a new range node with the path p and the term leaf term, which
+// makeR returns a new range node with the common prefix p and the term leaf term, which
 // may be nil, and the ranges rs, of which the first must start at 0.
 func makeR(p []byte, term *leafHead, rs []rng) *header {
 	n := newNode(kR8+kind(rClass(len(rs))), len(p))
-	storePath(n, p)
+	storePrefix(n, p)
 	fillR(n, rs)
 	setTermSlot(n, term)
 	return n
@@ -178,7 +178,7 @@ func fillR(n *header, rs []rng) {
 	r.recount()
 }
 
-// remakeR returns a range node with n's path and term and the ranges rs, in the
+// remakeR returns a range node with n's common prefix and term and the ranges rs, in the
 // smallest class that holds them.
 func remakeR(n *header, rs []rng) *header {
 	y := newLike(n, kR8+kind(rClass(len(rs))))

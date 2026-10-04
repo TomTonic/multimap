@@ -61,11 +61,11 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, k
 		}
 		return scanPage(asPage(n), b, lo, hi, fn)
 	}
-	pl := n.pathLen()
+	pl := n.prefixLen()
 	if (lo || hi) && pl > 0 {
 		if lo {
 			rest := b.From[depth:]
-			if m, c := pathLcp(n, pl, rest); m < pl {
+			if m, c := prefixLcp(n, pl, rest); m < pl {
 				if m < len(rest) && c < rest[m] {
 					return true // the whole subtree lies below From
 				}
@@ -74,7 +74,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, k
 		}
 		if hi {
 			rest := b.To[depth:]
-			if m, c := pathLcp(n, pl, rest); m < pl {
+			if m, c := prefixLcp(n, pl, rest); m < pl {
 				if m == len(rest) || c > rest[m] {
 					return false // the whole subtree lies above To: done
 				}
@@ -83,7 +83,7 @@ func scanRange(n *header, b *Bounds, depth int, lo, hi bool, leafTail uintptr, k
 		}
 	}
 	if kb != nil {
-		kb.path = appendPath(kb.path[:depth], n)
+		kb.path = appendPrefix(kb.path[:depth], n)
 	}
 	depth += pl
 	// The term leaf's key is the path to n. On From's path it is below From

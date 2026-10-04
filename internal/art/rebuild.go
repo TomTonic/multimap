@@ -144,7 +144,7 @@ func (t *Tree) settle(key []byte) {
 	loc, depth := &t.root, 0
 	for n := *loc; isRange(n.kind); n = *loc {
 		path = append(path, rpos{loc, depth})
-		depth += n.pathLen()
+		depth += n.prefixLen()
 		if depth == len(key) {
 			break // the key's leaf is n's term
 		}
@@ -218,8 +218,8 @@ func (w *walker) walk(n *header, depth int) {
 		w.out = append(w.out, pageItems(asPage(n), w.path)...)
 		return
 	}
-	w.path = appendPath(w.path[:depth], n)
-	depth += n.pathLen()
+	w.path = appendPrefix(w.path[:depth], n)
+	depth += n.prefixLen()
 	if t := termOf(n); t != nil {
 		w.leaf(t)
 	}
@@ -299,7 +299,7 @@ func (t *Tree) inner(items []item, depth int) *header {
 		groups += b2i(items[i].key[d] != items[i-1].key[d])
 	}
 	n := newNode(innerKind(groups, term != nil), plen)
-	storePath(n, first[depth:d])
+	storePrefix(n, first[depth:d])
 	setTermSlot(n, term)
 	for i := 0; i < len(items); {
 		j, b := i+1, items[i].key[d]

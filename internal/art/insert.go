@@ -26,7 +26,7 @@ type spot struct {
 // slot, as a flat leaf does when it grows. It tells a key it has created by
 // the tree's size, and, for a key that was in a page, where in t.at.
 //
-// It descends like find, checking compressed paths and searching nodes the
+// It descends like find, checking common prefixes and searching nodes the
 // same fast way, and keeps the slot it came through. A missing key is then
 // added right where the descent stopped, without a second traversal.
 func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
@@ -50,9 +50,9 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 		if n.plen > 0 {
 			pl := int(n.plen)
 			if !swar.Match8(&n.prefix, pl, key, depth) {
-				pl = n.pathLen()
-				if !pathMatches(n, pl, key, depth) {
-					mis, _ := pathLcp(n, pl, key[depth:])
+				pl = n.prefixLen()
+				if !prefixMatches(n, pl, key, depth) {
+					mis, _ := prefixLcp(n, pl, key[depth:])
 					return t.splitPrefix(loc, n, mis, key, depth, v, nl)
 				}
 			}
@@ -106,7 +106,7 @@ func (t *Tree) hasPages() bool {
 }
 
 // firstByte returns byte depth of every key below c, a child of a range
-// node, if they all share it: the byte of a leaf, or the first path byte of a
+// node, if they all share it: the byte of a leaf, or the first byte of the common prefix of a
 // node. A page's keys may differ there.
 func firstByte(c *header, depth int) (byte, bool) {
 	switch {
@@ -172,7 +172,7 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, depth int, v ui
 // depth and share their byte there (or the page is the root), cannot be split
 // by a byte at that depth. The keys of p all start with the bytes up to some
 // depth d. If key starts with them too, the page gets a range node of its own
-// with those bytes as its path, in which splitFull can cut it where its keys
+// with those bytes as its common prefix, in which splitFull can cut it where its keys
 // differ; else key leaves them where it differs, and a range node there holds p
 // and a new page or leaf for key (see fork). Either way no key of the page is
 // copied: it replaces a rebuild of the subtree from its keys.
@@ -288,7 +288,7 @@ func (t *Tree) place(sp spot, l *leafHead, key []byte) {
 }
 
 // splitLeaf handles an insert that reaches leaf l at depth: either it is the
-// key's leaf, or both keys go below a new node holding their common path, a
+// key's leaf, or both keys go below a new node holding their common prefix, a
 // range node if the new key goes into a page (unless l is below an inner node),
 // else an inner node. l keeps its base and moves below the new node.
 func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uint64, nl newLeafFunc, inner bool) **header {
@@ -301,7 +301,7 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uin
 		return t.fork(loc, leafHdr(l), d == l.keyLen(), key, depth, d, v, nl)
 	}
 	nn := newNode(kN5, p)
-	storePath(nn, rest[:p])
+	storePrefix(nn, rest[:p])
 	h, _ := attachAt(nn, ls[p:], l)
 	h, slot := attachAt(h, rest[p:], nl(key, depth+p+min(1, len(rest)-p)))
 	*loc = h
@@ -309,19 +309,19 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, depth int, v uin
 	return slot
 }
 
-// splitPrefix handles an insert whose key leaves n's compressed path after
+// splitPrefix handles an insert whose key leaves n's common prefix after
 // mis bytes: a new node takes the common part, with n and the new key below,
 // a range node if n is one, else an inner node.
 func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth int, v uint64, nl newLeafFunc) **header {
-	var buf [pathBuf]byte
-	pk := appendPath(buf[:0], n) // a copy: n's path changes below
+	var buf [prefixBuf]byte
+	pk := appendPrefix(buf[:0], n) // a copy: n's common prefix changes below
 	if isRange(n.kind) {
-		// Below a range node, n keeps the byte it branches on in its path.
-		return t.fork(loc, withPath(n, pk[mis:]), false, key, depth, depth+mis, v, nl)
+		// Below a range node, n keeps the byte it branches on in its common prefix.
+		return t.fork(loc, withPrefix(n, pk[mis:]), false, key, depth, depth+mis, v, nl)
 	}
 	nn := newNode(kN5, mis)
-	storePath(nn, pk[:mis])
-	h, _ := addChild(nn, pk[mis], withPath(n, pk[mis+1:]))
+	storePrefix(nn, pk[:mis])
+	h, _ := addChild(nn, pk[mis], withPrefix(n, pk[mis+1:]))
 	rest := key[depth+mis:]
 	h, slot := attachAt(h, rest, nl(key, depth+mis+min(1, len(rest))))
 	*loc = h
@@ -329,14 +329,14 @@ func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, depth i
 	return slot
 }
 
-// fork puts a range node with the path key[depth:d] at *loc, in a tree with
+// fork puts a range node with the common prefix key[depth:d] at *loc, in a tree with
 // pages, that holds old and the new key: old is a leaf whose key ends at d
 // (oend), or its keys continue with one byte at d, as the new key does unless
 // it ends there.
 func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d int, v uint64, nl newLeafFunc) **header {
-	path := key[depth:d]
+	prefix := key[depth:d]
 	if d == len(key) {
-		*loc = makeR(path, nl(key, d), []rng{{0, old}})
+		*loc = makeR(prefix, nl(key, d), []rng{{0, old}})
 		t.size++
 		return termSlot(*loc)
 	}
@@ -350,13 +350,13 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, depth, d i
 	} else {
 		rs = []rng{{0, old}, {key[d], nc}}
 	}
-	*loc = makeR(path, term, rs)
+	*loc = makeR(prefix, term, rs)
 	r := asR(*loc)
 	t.size++
 	return &r.children()[r.index(key[d])]
 }
 
-// forkByte returns byte d of every key below old, a leaf, a node whose path
+// forkByte returns byte d of every key below old, a leaf, a node whose common prefix
 // starts there or a page whose keys all share that byte, which fork puts next to
 // a new key.
 func forkByte(old *header, d int) byte {
@@ -418,7 +418,7 @@ func addChild(n *header, b byte, c *header) (*header, **header) {
 	return n, slot
 }
 
-// grow copies the full node n, path, children and term, into the next larger
+// grow copies the full node n, common prefix, children and term, into the next larger
 // kind.
 func grow(n *header) *header {
 	term := termOf(n)

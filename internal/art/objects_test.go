@@ -121,7 +121,7 @@ func TestObjectSizes(t *testing.T) {
 			t.Errorf("%s of %d bytes: Block %d, runtime allocated %d", o.Label, o.Size, b, got)
 		}
 	}
-	t.Run("nodes, with and without a path tail", func(t *testing.T) {
+	t.Run("nodes, with and without a prefix tail", func(t *testing.T) {
 		for k, label := range kindLabels {
 			if label == "" {
 				continue
@@ -130,7 +130,7 @@ func TestObjectSizes(t *testing.T) {
 				path := make([]byte, plen)
 				mk := func() unsafe.Pointer {
 					n := newNode(kind(k), plen)
-					storePath(n, path)
+					storePrefix(n, path)
 					return unsafe.Pointer(n)
 				}
 				check(t, &flat, mk)

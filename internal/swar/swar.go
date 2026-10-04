@@ -51,7 +51,7 @@ func Set(bm *[4]uint64, b byte) { bm[(b>>6)&3] |= uint64(1) << (b & 63) }
 // PrefixLen is the number of path bytes an inner node keeps in its header.
 const PrefixLen = 12
 
-// MatchPrefix reports whether key[depth:] can pass a node whose compressed path
+// MatchPrefix reports whether key[depth:] can pass a node whose common prefix
 // has length plen and whose first min(plen, PrefixLen) bytes are stored in
 // prefix. Bytes beyond those are not checked here; the caller compares them
 // with the rest of the path, which its node keeps elsewhere.

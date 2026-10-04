@@ -120,13 +120,13 @@ func findInPage(p *vpage.Page, key []byte) (*header, int) {
 
 // findSlot returns the slot that holds the leaf of key, which must be in the
 // tree and have a leaf. Writers use it to replace a leaf they have found.
-// Since the key is present, its paths need no checking: the descent only
+// Since the key is present, its common prefixes need no checking: the descent only
 // follows them.
 func (t *Tree) findSlot(key []byte) **header {
 	loc, depth := &t.root, 0
 	for !isLeaf((*loc).kind) {
 		n := *loc
-		depth += n.pathLen()
+		depth += n.prefixLen()
 		switch {
 		case depth == len(key):
 			loc = termSlot(n)
@@ -178,14 +178,14 @@ func findLoc(n *header, b byte) **header {
 	return &asN12(n).child[i]
 }
 
-// longMatch returns the length of n's path if key[depth:] starts with it, and
+// longMatch returns the length of n's common prefix if key[depth:] starts with it, and
 // -1 otherwise. It is kept out of find, whose loop stays small for the common
-// paths of at most eight bytes.
+// prefixes of at most eight bytes.
 //
 //go:noinline
 func longMatch(n *header, key []byte, depth int) int {
-	pl := n.pathLen()
-	if !pathMatches(n, pl, key, depth) {
+	pl := n.prefixLen()
+	if !prefixMatches(n, pl, key, depth) {
 		return -1
 	}
 	return pl

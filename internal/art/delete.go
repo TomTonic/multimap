@@ -34,7 +34,7 @@ func (t *Tree) removeRaw(key []byte, want uint64, rk rekeyFunc) int8 {
 	return r
 }
 
-// del deletes key from the subtree at *loc, whose compressed path starts at
+// del deletes key from the subtree at *loc, whose common prefix starts at
 // key depth depth, and reports whether it was there. On the way back up,
 // every node on the path shrinks to the smallest kind that fits and collapses
 // when it no longer branches, so the tree after a delete has the shape it
@@ -62,8 +62,8 @@ func del(loc **header, key []byte, depth int, rk rekeyFunc, want *uint64) int8 {
 		*loc = nil
 		return deleted
 	}
-	pl := n.pathLen()
-	if pl != 0 && !pathMatches(n, pl, key, depth) {
+	pl := n.prefixLen()
+	if pl != 0 && !prefixMatches(n, pl, key, depth) {
 		return absent
 	}
 	d := depth + pl
@@ -124,10 +124,10 @@ func delFromPage(loc **header, key []byte, want *uint64) int8 {
 	return deleted
 }
 
-// collapse replaces an inner or range node n at depth, whose path ends at d,
+// collapse replaces an inner or range node n at depth, whose common prefix ends at d,
 // that no longer branches: without children it becomes its term leaf, and with
-// a single child and no term it merges into that child, whose compressed path
-// grows by n's path plus the child's byte (which a range node's child already
+// a single child and no term it merges into that child, whose common prefix
+// grows by n's common prefix plus the child's byte (which a range node's child already
 // starts with). key is the key just deleted below n, which agrees with every
 // key below n up to d. It returns what should stand in n's place.
 func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
@@ -153,17 +153,17 @@ func collapse(n *header, key []byte, depth, d int, rk rekeyFunc) *header {
 		}
 		return leafHdr(rk(l, key[:d], b, depth))
 	}
-	var buf [pathBuf]byte // on the stack for the common short paths
-	p := appendPath(buf[:0], n)
+	var buf [prefixBuf]byte // on the stack for the common short prefixes
+	p := appendPrefix(buf[:0], n)
 	if b >= 0 {
 		p = append(p, byte(b))
 	}
-	return withPath(c, appendPath(p, c))
+	return withPrefix(c, appendPrefix(p, c))
 }
 
 // pageUp returns what should stand in the place of the range node n at depth,
 // which has no term and one child, page c: the page, which then starts at depth,
-// or n itself if the page cannot take the bytes of n's path in front of its
+// or n itself if the page cannot take the bytes of n's common prefix in front of its
 // keys.
 func pageUp(n, c *header, key []byte, depth int) *header {
 	p := asPage(c)

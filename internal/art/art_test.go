@@ -78,7 +78,7 @@ func keySets() map[string][][]byte {
 	}
 	sets["long-prefix-wide"] = append(wide, long[:20], append(long[:30:30], 'Z'))
 
-	// Paths of 64K bytes and more, which the header marks as longPath: a
+	// Paths of 64K bytes and more, which the header marks as longPrefix: a
 	// long path with a term, a split inside it, a 256-way node below it, and
 	// two paths of 40,000 bytes that merge into one of 80,001 once the key
 	// between them goes.
@@ -339,7 +339,7 @@ func randomBounds(r *rand.Rand, sorted []string, i int) *Bounds {
 		case 1:
 			return k[:r.IntN(len(k)+1)] // a prefix of a key
 		case 2:
-			if len(k) > 0 { // leaves the keys mid-path, often inside a compressed path
+			if len(k) > 0 { // leaves the keys mid-path, often inside a common prefix
 				k[r.IntN(len(k))] += byte(1 - 2*r.IntN(2))
 			}
 		}
@@ -679,8 +679,8 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 			}
 		}
 	}
-	pl := n.pathLen()
-	if want := uint16(min(pl, longPath)); n.plen != want {
+	pl := n.prefixLen()
+	if want := uint16(min(pl, longPrefix)); n.plen != want {
 		t.Fatalf("plen %d for a path of %d bytes, want %d", n.plen, pl, want)
 	}
 	for i := min(pl, len(n.prefix)); i < len(n.prefix); i++ {
@@ -688,7 +688,7 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 			t.Fatalf("path byte %d beyond a path of %d bytes is not zero", i, pl)
 		}
 	}
-	end := appendPath(slices.Clip(path), n)
+	end := appendPrefix(slices.Clip(path), n)
 	leaves := 0
 	if term != nil {
 		checkLeaf(t, term, end)
@@ -742,7 +742,7 @@ func eachChild(n *header, fn func(byte, *header)) {
 
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
 // kind back down through each smaller kind to nothing, collapsing and
-// re-merging compressed paths (short and longer than 12 bytes) on the way,
+// re-merging common prefixes (short and longer than 12 bytes) on the way,
 // moving the term of the widest node along, and that the tree satisfies its
 // invariants after every single delete.
 func TestShrinkAndCollapse(t *testing.T) {
@@ -849,8 +849,8 @@ func FuzzOperations(f *testing.F) {
 // TestLongPaths makes sure that multimap.Ordered keeps keys that share long
 // common parts, such as URLs of one site or files of one directory, while
 // other keys split those parts and merge them again and the number of keys
-// below them grows and shrinks. It covers the path tails of the ART nodes
-// (path.go): for paths at every tail class boundary and every node kind, a
+// below them grows and shrinks. It covers the prefix tails of the ART nodes
+// (prefix.go): for paths at every tail class boundary and every node kind, a
 // key that leaves the path in its middle moves the rest of the path into a
 // node of another tail class, removing that key merges the path back, and
 // growing and shrinking the node carries its tail through every kind. After

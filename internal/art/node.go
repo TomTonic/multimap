@@ -10,10 +10,10 @@
 //     bytes in a sorted array searched with SWAR, eight bytes per step; the
 //     26- and 58-way nodes find a child by the rank of its byte in a 256-bit
 //     bitmap (branch-free); the 256-way node indexes directly.
-//   - The node header is 16 bytes: kind, child count, path length and the
-//     first 12 bytes of the compressed path. The rest of a longer path
-//     follows the node in the same object (path.go), so every key byte on
-//     the way down is checked in the nodes (pessimistic path compression).
+//   - The node header is 16 bytes: kind, child count, prefix length and the
+//     first 12 bytes of the common prefix. The rest of a longer common prefix
+//     follows the node in the same object (prefix.go), so every key byte on
+//     the way down is checked in the nodes (pessimistic common prefix).
 //   - A leaf holds only the part of its key below the node it was created
 //     under (lazy expansion: a subtree with one key is just its leaf), inline
 //     right after a 6-byte head; only a remainder of more than 254 bytes
@@ -120,13 +120,13 @@ const maxKeyLen = 1<<16 - 1
 type header struct {
 	kind   kind
 	count  uint8                // byte children; a 256-way node keeps its count in node256.total
-	plen   uint16               // length of the compressed path, or longPath
-	prefix [swar.PrefixLen]byte // first min(plen, 12) bytes of the compressed path; the rest is in the tail
+	plen   uint16               // length of the common prefix, or longPrefix
+	prefix [swar.PrefixLen]byte // first min(plen, 12) bytes of the common prefix; the rest is in the tail
 }
 
-// longPath in header.plen stands for a path of that many bytes or more, whose
-// tail is a string: its length is then 12 plus the string's (see pathLen).
-const longPath = 1<<16 - 1
+// longPrefix in header.plen stands for a common prefix of that many bytes or more, whose
+// tail is a string: its length is then 12 plus the string's (see prefixLen).
+const longPrefix = 1<<16 - 1
 
 // leafHead is the start of every leaf (6 B). The key remainder follows at
 // keyOff; a whole key held as a string sits at strOff.

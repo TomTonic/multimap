@@ -11,7 +11,7 @@ import "unsafe"
 // Object describes one allocated object of a tree.
 type Object struct {
 	// Label names the kind of the object: "N5", "R56+tail", "page", "flat
-	// leaf" and so on. A "+tail" node holds a path tail beyond its header.
+	// leaf" and so on. A "+tail" node holds a prefix tail beyond its header.
 	Label string
 	// Size is the size of the object in bytes, as Go allocates the type.
 	Size int
@@ -136,7 +136,7 @@ func (m *Map[T]) object(n *header) Object {
 		return Object{Label: "page", Size: p.Size(), Keys: p.Len()}
 	}
 	size, label := int(fixedSize[n.kind&kindMask]), kindLabels[n.kind]
-	if tc := tailClass(n.pathLen()); tc != tailNone {
+	if tc := tailClass(n.prefixLen()); tc != tailNone {
 		size += [...]int{tail16: 16, tail48: 48, tail112: 112, tailStr: 16}[tc]
 		label += "+tail"
 	}
