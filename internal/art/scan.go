@@ -86,15 +86,15 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 		kb.path = appendPrefix(kb.path[:pathLen], n)
 	}
 	pathLen += pl
-	// The term leaf's key is the path to n. On From's path it is below From
+	// The end page's key is the path to n. On From's path it is below From
 	// unless the path is From itself; on To's path it is below To unless the
 	// path is To itself, in which case it is the last key in range.
-	termIsFrom := lo && pathLen == len(b.From)
-	termIsTo := hi && pathLen == len(b.To)
-	if termIsFrom {
+	endPageIsFrom := lo && pathLen == len(b.From)
+	endPageIsTo := hi && pathLen == len(b.To)
+	if endPageIsFrom {
 		lo = false
 	}
-	if t := termOf(n); t != nil && !lo && (!termIsFrom || b.FromIncl) && (!termIsTo || b.ToIncl) {
+	if t := endPageOf(n); t != nil && !lo && (!endPageIsFrom || b.FromIncl) && (!endPageIsTo || b.ToIncl) {
 		if kb != nil {
 			kb.reach(t)
 		}
@@ -102,7 +102,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 			return false
 		}
 	}
-	if termIsTo {
+	if endPageIsTo {
 		return false
 	}
 	var loB, hiB byte = 0, 255

@@ -21,7 +21,7 @@ type spot struct {
 
 // upsert returns the slot that holds the key's leaf or page, creating the key
 // when it is missing: in a page with the raw value v when the key fits one (see
-// pageable) and does not go below an inner node (see settle.go), else as a leaf
+// pageable) and does not go below a byte node (see rebuild.go), else as a leaf
 // made by nl, which the caller fills. The caller may replace a leaf in its
 // slot, as a flat leaf does when it grows. It tells a key it has created by
 // the tree's size, and, for a key that was in a page, where in t.at.
@@ -33,7 +33,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 	loc, pathLen := &t.root, 0
 	var par **header // the range node *loc is a child of, or nil
 	pi := 0
-	inner := false // *loc is below an inner node, where no pages go
+	belowByteNode := false // *loc is below a byte node, where no pages go
 	for {
 		n := *loc
 		if n == nil {
@@ -45,7 +45,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 			if n.kind > kLastLeaf {
 				return t.upsertPage(loc, par, pi, key, pathLen, v, nl)
 			}
-			return t.splitLeaf(loc, asLeaf(n), key, pathLen, v, nl, inner)
+			return t.splitLeaf(loc, asLeaf(n), key, pathLen, v, nl, belowByteNode)
 		}
 		if n.plen > 0 {
 			pl := int(n.plen)
@@ -59,11 +59,11 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 			pathLen += pl
 		}
 		if pathLen == len(key) {
-			if termOf(n) == nil {
-				*loc = setTerm(n, nl(key, pathLen))
+			if endPageOf(n) == nil {
+				*loc = setEndPage(n, nl(key, pathLen))
 				t.size++
 			}
-			return termSlot(*loc)
+			return endPageSlot(*loc)
 		}
 		b := key[pathLen]
 		if isRange(n.kind) {
@@ -86,7 +86,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 			par, pi, loc = loc, i, c
 			continue
 		}
-		par, inner = nil, true
+		par, belowByteNode = nil, true
 		c := findLoc(n, b)
 		if c == nil {
 			var slot **header
@@ -99,8 +99,8 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 }
 
 // hasPages reports whether the tree may hold pages: its root is a page or a
-// range node. Below a root that is an inner node there are none, and there
-// never are (see settle.go).
+// range node. Below a root that is a byte node there are none, and there
+// never are (see rebuild.go).
 func (t *Tree) hasPages() bool {
 	return t.root != nil && (isPage(t.root.kind) || isRange(t.root.kind))
 }
@@ -184,15 +184,15 @@ func (t *Tree) burst(loc **header, p *vpage.Page, key []byte, pathLen int, v uin
 	if m := swar.Lcp(shared, key[pathLen:]); pathLen+m < d {
 		return t.fork(loc, pageHdr(p), false, key, pathLen, pathLen+m, v, nl)
 	}
-	var term *leafHead
+	var endPage *leafHead
 	if len(first) == d-pathLen {
 		// The first key is the shared bytes: it ends at the range node, so it is
-		// the node's term, and a leaf. The others are longer.
+		// the node's end page, and a leaf. The others are longer.
 		whole := append(key[:pathLen:pathLen], first...)
-		term = t.mk(whole, d, p.Val(0))
+		endPage = t.mk(whole, d, p.Val(0))
 		p = p.DeleteAt(0) // the page was full: it has more keys
 	}
-	*loc = makeR(key[pathLen:d], term, []rng{{0, pageHdr(p)}})
+	*loc = makeR(key[pathLen:d], endPage, []rng{{0, pageHdr(p)}})
 	return t.upsert(key, v, nl)
 }
 
@@ -240,11 +240,11 @@ func (t *Tree) replace(at, par **header, pi int, items []item, pathLen int) {
 
 // promote gives the key at sp, which has one value in its page, the leaf
 // l, which holds its key from sp.pathLen on and its values, and lets the subtree
-// around it fall back to inner nodes if keys with several values crowd it
-// (see settle).
+// around it fall back to byte nodes if keys with several values crowd it
+// (see fallBack).
 func (t *Tree) promote(sp spot, l *leafHead, key []byte) {
 	t.place(sp, l, key)
-	t.settle(key)
+	t.fallBack(key)
 }
 
 // place puts the leaf l of key, the key at sp, in the key's place. A page
@@ -289,15 +289,15 @@ func (t *Tree) place(sp spot, l *leafHead, key []byte) {
 
 // splitLeaf handles an insert that reaches leaf l at pathLen: either it is the
 // key's leaf, or both keys go below a new node holding their common prefix, a
-// range node if the new key goes into a page (unless l is below an inner node),
-// else an inner node. l keeps its base and moves below the new node.
-func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, pathLen int, v uint64, nl newLeafFunc, inner bool) **header {
+// range node if the new key goes into a page (unless l is below a byte node),
+// else a byte node. l keeps its base and moves below the new node.
+func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, pathLen int, v uint64, nl newLeafFunc, belowByteNode bool) **header {
 	ls, rest := l.from(pathLen), key[pathLen:]
 	if len(key) == l.keyLen() && bytes.Equal(ls, rest) {
 		return loc
 	}
 	p := swar.Lcp(ls, rest)
-	if d := pathLen + p; !inner && t.pageable(key, d) {
+	if d := pathLen + p; !belowByteNode && t.pageable(key, d) {
 		return t.fork(loc, leafHdr(l), d == l.keyLen(), key, pathLen, d, v, nl)
 	}
 	nn := newNode(kN5, p)
@@ -311,7 +311,7 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, pathLen int, v u
 
 // splitPrefix handles an insert whose key leaves n's common prefix after
 // mis bytes: a new node takes the common part, with n and the new key below,
-// a range node if n is one, else an inner node.
+// a range node if n is one, else a byte node.
 func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, pathLen int, v uint64, nl newLeafFunc) **header {
 	var buf [prefixBuf]byte
 	pk := appendPrefix(buf[:0], n) // a copy: n's common prefix changes below
@@ -338,19 +338,19 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, pathLen, d
 	if d == len(key) {
 		*loc = makeR(prefix, nl(key, d), []rng{{0, old}})
 		t.size++
-		return termSlot(*loc)
+		return endPageSlot(*loc)
 	}
 	nc := t.newChild(key, v, nl, d)
-	var term *leafHead
+	var endPage *leafHead
 	rs := []rng{{0, nc}}
 	if oend {
-		term = asLeaf(old)
+		endPage = asLeaf(old)
 	} else if ob := forkByte(old, d); key[d] < ob {
 		rs = append(rs, rng{ob, old})
 	} else {
 		rs = []rng{{0, old}, {key[d], nc}}
 	}
-	*loc = makeR(prefix, term, rs)
+	*loc = makeR(prefix, endPage, rs)
 	r := asR(*loc)
 	t.size++
 	return &r.children()[r.index(key[d])]
@@ -368,24 +368,24 @@ func forkByte(old *header, d int) byte {
 }
 
 // attachAt hangs leaf l below node h, where rest is l's key from h's child
-// byte on: as h's term if rest is empty, as the child under rest[0]
+// byte on: as h's end page if rest is empty, as the child under rest[0]
 // otherwise. It returns h or its grown replacement, and the slot that holds
 // l.
 func attachAt(h *header, rest []byte, l *leafHead) (*header, **header) {
 	if len(rest) == 0 {
-		h = setTerm(h, l)
-		return h, termSlot(h)
+		h = setEndPage(h, l)
+		return h, endPageSlot(h)
 	}
 	return addChild(h, rest[0], leafHdr(l))
 }
 
-// setTerm makes l the term leaf of n, which has none yet, growing n into the
+// setEndPage makes l the end page of n, which has none yet, growing n into the
 // next larger kind when its slots are full. It returns n or its replacement.
-func setTerm(n *header, l *leafHead) *header {
+func setEndPage(n *header, l *leafHead) *header {
 	if full(n) {
 		n = grow(n)
 	}
-	setTermSlot(n, l)
+	setEndPageSlot(n, l)
 	return n
 }
 
@@ -418,10 +418,10 @@ func addChild(n *header, b byte, c *header) (*header, **header) {
 	return n, slot
 }
 
-// grow copies the full node n, common prefix, children and term, into the next larger
+// grow copies the full node n, common prefix, children and end page, into the next larger
 // kind.
 func grow(n *header) *header {
-	term := termOf(n)
+	endPage := endPageOf(n)
 	var y *header
 	switch n.kind {
 	case kN5:
@@ -458,7 +458,7 @@ func grow(n *header) *header {
 		}
 		y.count = 255
 	}
-	setTermSlot(y, term)
+	setEndPageSlot(y, endPage)
 	return y
 }
 

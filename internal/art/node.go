@@ -2,7 +2,7 @@
 //
 // Design (see bench/README.md for the measurements behind each choice):
 //
-//   - Inner nodes have 5, 12, 26, 58 or 257 child slots in 64, 128, 256, 512
+//   - Byte nodes have 5, 12, 26, 58 or 257 child slots in 64, 128, 256, 512
 //     and 2080 bytes. Up to 512 bytes these are Go size classes, so every node
 //     is cache-line aligned; above 512 bytes Go prepends a malloc header,
 //     which only the rare 256-way node pays.
@@ -27,9 +27,9 @@
 //     with its real type, one of eight value capacities up to 16 values and
 //     one of eight key areas up to 58 bytes. Beyond that, and for other
 //     values, a leaf holds a vset.Set after its key (set leaves).
-//   - A key that ends at an inner node (a prefix of other keys) is that
-//     node's term leaf. It takes the node's last child slot, which the byte
-//     children reach only when there is no term: few keys are prefixes of
+//   - A key that ends at a byte node (a prefix of other keys) is that
+//     node's end page. It takes the node's last child slot, which the byte
+//     children reach only when there is no end page: few keys are prefixes of
 //     others, so no node pays a field for them.
 //   - In a map whose values are small and pointer-free (at most 8 bytes), keys
 //     with exactly one value need no leaf at all: they live in pages
@@ -39,7 +39,7 @@
 //     of one child per byte, which keeps them full however many keys there
 //     are, and let a range scan walk contiguous memory. A key
 //     that gets a second value leaves its page for a leaf, and where such keys
-//     crowd a range node, its subtree is rebuilt from inner nodes and leaves
+//     crowd a range node, its subtree is rebuilt from byte nodes and leaves
 //     (rebuild.go). Only keys in such a tree's pages and range nodes pay for
 //     that; every other map has none of them.
 //
@@ -96,7 +96,7 @@ const kindMask = 31
 
 // Shrink thresholds: a node turns into the next smaller kind once it holds
 // this many byte children or fewer. They lie below the next smaller capacity
-// less the term's slot, so a node that has just grown does not shrink back
+// less the end page's slot, so a node that has just grown does not shrink back
 // after one removal.
 const (
 	shrink12  = 3
@@ -116,7 +116,7 @@ const maxInline = longKey - 1
 // hold its length. A longer key is held whole, as a string.
 const maxKeyLen = 1<<16 - 1
 
-// header is the common start of all inner nodes (16 B).
+// header is the common start of all byte nodes (16 B).
 type header struct {
 	kind   kind
 	count  uint8                // byte children; a 256-way node keeps its count in node256.total
@@ -191,8 +191,8 @@ type newLeafFunc func(key []byte, base int) *leafHead
 // it, and gets by without the whole key when the longer remainder still fits l.
 type rekeyFunc func(l *leafHead, pre []byte, b int, pathLen int) *leafHead
 
-// Every node kind but the 256-way one keeps its term leaf, if any, in its
-// last child slot, which is free whenever there is a term (see termOf).
+// Every node kind but the 256-way one keeps its end page, if any, in its
+// last child slot, which is free whenever there is an end page (see endPageOf).
 
 type node5 struct { // 64 B
 	header
@@ -218,7 +218,7 @@ type node58 struct { // 512 B
 	child  [58]*header
 }
 
-// node256 holds the child of byte b in child[b] and its term in child[256].
+// node256 holds the child of byte b in child[b] and its end page in child[256].
 // header.count is fixed at 255, since the byte children can number 256.
 type node256 struct { // 2080 B
 	header
@@ -299,7 +299,7 @@ func fillHead(dst, pre []byte, b, pathLen int) {
 	}
 }
 
-// slots returns all child slots of n, including the one its term takes; n must
+// slots returns all child slots of n, including the one its end page takes; n must
 // not be a 256-way or a range node.
 func slots(n *header) []*header {
 	switch n.kind {
@@ -313,12 +313,12 @@ func slots(n *header) []*header {
 	return asN58(n).child[:]
 }
 
-// slotCap and termOff give, by kind, the number of child slots and the offset
-// of the last one, where the term sits. The 256-way node's header count
-// (255) never equals its slotCap (0): its term slot is its own.
+// slotCap and endPageOff give, by kind, the number of child slots and the offset
+// of the last one, where the end page sits. The 256-way node's header count
+// (255) never equals its slotCap (0): its end page slot is its own.
 var (
-	slotCap = [32]uint8{kN5: 5, kN12: 12, kN26: 26, kN58: 58}
-	termOff = [32]uintptr{
+	slotCap    = [32]uint8{kN5: 5, kN12: 12, kN26: 26, kN58: 58}
+	endPageOff = [32]uintptr{
 		kN5:   unsafe.Offsetof(node5{}.child) + 4*ptrSize,
 		kN12:  unsafe.Offsetof(node12{}.child) + 11*ptrSize,
 		kN26:  unsafe.Offsetof(node26{}.child) + 25*ptrSize,
@@ -333,27 +333,27 @@ var (
 
 const ptrSize = unsafe.Sizeof(uintptr(0))
 
-// termOf returns the leaf of the key that ends exactly at n, or nil. It sits
+// endPageOf returns the leaf of the key that ends exactly at n, or nil. It sits
 // in n's last slot, unless the byte children fill every slot.
-func termOf(n *header) *leafHead {
+func endPageOf(n *header) *leafHead {
 	k := n.kind & kindMask
 	if n.count == slotCap[k] {
 		return nil
 	}
-	return *(**leafHead)(unsafe.Add(unsafe.Pointer(n), termOff[k]))
+	return *(**leafHead)(unsafe.Add(unsafe.Pointer(n), endPageOff[k]))
 }
 
-// termSlot returns the address of n's term slot, which holds its term leaf
+// endPageSlot returns the address of n's end page slot, which holds its end page
 // whenever it has one.
-func termSlot(n *header) **header {
-	return (**header)(unsafe.Add(unsafe.Pointer(n), termOff[n.kind&kindMask]))
+func endPageSlot(n *header) **header {
+	return (**header)(unsafe.Add(unsafe.Pointer(n), endPageOff[n.kind&kindMask]))
 }
 
-// setTermSlot stores l, or nil to remove the term, in n's term slot; n must
+// setEndPageSlot stores l, or nil to remove the end page, in n's end page slot; n must
 // have room for it.
-func setTermSlot(n *header, l *leafHead) { *termSlot(n) = leafHdr(l) }
+func setEndPageSlot(n *header, l *leafHead) { *endPageSlot(n) = leafHdr(l) }
 
-// full reports whether n has no room for another byte child or a term.
+// full reports whether n has no room for another byte child or an end page.
 func full(n *header) bool {
 	if n.kind == kN256 || isRange(n.kind) {
 		return false

@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// kindsOf counts the objects below n by kind, terms included.
+// kindsOf counts the objects below n by kind, end pages included.
 func kindsOf(n *header, count map[kind]int) {
 	count[n.kind]++
 	if n.kind <= kLastPage {
 		return
 	}
-	if termOf(n) != nil {
+	if endPageOf(n) != nil {
 		count[kSet]++
 	}
 	if isRange(n.kind) {
@@ -117,7 +117,7 @@ func TestPageKeyLength(t *testing.T) {
 	if pages() == 0 {
 		t.Fatal("keys of three lengths did not go into pages")
 	}
-	if n := leaves(&m); n > 10 { // keys that are the prefix of others end at a node: their leaf is its term
+	if n := leaves(&m); n > 10 { // keys that are the prefix of others end at a node: their leaf is its end page
 		t.Fatalf("%d of %d keys of one value have leaves, want pages for nearly all", n, m.Len())
 	}
 	for k := range ref {
@@ -140,7 +140,7 @@ func TestPageKeyLength(t *testing.T) {
 // prefix of it, or that it is a prefix of, in a map whose keys have the length
 // of the first one. It covers the range node that a leaf and a key for a page
 // get as parents in the ART behind multimap.Ordered: the leaf is the node's
-// term, or the key is.
+// end page, or the key is.
 func TestForkAroundLeaves(t *testing.T) {
 	for _, tc := range []struct{ name, first, leaf, then string }{
 		{"the leaf is a prefix of the key", "wxyz", "wx", "wxab"},

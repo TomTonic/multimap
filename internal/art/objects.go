@@ -149,7 +149,7 @@ func (m *Map[T]) objects(n *header, fn func(Object)) {
 	if isLeaf(n.kind) || isPage(n.kind) {
 		return
 	}
-	if t := termOf(n); t != nil {
+	if t := endPageOf(n); t != nil {
 		fn(m.leafObject(t))
 	}
 	if isRange(n.kind) {
@@ -158,5 +158,5 @@ func (m *Map[T]) objects(n *header, fn func(Object)) {
 		}
 		return
 	}
-	eachInner(n, func(_ byte, c *header) { m.objects(c, fn) })
+	eachByteNode(n, func(_ byte, c *header) { m.objects(c, fn) })
 }

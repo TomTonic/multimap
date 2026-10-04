@@ -20,7 +20,7 @@ import (
 // bytes and longer than the 64K a header can count, keys of every length from
 // 0 to 99 (every size class of the leaves and beyond), zero bytes, dense and
 // sparse integers (which drive nodes through every kind), nodes whose slots a
-// term fills up, and shared string prefixes.
+// end page fills up, and shared string prefixes.
 func keySets() map[string][][]byte {
 	// size is the number of keys of a big set: full, or a tenth of it under the
 	// race detector, which would otherwise take the suite past go test's timeout.
@@ -61,12 +61,12 @@ func keySets() map[string][][]byte {
 	long := []byte("a-compressed-path-longer-than-sixteen-bytes/")
 	for _, fan := range []int{3, 4, 5, 10, 11, 12, 24, 25, 26, 56, 57, 58, 256} {
 		p := append(append([]byte(nil), long...), byte(fan))
-		wide = append(wide, p) // a term next to fan children: fills the node's last slot
+		wide = append(wide, p) // an end page next to fan children: fills the node's last slot
 		for b := range fan {
 			wide = append(wide, append(append(p[:len(p):len(p)], byte(b)), "tail"...))
 		}
 	}
-	// ... and a term that arrives after the fan children filled the node up to
+	// ... and an end page that arrives after the fan children filled the node up to
 	// its capacity, which makes it grow.
 	late := []byte("a-prefix-of-keys-that-end-late/")
 	for _, fan := range []int{5, 12, 26, 58} {
@@ -79,7 +79,7 @@ func keySets() map[string][][]byte {
 	sets["long-prefix-wide"] = append(wide, long[:20], append(long[:30:30], 'Z'))
 
 	// Paths of 64K bytes and more, which the header marks as longPrefix: a
-	// long path with a term, a split inside it, a 256-way node below it, and
+	// long path with an end page, a split inside it, a 256-way node below it, and
 	// two paths of 40,000 bytes that merge into one of 80,001 once the key
 	// between them goes.
 	x, y := bytes.Repeat([]byte("x"), 70000), bytes.Repeat([]byte("y"), 40000)
@@ -576,7 +576,7 @@ func TestLeafLayout(t *testing.T) {
 	}
 }
 
-// TestNodeLayout makes sure that the inner nodes of multimap.Ordered stay the
+// TestNodeLayout makes sure that the byte nodes of multimap.Ordered stay the
 // cache-line sized objects the tree is designed around: every node kind of
 // the adaptive radix tree fills a Go size class of 64, 128, 256 or 512 bytes
 // (the 256-way node excepted), behind a 16-byte header shared by all kinds,
@@ -649,7 +649,7 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	limits := map[kind][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
 		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256},
 		kR8: {1, 8}, kR24: {rShrink[1] + 1, 24}, kR56: {rShrink[2] + 1, 56}, kR256: {rShrink[3] + 1, 256}}[n.kind]
-	count, term := int(n.count), termOf(n)
+	count, endPage := int(n.count), endPageOf(n)
 	if n.kind == kN256 {
 		if n.count != 255 {
 			t.Fatalf("256-way node with header count %d, want 255", n.count)
@@ -665,13 +665,13 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
 		t.Fatalf("kind %d holds %d children, allowed %d..%d", n.kind, count, lo, hi)
 	}
-	if count+b2i(term != nil) < 2 && !pinned(n) {
-		t.Fatalf("node does not branch (kind %d, count %d, term %v): it should have collapsed", n.kind, count, term != nil)
+	if count+b2i(endPage != nil) < 2 && !pinned(n) {
+		t.Fatalf("node does not branch (kind %d, count %d, endPage %v): it should have collapsed", n.kind, count, endPage != nil)
 	}
 	if n.kind != kN256 && !isRange(n.kind) {
 		s := slots(n)
-		if count+b2i(term != nil) > len(s) {
-			t.Fatalf("kind %d holds %d children and a term in %d slots", n.kind, count, len(s))
+		if count+b2i(endPage != nil) > len(s) {
+			t.Fatalf("kind %d holds %d children and a endPage in %d slots", n.kind, count, len(s))
 		}
 		for i := count; i < len(s)-1; i++ {
 			if s[i] != nil {
@@ -690,10 +690,10 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	}
 	end := appendPrefix(slices.Clip(path), n)
 	leaves := 0
-	if term != nil {
-		checkLeaf(t, term, end)
-		if term.keyLen() != len(end) {
-			t.Fatalf("term key of %d bytes does not end at pathLen %d", term.keyLen(), len(end))
+	if endPage != nil {
+		checkLeaf(t, endPage, end)
+		if endPage.keyLen() != len(end) {
+			t.Fatalf("endPage key of %d bytes does not end at pathLen %d", endPage.keyLen(), len(end))
 		}
 		leaves++
 	}
@@ -743,7 +743,7 @@ func eachChild(n *header, fn func(byte, *header)) {
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
 // kind back down through each smaller kind to nothing, collapsing and
 // re-merging common prefixes (short and longer than 12 bytes) on the way,
-// moving the term of the widest node along, and that the tree satisfies its
+// moving the end page of the widest node along, and that the tree satisfies its
 // invariants after every single delete.
 func TestShrinkAndCollapse(t *testing.T) {
 	for _, prefix := range []string{"", "p", "a-path-longer-than-twelve-bytes"} {
@@ -752,7 +752,7 @@ func TestShrinkAndCollapse(t *testing.T) {
 				r := rand.New(rand.NewPCG(uint64(fan), 9))
 				var m Map[uint64]
 				leavesOnly(&m)
-				keys := [][]byte{[]byte(prefix)} // the term of the widest node
+				keys := [][]byte{[]byte(prefix)} // the end page of the widest node
 				for b := range fan {
 					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
 						k := append([]byte(prefix), byte(b))
@@ -935,13 +935,13 @@ func checkPage(t *testing.T, p *vpage.Page, path []byte) int {
 	return len(items)
 }
 
-// pinned reports whether n is a range node of one page and no term. Such a node
+// pinned reports whether n is a range node of one page and no end page. Such a node
 // is allowed: it can stand where the page holds its keys from below the node's
 // path and does not fit the path's bytes (see pageUp), or where a split of the
 // node's path has left it with a page that could stand alone (the next delete
 // through it takes the node away).
 func pinned(n *header) bool {
-	return isRange(n.kind) && asR(n).n == 1 && termOf(n) == nil && isPage(asR(n).children()[0].kind)
+	return isRange(n.kind) && asR(n).n == 1 && endPageOf(n) == nil && isPage(asR(n).children()[0].kind)
 }
 
 // checkRangeNode checks the ranges of range node n, whose path ends at end, and

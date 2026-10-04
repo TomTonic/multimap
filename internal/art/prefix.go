@@ -14,7 +14,7 @@ import (
 // part of its key below its parent.
 //
 // Long prefixes are rare and short: with real URLs and file paths, 2-5% of the
-// inner nodes have one, 18-20 bytes on average. The tail comes in a few
+// byte nodes have one, 18-20 bytes on average. The tail comes in a few
 // classes, 16, 48 or 112 bytes inline or a string beyond, and the class
 // follows from the prefix length, so the node needs no field for it. A node
 // moves to a new object only when a prefix change crosses a class.

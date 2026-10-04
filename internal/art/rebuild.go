@@ -17,8 +17,8 @@ type item struct {
 
 // leafOf returns the leaf of it, ready to stand at pathLen: the leaf it has, or a
 // new one for a key from a page. A leaf never lands above its base: the
-// subtrees that are rebuilt around leaves hold them in inner nodes only (see
-// settle), and in a tree of inner nodes a leaf stands where its key first
+// subtrees that are rebuilt around leaves hold them in byte nodes only (see
+// fallBack), and in a tree of byte nodes a leaf stands where its key first
 // differs from every other key. Every node above a leaf branches on a byte its
 // key shares with another one, so the leaf stood no deeper before.
 func (t *Tree) leafOf(it item, pathLen int) *leafHead {
@@ -43,15 +43,15 @@ func (t *Tree) build(items []item, pathLen int) *header {
 	first, last := items[0].key, items[len(items)-1].key
 	plen := swar.Lcp(first[pathLen:], last[pathLen:])
 	d := pathLen + plen
-	var term *leafHead
+	var endPage *leafHead
 	if len(first) == d {
 		// A key that ends here sorts first.
-		term = t.leafOf(items[0], d)
+		endPage = t.leafOf(items[0], d)
 		items = items[1:]
 	}
 	rs := t.ranges(items, d, nil)
 	rs[0].b = 0
-	return makeR(first[pathLen:d], term, rs)
+	return makeR(first[pathLen:d], endPage, rs)
 }
 
 // ranges appends to out the ranges that hold items, which are sorted,
@@ -103,42 +103,42 @@ func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 
 // Pages pay off only where keys hold one value. Where many keys hold several,
 // their leaves cut the pages between them into pieces of a key or two, and
-// range nodes cost more per level than inner nodes: such a subtree is
+// range nodes cost more per level than byte nodes: such a subtree is
 // faster, and no larger, as a tree without pages.
 //
 // So a tree with pages starts optimistic and falls back where its keys turn
 // out to hold several values. Every key that gets a second value leaves its
 // page for a leaf (see promote). Then the range nodes on its path are
-// checked from the bottom up: once the leaves and inner-node subtrees below
-// a range node outweigh its pages (see crowded), the range node and its
-// subtree are rebuilt from inner nodes and leaves, as a tree without pages
+// checked from the bottom up: once the leaves and byte-node subtrees below
+// a range node outweigh its pages (see needsFallBack), the range node and its
+// subtree are rebuilt from byte nodes and leaves, as a tree without pages
 // would hold them. A parent that gains such a subtree is checked the same
 // way, so the fallback spreads upwards as far as the keys call for it.
 //
-// Below an inner node, a tree never holds pages or range nodes: a new key
-// there gets a leaf, and splits make inner nodes (see upsert). An inner
+// Below a byte node, a tree never holds pages or range nodes: a new key
+// there gets a leaf, and splits make byte nodes (see upsert). A byte
 // node below a range node starts its path with its byte, like every child of a
 // range node, so the two kinds of subtree mix freely. There is no way back to
 // pages, except that a subtree that falls to a single leaf takes new keys in
 // pages again.
 
-// crowdedRatio is how many keys in pages one leaf or inner-node subtree below
+// fallBackRatio is how many keys in pages one leaf or byte-node subtree below
 // a range node outweighs: a range node falls back once more than about one
-// in crowdedRatio+1 of its keys holds several values.
-const crowdedRatio = 4
+// in fallBackRatio+1 of its keys holds several values.
+const fallBackRatio = 4
 
-// rpos is a range node on the path of a key: its slot and the key pathLen its
+// rpos is a range node on the path of a key: its slot and the pathLen its
 // path starts at.
 type rpos struct {
 	loc     **header
 	pathLen int
 }
 
-// settle rebuilds the subtree around key, which has just got a leaf, from
-// inner nodes when keys with several values crowd it: the topmost range
-// node on the key's path that is crowded, counting the subtrees below it
+// fallBack rebuilds the subtree around key, which has just got a leaf, from
+// byte nodes when keys with several values crowd it: the topmost range
+// node on the key's path that needs the fall back, counting the subtrees below it
 // that fall back too.
-func (t *Tree) settle(key []byte) {
+func (t *Tree) fallBack(key []byte) {
 	var buf [16]rpos
 	path := buf[:0]
 	loc, pathLen := &t.root, 0
@@ -146,28 +146,28 @@ func (t *Tree) settle(key []byte) {
 		path = append(path, rpos{loc, pathLen})
 		pathLen += n.prefixLen()
 		if pathLen == len(key) {
-			break // the key's leaf is n's term
+			break // the key's leaf is n's end page
 		}
 		x := asR(n)
 		loc = &x.children()[x.index(key[pathLen])]
 	}
 	top, gained := -1, 0
 	for i := len(path) - 1; i >= 0; i-- {
-		if !crowded(asR(*path[i].loc), gained) {
+		if !needsFallBack(asR(*path[i].loc), gained) {
 			break
 		}
 		top, gained = i, 1
 	}
 	if top >= 0 {
 		p := path[top]
-		*p.loc = t.inner(t.items(*p.loc, p.pathLen, key[:p.pathLen]), p.pathLen)
+		*p.loc = t.byteNodes(t.items(*p.loc, p.pathLen, key[:p.pathLen]), p.pathLen)
 	}
 }
 
-// crowded reports whether the leaves and inner-node subtrees below r
+// needsFallBack reports whether the leaves and byte-node subtrees below r
 // outweigh its pages and range-node subtrees, with gained of the range
-// nodes about to fall back (see crowdedRatio).
-func crowded(r *rhead, gained int) bool {
+// nodes about to fall back (see fallBackRatio).
+func needsFallBack(r *rhead, gained int) bool {
 	multi, keys, ranges := gained, 0, -gained
 	for _, c := range r.children()[:r.n] {
 		switch {
@@ -179,7 +179,7 @@ func crowded(r *rhead, gained int) bool {
 			multi++
 		}
 	}
-	return crowdedRatio*multi > keys+crowdedRatio*ranges
+	return fallBackRatio*multi > keys+fallBackRatio*ranges
 }
 
 // walker collects the keys below a node as items.
@@ -220,7 +220,7 @@ func (w *walker) walk(n *header, pathLen int) {
 	}
 	w.path = appendPrefix(w.path[:pathLen], n)
 	pathLen += n.prefixLen()
-	if t := termOf(n); t != nil {
+	if t := endPageOf(n); t != nil {
 		w.leaf(t)
 	}
 	if isRange(n.kind) {
@@ -229,14 +229,14 @@ func (w *walker) walk(n *header, pathLen int) {
 		}
 		return
 	}
-	eachInner(n, func(b byte, c *header) {
+	eachByteNode(n, func(b byte, c *header) {
 		w.path = append(w.path[:pathLen], b)
 		w.walk(c, pathLen+1)
 	})
 }
 
-// eachInner calls fn for every byte child of the inner node n in byte order.
-func eachInner(n *header, fn func(b byte, c *header)) {
+// eachByteNode calls fn for every byte child of the byte node n in byte order.
+func eachByteNode(n *header, fn func(b byte, c *header)) {
 	switch n.kind {
 	case kN5, kN12:
 		keys, child := sorted(n)
@@ -261,10 +261,10 @@ func eachInner(n *header, fn func(b byte, c *header)) {
 	}
 }
 
-// innerKind returns the smallest kind of inner node with room for groups byte
-// children and, if term, a term leaf.
-func innerKind(groups int, term bool) kind {
-	switch need := groups + b2i(term); {
+// byteNodeKind returns the smallest kind of byte node with room for groups byte
+// children and, if end page, an end page.
+func byteNodeKind(groups int, endPage bool) kind {
+	switch need := groups + b2i(endPage); {
 	case need <= 5:
 		return kN5
 	case need <= 12:
@@ -277,36 +277,36 @@ func innerKind(groups int, term bool) kind {
 	return kN256
 }
 
-// inner returns a subtree of inner nodes and leaves that holds items, which
+// byteNodes returns a subtree of byte nodes and leaves that holds items, which
 // are sorted, distinct and share their first pathLen bytes, as a tree without
 // pages holds them. Keys from pages get a leaf with their value; keys with a
 // leaf keep it.
-func (t *Tree) inner(items []item, pathLen int) *header {
+func (t *Tree) byteNodes(items []item, pathLen int) *header {
 	if len(items) == 1 {
 		return leafHdr(t.leafOf(items[0], pathLen))
 	}
 	first, last := items[0].key, items[len(items)-1].key
 	plen := swar.Lcp(first[pathLen:], last[pathLen:])
 	d := pathLen + plen
-	var term *leafHead
+	var endPage *leafHead
 	if len(first) == d {
 		// A key that ends here sorts first.
-		term = t.leafOf(items[0], d)
+		endPage = t.leafOf(items[0], d)
 		items = items[1:]
 	}
 	groups := 1
 	for i := 1; i < len(items); i++ {
 		groups += b2i(items[i].key[d] != items[i-1].key[d])
 	}
-	n := newNode(innerKind(groups, term != nil), plen)
+	n := newNode(byteNodeKind(groups, endPage != nil), plen)
 	storePrefix(n, first[pathLen:d])
-	setTermSlot(n, term)
+	setEndPageSlot(n, endPage)
 	for i := 0; i < len(items); {
 		j, b := i+1, items[i].key[d]
 		for j < len(items) && items[j].key[d] == b {
 			j++
 		}
-		n, _ = addChild(n, b, t.inner(items[i:j], d+1))
+		n, _ = addChild(n, b, t.byteNodes(items[i:j], d+1))
 		i = j
 	}
 	return n

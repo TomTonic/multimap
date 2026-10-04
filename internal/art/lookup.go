@@ -14,7 +14,7 @@ type Tree struct {
 	size int
 	// Set by Map[T] before the first write: whether its values may go into
 	// pages (small and pointer-free, see pageType), and how to make the leaf of
-	// a key with one raw value, which a rebuild needs as a term and a key that
+	// a key with one raw value, which a rebuild needs as an end page and a key that
 	// gets a second value needs in place of its page entry.
 	small bool
 	at    spot // where upsert found a key that was in a page
@@ -59,7 +59,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 			pathLen += pl
 		}
 		if pathLen == len(key) {
-			t := termOf(n)
+			t := endPageOf(n)
 			if t == nil {
 				return nil, 0
 			}
@@ -129,7 +129,7 @@ func (t *Tree) findSlot(key []byte) **header {
 		pathLen += n.prefixLen()
 		switch {
 		case pathLen == len(key):
-			loc = termSlot(n)
+			loc = endPageSlot(n)
 		case isRange(n.kind):
 			x := asR(n)
 			loc = &x.children()[x.index(key[pathLen])]

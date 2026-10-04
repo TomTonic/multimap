@@ -25,7 +25,7 @@ import (
 // Askitis and Zobel (VLDB Journal 18, 2009), whose buckets are referenced by
 // ranges of trie pointers.
 //
-// Unlike an inner node, a range node does not consume the byte it branches
+// Unlike a byte node, a range node does not consume the byte it branches
 // on: its children start at the same pathLen and check that byte themselves.
 // Pages hold full keys, a leaf holds its key from a base that is at most that
 // pathLen, and a node below a range node has that byte as the first byte of its
@@ -34,14 +34,14 @@ import (
 // child, and a lookup that finds nothing there is a miss.
 //
 // Only trees with pages have range nodes. Such a tree creates range nodes
-// wherever keys hold one value, and inner nodes below where keys with several
-// values crowd it (see settle.go); an inner node below a range node starts its
+// wherever keys hold one value, and byte nodes below where keys with several
+// values crowd it (see rebuild.go); a byte node below a range node starts its
 // common prefix with its byte, like every child of a range node.
 //
 // Layout: the header, a 256-bit bitmap of the range starts (bit 0 is always
 // set), the number of starts in the words before each word, and the children
 // in byte order; the child of byte b is child[r.index(b)]. After the last
-// child comes the slot of the term leaf, as in every node (see termOf). The
+// child comes the slot of the end page, as in every node (see endPageOf). The
 // head fills 56 bytes, so the four classes of 8, 24, 56 and 256 ranges fill
 // 128, 256, 512 and 2112 bytes, three of them Go size classes. A range node
 // keeps header.count at 255, as the 256-way node does, and its number of
@@ -156,13 +156,13 @@ func rClass(n int) int {
 	return c
 }
 
-// makeR returns a new range node with the common prefix p and the term leaf term, which
+// makeR returns a new range node with the common prefix p and the end page end page, which
 // may be nil, and the ranges rs, of which the first must start at 0.
-func makeR(p []byte, term *leafHead, rs []rng) *header {
+func makeR(p []byte, endPage *leafHead, rs []rng) *header {
 	n := newNode(kR8+kind(rClass(len(rs))), len(p))
 	storePrefix(n, p)
 	fillR(n, rs)
-	setTermSlot(n, term)
+	setEndPageSlot(n, endPage)
 	return n
 }
 
@@ -178,12 +178,12 @@ func fillR(n *header, rs []rng) {
 	r.recount()
 }
 
-// remakeR returns a range node with n's common prefix and term and the ranges rs, in the
+// remakeR returns a range node with n's common prefix and end page and the ranges rs, in the
 // smallest class that holds them.
 func remakeR(n *header, rs []rng) *header {
 	y := newLike(n, kR8+kind(rClass(len(rs))))
 	fillR(y, rs)
-	setTermSlot(y, termOf(n))
+	setEndPageSlot(y, endPageOf(n))
 	return y
 }
 

@@ -215,7 +215,7 @@ func (m *Map[T]) Add(key []byte, v T) {
 		m.addToLeaf(loc, asLeaf(n), v)
 		if m.t.size != size && m.t.small && isRange(m.t.root.kind) {
 			// A new leaf among pages: keys that need leaves may crowd them.
-			m.t.settle(key)
+			m.t.fallBack(key)
 		}
 	case m.t.size != size:
 		// A page took the key and its value.

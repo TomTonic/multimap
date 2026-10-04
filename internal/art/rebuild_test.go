@@ -7,7 +7,7 @@ import (
 )
 
 // shape counts the objects of a tree by what they are.
-type shape struct{ pages, ranges, inner, leaves int }
+type shape struct{ pages, ranges, belowByteNode, leaves int }
 
 func shapeOf(n *header) shape {
 	var s shape
@@ -28,10 +28,10 @@ func shapeOf(n *header) shape {
 				walk(c)
 			}
 		default:
-			s.inner++
-			eachInner(n, func(_ byte, c *header) { walk(c) })
+			s.belowByteNode++
+			eachByteNode(n, func(_ byte, c *header) { walk(c) })
 		}
-		if termOf(n) != nil {
+		if endPageOf(n) != nil {
 			s.leaves++
 		}
 	}
@@ -42,7 +42,7 @@ func shapeOf(n *header) shape {
 // TestFallback makes sure a multimap whose keys hold several values keeps
 // the structure that is fast for them, without being told. It covers the
 // key index of Ordered: a tree starts with pages for keys with one value
-// and rebuilds a subtree from inner nodes and leaves once keys with several
+// and rebuilds a subtree from byte nodes and leaves once keys with several
 // values crowd it (rebuild.go), and it keeps its pages where they do not.
 // Every case checks the tree's invariants and its contents.
 func TestFallback(t *testing.T) {
@@ -77,8 +77,8 @@ func TestFallback(t *testing.T) {
 			keys: func(i int) []byte { return fmt.Appendf(nil, "%c%05d", 'a'+i%2, i) }, n: 4000,
 			multi: func(i int) bool { return i%2 == 1 },
 			check: func(t *testing.T, s shape) {
-				if s.pages < 2000/32 || s.inner == 0 || s.leaves < 2000 {
-					t.Errorf("%+v: want the pages of the a-keys and the inner nodes of the b-keys", s)
+				if s.pages < 2000/32 || s.belowByteNode == 0 || s.leaves < 2000 {
+					t.Errorf("%+v: want the pages of the a-keys and the belowByteNode nodes of the b-keys", s)
 				}
 			},
 		},
@@ -98,8 +98,8 @@ func TestFallback(t *testing.T) {
 			n:     4 + 11 + 21 + 51 + 201,
 			multi: func(int) bool { return true },
 			check: func(t *testing.T, s shape) {
-				if s.pages != 0 || s.ranges != 0 || s.inner != 6 {
-					t.Errorf("%+v: want one inner node per group and the root", s)
+				if s.pages != 0 || s.ranges != 0 || s.belowByteNode != 6 {
+					t.Errorf("%+v: want one belowByteNode node per group and the root", s)
 				}
 			},
 		},
@@ -131,23 +131,23 @@ func TestFallback(t *testing.T) {
 	}
 }
 
-// TestFallbackKeepsTerm makes sure a key that is a prefix of other keys
+// TestFallbackKeepsEndPage makes sure a key that is a prefix of other keys
 // keeps all its values when it gets a second one. It covers the fallback of
 // the key index (rebuild.go) where the key's leaf ends at a range node
 // instead of below it: the check starts at that range node.
-func TestFallbackKeepsTerm(t *testing.T) {
+func TestFallBackKeepsEndPage(t *testing.T) {
 	m := &Map[uint64]{}
 	for _, k := range []string{"abc", "abd", "ab"} { // the first key's length is the pages' key length
 		m.Add([]byte(k), 1)
 	}
 	m.Add([]byte("ab"), 2)
 	checkInvariants(t, &m.t)
-	if s := shapeOf(m.t.root); !isRange(m.t.root.kind) || termOf(m.t.root) == nil || s.pages != 1 {
-		t.Fatalf("%+v: want a range node with the term and one page", s)
+	if s := shapeOf(m.t.root); !isRange(m.t.root.kind) || endPageOf(m.t.root) == nil || s.pages != 1 {
+		t.Fatalf("%+v: want a range node with the endPage and one page", s)
 	}
 	m.Add([]byte("abc"), 2)
 	checkInvariants(t, &m.t)
 	if s := shapeOf(m.t.root); s.pages != 0 || s.ranges != 0 || len(valuesOf(m, []byte("ab"))) != 2 {
-		t.Fatalf("%+v: want the term kept in an inner node", s)
+		t.Fatalf("%+v: want the endPage kept in an belowByteNode node", s)
 	}
 }

@@ -69,14 +69,14 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8
 	d := pathLen + pl
 	switch {
 	case d == len(key):
-		// The term's key is the path to n, which key matched: it is key.
-		if termOf(n) == nil {
+		// The end page's key is the path to n, which key matched: it is key.
+		if endPageOf(n) == nil {
 			return absent
 		}
 		if want != nil {
 			return keptLeaf
 		}
-		setTermSlot(n, nil)
+		setEndPageSlot(n, nil)
 	case isRange(n.kind):
 		r := asR(n)
 		i := r.index(key[d])
@@ -124,22 +124,22 @@ func delFromPage(loc **header, key []byte, want *uint64) int8 {
 	return deleted
 }
 
-// collapse replaces an inner or range node n at pathLen, whose common prefix ends at d,
-// that no longer branches: without children it becomes its term leaf, and with
-// a single child and no term it merges into that child, whose common prefix
+// collapse replaces a byte or range node n at pathLen, whose common prefix ends at d,
+// that no longer branches: without children it becomes its end page, and with
+// a single child and no end page it merges into that child, whose common prefix
 // grows by n's common prefix plus the child's byte (which a range node's child already
 // starts with). key is the key just deleted below n, which agrees with every
 // key below n up to d. It returns what should stand in n's place.
 func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 	switch c := childCount(n); {
 	case c == 0:
-		// The node held only its term leaf, or nothing: a range node whose only
+		// The node held only its end page, or nothing: a range node whose only
 		// page could not move up (see pageUp) stays, and its last key may go.
-		if termOf(n) == nil {
+		if endPageOf(n) == nil {
 			return nil
 		}
-		return leafHdr(lift(termOf(n), key[:d], pathLen, rk))
-	case c > 1 || termOf(n) != nil:
+		return leafHdr(lift(endPageOf(n), key[:d], pathLen, rk))
+	case c > 1 || endPageOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
@@ -162,7 +162,7 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 }
 
 // pageUp returns what should stand in the place of the range node n at pathLen,
-// which has no term and one child, page c: the page, which then starts at pathLen,
+// which has no end page and one child, page c: the page, which then starts at pathLen,
 // or n itself if the page cannot take the bytes of n's common prefix in front of its
 // keys.
 func pageUp(n, c *header, key []byte, pathLen int) *header {
@@ -176,7 +176,7 @@ func pageUp(n, c *header, key []byte, pathLen int) *header {
 	return n
 }
 
-// childCount returns the number of byte children of an inner node, or of ranges
+// childCount returns the number of byte children of a byte node, or of ranges
 // of a range node.
 func childCount(n *header) int {
 	if isRange(n.kind) {
@@ -225,7 +225,7 @@ func removeChild(n *header, b byte) *header {
 			z := asN26(y)
 			z.bitmap = x.bitmap
 			copy(z.child[:], x.child[:x.count])
-			setTermSlot(y, termOf(n))
+			setEndPageSlot(y, endPageOf(n))
 			return y
 		case n.kind == kN26 && n.count <= shrink26:
 			x := asN26(n)
@@ -239,7 +239,7 @@ func removeChild(n *header, b byte) *header {
 					i++
 				}
 			}
-			setTermSlot(y, termOf(n))
+			setEndPageSlot(y, endPageOf(n))
 			return y
 		}
 		return n
@@ -267,7 +267,7 @@ func removeChild(n *header, b byte) *header {
 		z := asN5(y)
 		copy(z.keys[:], keys[:last])
 		copy(z.child[:], child[:last])
-		setTermSlot(y, termOf(n))
+		setEndPageSlot(y, endPageOf(n))
 		return y
 	}
 	return n
@@ -287,6 +287,6 @@ func n256To58(x *node256) *header {
 			i++
 		}
 	}
-	setTermSlot(y, termOf(&x.header))
+	setEndPageSlot(y, endPageOf(&x.header))
 	return y
 }

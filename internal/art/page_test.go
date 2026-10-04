@@ -171,7 +171,7 @@ func checkValueType[T comparable](t *testing.T, vs []T) {
 // shape underneath. It covers the ART behind multimap.Ordered where a key of
 // a page, which holds exactly one value per key, gets a second value: the key
 // gets a leaf with a value set and a range of its own, and the page's other
-// keys stay in pages around it. A key with a leaf can become a node's term
+// keys stay in pages around it. A key with a leaf can become a node's end page
 // key, and values and keys are removed again. After every step the map must
 // match a reference and satisfy the structural invariants.
 func TestPagePromotion(t *testing.T) {
@@ -212,7 +212,7 @@ func TestPagePromotion(t *testing.T) {
 	}
 	add(key(1, 0), 2)  // the first key of a page
 	add(key(1, 39), 2) // and the last
-	// A shorter key makes a key with a leaf the term of a range node.
+	// A shorter key makes a key with a leaf the end page of a range node.
 	add([]byte{9, 9, 9, 9, 9, 9, 0}, 7, 8)
 	for b := range byte(40) {
 		add([]byte{9, 9, 9, 9, 9, 9, 0, b, 1}, 1)
