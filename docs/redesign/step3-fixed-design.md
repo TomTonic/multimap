@@ -37,10 +37,16 @@ slot (the typed leaf does that today). Equality is `T`'s `==` on the value read 
 ## 3. Allocation: pointer-free and pointer-holding
 
 - **Pointer-free `T`** (of 1 to 16 bytes, as `flatType` today): the object is `[N]uint64`, never scanned, as the string page is. One code path for the classes.
-- **`T` that is one word with a pointer** (`*X`, `unsafe.Pointer`, a struct or array of one pointer; `typedType` accepts up to 64 bytes today): the object must be a Go type with
-  its pointers marked. Words 0 to J-1 hold head and remainder (no pointer), words J on hold the values: `struct{ h [J]uint64; v [W-J]T }` with `W` = size class / 8 and
-  `J` = 1 to 8 (a remainder of up to 58 bytes): **42 types**, a switch like `allocTyped` has today (generated). A remainder above 58 bytes makes the key a value overflow
-  at once (key inline in the grid, `Set3[T]`): `street` has 6 such keys of 212,449 (0.003 %), `dirs` 116 of 86,215 (0.135 %).
+- **`T` that is one word with a pointer** (`*X`, `unsafe.Pointer`, a struct or array of one pointer): the object must be a Go type with its pointers marked. Words 0 to J-1 hold
+  head and remainder (no pointer), words J on hold the values: `struct{ h [J]uint64; v [W-J]T }`, `W` = size class / 8 (4, 8, 16, 32, 48, 64) and `J` = 1 to `W-1` (at least one
+  value slot). **166 types** (3 + 7 + 15 + 31 + 47 + 63), a switch like `allocTyped` has today, generated. (First version of this note: 42 types, from a remainder of at most 58 bytes
+  taken over from the typed leaf. **Wrong, user's correction 2026-10-04:** the remainder is limited only by the page, see below.) The count does not depend on the size of the head
+  (6 bytes today for historical reasons, 3 later): the head and the remainder fill `J` words whatever the head is.
+- **The limit of the remainder** is what the page leaves: 512 - head - 8 (one value slot), i.e. 498 bytes with today's head. If the remainder is long, few values fit (a remainder
+  of 480 bytes: 3 pointers), and when more come, the key becomes a value overflow with `Set3[T]`; that is the one rule for every length. A remainder above 498 bytes is held as a string by the
+  value overflow, as for strings. There is no extra case for "long remainder".
+- **Return from the value overflow** (a point to settle in the code, not new): the string page returns at 256 bytes of *content* including the remainder, so a key with a remainder of
+  300 bytes could never return. The rule to build for both flavors: return when the **values** take at most half of the room the page has for them (512 - head - remainder).
 - **Every other `T`** (an interface, a string-holding struct, more than 16 bytes): *not a page*; the key is a value overflow from its first value. Slow and large per key, but
   exact; **this narrows what `Ordered` is good for** (the typed leaf took pointer-holding `T` up to 64 bytes). Decision 2.
 
