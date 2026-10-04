@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/TomTonic/multimap/bench/keys"
 )
@@ -34,6 +35,7 @@ var (
 	goClasses = []int{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512}
 )
 
+var sets = flag.Bool("sets", false, "also compare sets of size classes")
 var detail = flag.Bool("detail", false, "also print the distribution of the page contents and examples")
 
 func main() {
@@ -109,6 +111,9 @@ func row(kind keys.Kind, n int, unique bool) {
 	name := "multi"
 	if unique {
 		name = "unique"
+	}
+	if *sets {
+		classSets(kind, unique, sizes)
 	}
 	if *detail {
 		histogram(kind, unique, sizes)
@@ -204,5 +209,50 @@ func examples(c keys.Corpus, es []entry, sizes, rems []int) {
 			vs = append(vs[:6], fmt.Sprintf("... (%d values)", len(es[i].vals)))
 		}
 		fmt.Printf("- p%.0f: %q; remainder %d B; %q; content %d B\n", 100*q, es[i].key, rems[i], vs, sizes[i])
+	}
+}
+
+// classSet is a named set of size classes for the comparison of -sets.
+type classSet struct {
+	name    string
+	classes []int
+}
+
+var classSets_ = []classSet{
+	{"128, 256, 384, 512 (plan)", grid},
+	{"64 + plan", []int{64, 128, 256, 384, 512}},
+	{"32, 64 + plan", []int{32, 64, 128, 256, 384, 512}},
+	{"32, 64, 96 + plan", []int{32, 64, 96, 128, 256, 384, 512}},
+	{"32, 64, 96, 128, 192, 256, 384, 512", []int{32, 64, 96, 128, 192, 256, 384, 512}},
+	{"16, 32, 48, 64 + plan", []int{16, 32, 48, 64, 128, 256, 384, 512}},
+	{"Go's classes up to 512", goClasses},
+}
+
+// classSets prints, for each set of size classes, the bytes a page per key
+// takes, how full the pages are, and the share of keys in each class.
+func classSets(kind keys.Kind, unique bool, sizes []int) {
+	name := "multi"
+	if unique {
+		name = "unique"
+	}
+	fmt.Printf("\n%s, %s: sets of size classes\n\n| size classes | page B/key | content B/key | fill | keys per class |\n|---|--:|--:|--:|---|\n", kind, name)
+	for _, cs := range classSets_ {
+		var total, content float64
+		share := make([]int, len(cs.classes))
+		for _, sz := range sizes {
+			c := min(sz, 512)
+			cl := classFor(cs.classes, c)
+			total += float64(cl)
+			content += float64(c)
+			share[sort.SearchInts(cs.classes, cl)]++
+		}
+		f := float64(len(sizes))
+		var parts []string
+		for i, c := range cs.classes {
+			if share[i] > 0 {
+				parts = append(parts, fmt.Sprintf("%d: %.1f %%", c, 100*float64(share[i])/f))
+			}
+		}
+		fmt.Printf("| %s | %.1f | %.1f | %.0f %% | %s |\n", cs.name, total/f, content/f, 100*content/total, strings.Join(parts, ", "))
 	}
 }
