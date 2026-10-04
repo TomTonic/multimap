@@ -4,7 +4,8 @@ Report: [docs/redesign/step3-tree-pages.md](../../../docs/redesign/step3-tree-pa
 Windows, native, `-suite dev -minprocs 6 -maxprocs 12 -memn 262144 -memrounds 3`, three sizes (4,096,
 16,384 and the corpus), `-tags strvals`. `pc/<run>/` holds `speed-summary.md`, `mem-summary.md`, the raw
 `speed.jsonl`/`mem.jsonl` and `run.json`. The M1 jobs `l1` to `l4` of `bench/remote/queue.txt` repeat the
-`lp8` runs; their results will be on the branch `arm-results`.
+`lp8` runs; their results will be on the branch `arm-results`. The code that produced these runs (the
+candidates `ordered-lpage*`, `internal/artstr`) is on the branch `mkmv-experiment`, not on `cacheline`.
 
 | run | code | scenario |
 |---|---|---|

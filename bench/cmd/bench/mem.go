@@ -62,9 +62,6 @@ func runMem(kind keys.Kind, profile string, n int, impl string, cycles int, seed
 	case btreeMapC:
 		m := buildBtreeMap(c.Keys.S, vals, offs)
 		keep, remove = m, func(i int) { m.Delete(c.Keys.S[i]) }
-	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
-		m := buildLP(c.Keys.B, vals, offs, impl)
-		keep, remove = m, func(i int) { m.RemoveKey(c.Keys.B[i]) }
 	case baseline:
 		m := baseKit.build(c.Keys.B, vals, offs)
 		rm := baseKit.removeKey(m)

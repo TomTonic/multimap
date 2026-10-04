@@ -6,6 +6,12 @@ for on the evening of 2026-10-03: hang the multi-key page of layout B (the lengt
 data sets. The single-key page (SKMV) is not built. Raw results:
 [bench/results-layout/step3-tree/](../../bench/results-layout/step3-tree/README.md).
 
+> **2026-10-04, after the user's review:** the code of this experiment (`internal/artstr`, the bench
+> candidates `ordered-lpage*`, `objstat -pages`) is parked on the branch `mkmv-experiment` (`2adf119`) and
+> removed from `cacheline`; the commands under "Reproduce" work there. The conclusions in "What follows from
+> it" are superseded by the user's order: the single-key page first, the multi-key page with single-value
+> entries next, multi-value entries in multi-key pages (`Pairs`) last (PLAN.md). The measurements stand.
+
 ## Short version
 
 1. **The decision "a page holds entries with one value" empties the idea on the real data.** In the natural

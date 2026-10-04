@@ -1,5 +1,46 @@
 # Status
 
+## 2026-10-04 morning: review of the night, new order, plan revised
+
+The user had the night's work reviewed (Opus) and set the course:
+
+- **Order:** the single-key page (SKMV) first, with `string -> {string}` as the base case, then
+  `string -> {uint64}`, `string -> {*T}`, `uint64 -> {*T}`; then the multi-key page (MKSV) as the special
+  case; multi-value entries in multi-key pages (MKMV) last.
+- **Decisions** (2026-10-04): in step 3 the tree is byte nodes plus one single-key page per key
+  (multi-key pages and the fall back off); string values are stored as bytes and copied out (no
+  zero-copy); gate 3 holds credo 1 and the memory hard and reports the rest (a cell below 0.70 needs its
+  cause); the MKMV experiment is parked.
+- **Explainability** is now a working rule: design note with a prediction before code, no knob
+  without a reason, stop at surprises instead of building alternatives ([PLAN.md](PLAN.md)).
+
+What the review found (reported to the user):
+
+- The finding of the night holds and supports the new order: on the natural mix the fall back takes
+  every multi-key page away, so the single-key page carries the real multi data.
+- The night built MKMV (`Map.Pairs`), which the user had excluded, and tuned constants by sweeps
+  (header 16 to 64 bytes, a 384-byte class, `MinHeader`, `ShrinkFill`, `MergeFill`, the fall back ratio).
+- `internal/artstr` was a full copy of `internal/art` with dead code (coverage 76.9 %), `internal/lpage`
+  is at 98.7 % and its package doc was stale.
+- History was rewritten (`filter-branch`, unpushed commits) against the plan's rule; a second binary
+  (`bench/cmd/bench/bench`, 17.7 MB, commit `b8e4111`) had been pushed. It is removed in a normal commit
+  and ignored; the history keeps it (no rewrite of pushed commits).
+- The bench's timed loops read only the header of a string value, which favours candidates that hold
+  pointers to the caller's strings (fixed in step 3.0).
+- The glossary was not in the code (about 900 old words in `internal/art`) and itself out of date.
+  Updated; the renames in the code are step 3.0.
+
+Done this morning: branch `mkmv-experiment` (`2adf119`, pushed) holds the experiment; on `cacheline`
+`internal/artstr`, the bench candidates `ordered-lpage*` and `objstat -pages` are removed (the reports and
+raw results stay). PLAN.md, GLOSSARY.md, STRATEGY.md (credo 3 loosened for step 3, 384-byte pages in R1,
+the order in 4.2) revised. M1: `l1` finished at 08:21; `l2` to `l4` run until about 10:05 (input only).
+
+**Next action:** step 3.0 of PLAN.md (renames, the bench reading values, `ptrvals`, the reference runs),
+then the design note 3.1 for the user.
+
+**Housekeeping for the user:** the local branch `backup-before-filter` (the state before the history
+rewrite) can be deleted; nothing on it is needed.
+
 ## 2026-10-04 night: the multi-key page hangs in the tree (strings), measured; the rule does not hold up on real data
 
 The user asked (2026-10-03, evening) for the multi-key page for strings in the tree, measured against

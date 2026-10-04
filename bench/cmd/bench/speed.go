@@ -237,8 +237,6 @@ func (f *fixture) pointSum(impl string, i int) uint64 {
 	case btreeMapC:
 		v, _ := f.bm.Get(s)
 		return checkWeigh(v)
-	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
-		return sum(f.lpOf(impl).ValuesForSeq(k))
 	}
 	return baseKit.sum(f.base, k)
 }
@@ -255,8 +253,6 @@ func (f *fixture) rangeSum(impl string, from, to keys.Set, i int) uint64 {
 		return mapRangeSum(f.gm, from.S[i], to.S[i])
 	case btreeMapC:
 		return btreeMapRangeSum(f.bm, from.S[i], to.S[i])
-	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
-		return sum(f.lpOf(impl).ValuesBetweenInclusiveSeq(from.B[i], to.B[i]))
 	}
 	return baseKit.rangeSum(f.base, from.B[i], to.B[i])
 }
@@ -310,9 +306,6 @@ func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
 	case btreeMapC:
 		b := m.(*btreeMap)
 		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return checkWeigh(v) }
-	case orderedLP, orderedLPZ, orderedLPM, orderedLPMZ:
-		l := m.(*lpMap)
-		return l.NumberOfKeys(), func(i int) uint64 { return sum(l.ValuesForSeq(kb[i])) }
 	}
 	return baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, kb[i]) }
 }

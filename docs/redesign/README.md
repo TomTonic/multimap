@@ -14,7 +14,9 @@ Start here when you resume the work.
    (step 2) and their measurements.
 5a. Step 3 so far: [step3-layout.md](step3-layout.md) (the two page layouts compared),
    [step3-real-data.md](step3-real-data.md) (the two real data sets, the tree of today),
-   [step3-tree-pages.md](step3-tree-pages.md) (the multi-key page in the tree, for strings).
+   [step3-tree-pages.md](step3-tree-pages.md) (the multi-key page in the tree, for strings; its code,
+   with the MKMV experiment, is parked on the branch `mkmv-experiment`). Since 2026-10-04 step 3 is the
+   single-key page (SKMV); see PLAN.md.
 6. The tools: `bench/cmd/objstat` (the object statistic), `bench/cmd/pagefill` (bytes per key of
    the page prototype `internal/vpage`), `bench/remote/` (the arm64 job queue and its runner, see
    MEASURING.md).

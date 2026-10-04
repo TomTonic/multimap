@@ -171,10 +171,8 @@ func (c config) stream() stream { return stream{c.ratio, c.permChurn} }
 func (c *config) validate() error {
 	for _, v := range vsOnly {
 		switch {
-		case !slices.Contains([]string{hashed, btreeSets, mapSets, btreeMapC, baseline, orderedLP, orderedLPZ, orderedLPM, orderedLPMZ}, v):
+		case !slices.Contains([]string{hashed, btreeSets, mapSets, btreeMapC, baseline}, v):
 			return fmt.Errorf("-vs: unknown candidate %q", v)
-		case slices.Contains(lpImpls, v) && !hasPages:
-			return fmt.Errorf("-vs %s: build the bench with -tags strvals", v)
 		case v == baseline && baseKit == nil:
 			return fmt.Errorf("-vs baseline: build the bench with -tags baseline after go run ./cmd/mkbaseline")
 		}

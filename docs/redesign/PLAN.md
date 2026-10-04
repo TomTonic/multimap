@@ -8,201 +8,260 @@ Branch: `cacheline`, forked from `node-pages` (`node-pages` and `node-layout` ar
 pushed). Worktree: `/mnt/c/temp/code/multi_map-layout`. `main` stays untouched until the user
 decides to merge.
 
+**Revised 2026-10-04** (review of the night of 2026-10-03/04): the order of the work is now
+single-key page (SKMV) first, then the multi-key page (MKSV) as a special case, then multi-value
+entries in multi-key pages (MKMV) last. The base case is `string -> {string}`: a key with a set of
+strings. The rules below that are marked *new* come from that review.
+
 ## Working rules
 
 - **Language.** Talk to the user in German. Code, comments, commit messages and documents in the
   repository are English.
-- **Commits.** Commit only after the user approved. Push only when the user asks (job queue
-  pushes for arm64 included). Never run destructive git commands.
+- **Explainable before fast** *(new)*. The user must be able to follow every step: what is built,
+  why, and what the measurement says about it. Optimizing without a model of the cause is not
+  allowed. Concretely:
+  - **Design before code.** Every sub-step that builds an object starts with a design note (at
+    most about two pages, in the words of [GLOSSARY.md](GLOSSARY.md)): the layout byte by byte, the
+    operations, the rounds of cache-line loads of each (R5), and a **prediction** in numbers
+    (memory per key from a model of the real data, rounds per lookup). The user approves the note
+    before code is written.
+  - **Predict, then measure.** The report compares the measurement with the prediction. A deviation
+    of more than about 10 % is explained (cause found and shown, for example with a profile or an
+    object statistic) before anything else changes.
+  - **No knob without a reason.** Every constant (size classes, thresholds, fill limits, header
+    sizes) comes from the design with its reason: a cache line, a size class, an R rule, a share of
+    the real data. Sweeping a constant to pick the best value is not a reason; a sweep may only
+    confirm that the chosen value is not next to a cliff. New tuning variables (`var X` for
+    experiments, environment variables) need the user's approval.
+  - **One question per run.** Write down the question a benchmark run answers before starting it.
+- **Stop at surprises** *(new)*. If a measurement says that a decision of the user or the design
+  does not work, stop, write it up with the numbers and the options, and ask. Do not build the
+  alternative. (The night of 2026-10-03/04 built multi-value entries in multi-key pages where the
+  multi-key page with single-value entries had been asked for.)
+- **Glossary** *(new)*. Code, comments and documents use the words of [GLOSSARY.md](GLOSSARY.md).
+  A new concept gets a glossary entry before it gets a name in code. A retired word in new or
+  changed code is a review finding. Up to 2026-10-04 the code still spoke the old words (`leaf`,
+  `term`, `depth`, `inner`, `settle`, `crowded`, `suffix`); step 3.0 fixes that.
+- **Commits.** Commit and push at every valuable point without asking (user decision 2026-10-02);
+  push from WSL with `git -c credential.helper= -c credential.helper='!gh auth git-credential' push origin cacheline`.
+  **Never rewrite history** *(new)*: no `filter-branch`,
+  `rebase`, `reset --hard`, `commit --amend` of pushed commits, or force-push. A file committed by
+  mistake is removed in a new commit. Before every commit run `git status` and check that no binary
+  or scratch file is staged (`*.test`, `bench/cmd/bench/bench`, `*.exe` are ignored).
 - **Commit messages.** Follow AGENTS.md: imperative mood, subject at most 72 characters, a
   blank line, a body that says why. End with the `Co-Authored-By` trailer of the model that
   did the work.
 - **Code checks.** Every commit keeps:
-  - 100% coverage per package;
+  - 100% coverage per package (prototypes in their own package included);
   - `go test ./... -race` passing;
-  - `golangci-lint run` clean;
+  - `golangci-lint run` clean (the generated copy in `bench/baseline` is not ours);
   - the fuzz test running 60 s without a finding (`go test ./internal/art -run '^$' -fuzz FuzzOperations -fuzztime 60s`).
 - **Test docs.** Test documentation reads outside-in (AGENTS.md).
 - **Measuring.** See [MEASURING.md](MEASURING.md): claims only from interleaved rtcompare runs,
-  durations with clock time, a quiet machine during runs.
+  durations with clock time, a quiet machine during runs, one run at a time on the PC. Tell the
+  user the duration and the expected end of every run longer than a few minutes. Jobs for the M1
+  only through `bench/remote/queue.txt`.
+- **Data.** The real data sets `street` and `dirs` (real keys, real value counts, real names as
+  string values) decide. A design is never discarded because of a synthetic corpus; synthetic keys
+  (`u64`, `str`, ...) may show a problem, not settle a decision.
 - **Reports.** Report faithfully. Numbers that speak against a step go into the report and the
   results README just like the good ones. A gate that is missed is reported as missed, with the
   options. It is not explained away.
 - **Backups.** Keep backups of uncommitted work outside WSL's `/tmp` (for example
   `C:\temp\bench-win`). Never `git checkout` a file with uncommitted edits.
-- **References.** `node-layout` (`7b8a8d8`) is the reference for credo 3 (regression). The
-  last step's commit is the reference for diagnosis (`-vs baseline`). The competitors are the
-  reference for credo 1 and 2.
+- **References.** `node-layout` (`7b8a8d8`: byte nodes and a leaf per key, no pages) is the
+  reference of step 3: the single-key page replaces its leaves one to one. The competitors
+  (`btree-sets`, `map-sets`, `hashed`; `btree-map` for one value per key) are the reference for
+  credo 1 and 2.
 
-## Step 0: groundwork (done 2026-10-02, waiting for the gate)
+## Steps 0 to 2 (done)
 
-1. **Object statistic as a tool.** `art.Map.Objects` (`internal/art/objects.go`) walks every
-   object of a tree and reports label, size, whether it holds pointers, and the keys it holds;
-   `art.Block` turns a size into the block the Go allocator takes. Tests compare both with the
-   runtime (`TestBlock`, `TestObjectSizes`) and check that the objects account for every key
-   (`TestObjects`). `bench/cmd/objstat` prints the table of
-   [objstat-node-pages.md](objstat-node-pages.md) for every bench case, at the corpus maximum for
-   `path` and `street`. **Every new object kind of the redesign needs a case in `object()`**;
-   `TestObjects` and the tool's check that the objects hold all keys fail without one.
-2. **Probe order of `valuesFor`.** `keys.Corpus.Probes` is the hits for corpora of 262 144 keys
-   and more, else 262 144 random picks of the keys. `valuesFor` uses it. Documented in
-   `bench/README.md`: `valuesFor` numbers at 4K and 16K from before are not comparable.
-3. **arm64 job queue.** `bench/remote/queue.txt` and `bench/remote/arm-run.sh`, see
-   MEASURING.md. Tested with a dry-run test (`bench/remote`) and once end to end on Linux
-   against a local bare repository, with and without a baseline. Not yet tried on macOS.
-4. **Test run time.** Under the race detector the key sets of `TestAgainstReference` are a tenth
-   of their size and the 64K-path set runs in two leaf modes only (`race_on_test.go`,
-   `race_off_test.go`). `go test ./... -race` takes 3.5 minutes instead of more than 20, with
-   100% coverage in both modes.
+- **Step 0, groundwork** (2026-10-02, gate 0 met): the object statistic (`art.Map.Objects`,
+  `bench/cmd/objstat`), the probe order of `valuesFor`, the arm64 job queue (`bench/remote/`), a
+  shorter race test. A/A runs on the M1: noise about ±1 % for point operations, ±3 % for ranges.
+- **Step 1, the page prototype** (2026-10-02, [step1-results.md](step1-results.md)): the multi-key
+  page of layout A (`internal/vpage`, a directory of tags), two rounds per lookup (R5 restated as
+  rounds), the common prefix of a page.
+- **Step 2, pages in the tree for every key with one value** (2026-10-02,
+  [step2-design.md](step2-design.md), [step2-results.md](step2-results.md)): gate 2 not met; the user
+  ticked it off on 2026-10-03 as "not met, deficits noted" (small maps and `u64` slower; ranges,
+  memory and GC much better).
 
-**Gate 0:**
-- The user has reviewed the tool, the probe order and the runner.
-- The object statistic of `node-pages` is reproduced and committed as the starting point (done:
-  `objstat-node-pages.md`, produced by the tool).
-- The arm64 A/A run (`node-pages` against itself, u64 and str, 4K and 16K) is between 0.97 and
-  1.03, or its deviation is explained. This needs the tools committed and pushed first, and the
-  user starting the job.
+## Step 3 so far (2026-10-03/04): what was learned before the order changed
 
-## Step 1: prototype the page for variable keys (isolated; done 2026-10-02, see step1-results.md)
+Three pieces of work are done and stay valid as input; none of them is a decision.
 
-Build the page of STRATEGY 4.1 as a self-contained unit, not yet wired into the tree (built as its
-own package, `internal/vpage`, so that it stays out of the tree's coverage until step 2).
-- Operations: build from sorted items, search, insert, delete, split, merge, iterate from a
-  bound.
-- One value per key only (step 3 adds more).
+- [step3-layout.md](step3-layout.md): the two candidate layouts of the multi-key page, A
+  (`internal/vpage`, directory of tags) and B (`internal/lpage`, a header of lengths, the user's
+  sketch), compared standalone. B is smaller, A faster for short keys.
+- [step3-real-data.md](step3-real-data.md): today's tree on the real data. With string values its
+  range scans are 2.6 to 4.2 times slower than `btree-map`'s, because of the leaf per key with a
+  string header.
+- [step3-tree-pages.md](step3-tree-pages.md): layout B in a copy of the tree, for string values.
+  **On the natural mix of `street` and `dirs`, the fall back takes away every multi-key page**, so the
+  tree is nodes plus one object per key: for real multi data, the single-key page is what decides.
+  The same night built multi-value entries in multi-key pages (`Map.Pairs`, MKMV) as an option; that
+  code is parked on the branch `mkmv-experiment` (`2adf119`, pushed) and comes back in step 5. Its
+  numbers (memory -36 to -40 %, mutation 0.4 to 0.9 of today's) are the starting point there.
 
-**Inputs.** Real suffixes: take the keys of each bench corpus, cut off what a tree of
-`node-pages` routes in nodes (the depth of each leaf), and fill pages of 128, 256 and 512 bytes
-in random insertion order.
+## Step 3: the single-key page (SKMV) (decided 2026-10-04)
 
-**Questions this step must answer** (diagnostic microbenchmarks are fine here, this is a
-prototype):
+**Goal.** One object per key that holds the key's remainder and all its values, replacing flat,
+typed and set leaves, and efficient for the four cases the user named:
 
-| question | measure |
-|---|---|
-| bytes per key by key kind, at the fill random insertion leaves | must not exceed today's leaf plus its child pointer (`node-pages` objstat and memory figures) |
-| head format: first 8 suffix bytes vs 7 bytes + length | compares per lookup, misses per lookup |
-| tail compare: rounds per lookup | R5: at most two rounds (directory, then everything else together) |
-| page classes and split rule (by count or by bytes) | fill after random inserts, bytes per key |
-| insert and delete cost (memmove, heap compaction) | ns per operation against appending to a leaf |
-| bloom filter: keep or drop | misses answered from the head |
+| case | key | values | why |
+|---|---|---|---|
+| base case, first | `string` | set of `string` | the user's main use; values stored as bytes |
+| | `string` | set of `uint64` | fixed-size values without pointers |
+| | `string` | set of `*T` | values with pointers: the page is typed for the GC |
+| | `uint64` | set of `*T` | integer keys with pointers as values |
 
-**Gate 1:** report to the user with numbers per key kind. Decide on a layout. Continue only if
-memory per key does not exceed today's leaves for any key kind and a lookup inside a page takes at
-most two rounds of cache-line loads (R5; a round is defined in STRATEGY.md section 2). Otherwise
-stop and discuss. (Decided 2026-10-02: the criterion was "at most two lines after the head"; step 1
-showed that rounds, not lines, are what a cold lookup pays for, and the user restated it as rounds.)
+**The tree in this step** (decided 2026-10-04): byte nodes and one single-key page per key. A key
+with one value has a single-key page with one value (SKSV is the special case of SKMV). The
+multi-key pages of step 2 and the fall back are **switched off** in this step, so that the
+measurement shows the single-key page against the leaf it replaces and nothing else. They come back
+in step 4. (A switch in `internal/art` is needed; today `crowdedRatio` is a constant and pages are
+always on.)
 
-## Step 2: pages for keys with one value, every key kind (done 2026-10-02, gate 2 not met; ticked off as "not met, deficits noted" by the user on 2026-10-03, see step2-results.md)
+**String values** (decided 2026-10-04): stored as bytes inside the page, pointer-free; a lookup
+copies them out (one allocation for the values of a key, as `EachString` in `internal/lpage` does).
+Zero-copy (immutable pages, strings that are views) is not pursued. For comparison, the layout for
+fixed-size values with `T = string` (16-byte headers, the page typed for the GC, no copy) is
+measured once in 3.3, since that layout exists anyway for pointers.
 
-Wire the page of step 1 into the tree. It replaces the U8 pages.
-- Every key with exactly one value lives in a page below range nodes, whatever its length.
-- Keys with several values keep their leaves for now.
-- Keep the fallback (`settle`/`crowded`): a subtree whose keys mostly hold several values
-  becomes inner nodes and leaves.
+### 3.0 Groundwork (no new structure)
 
-**Measure** (Windows, dev suite):
-- unique against `node-pages`, all key kinds, with memory;
-- unique against `btree-map`;
-- multi against `node-pages` (must stay neutral);
-- the object statistic of every case.
+1. **Glossary in the code.** Pure renames in `internal/art`, `internal/vpage` and `internal/lpage`,
+   one commit per package, no change of behaviour (tests unchanged). Rename what survives step 3:
+   `term` to end page, `depth`/`base` to path length, `inner` to byte node, `settle`/`crowded` to fall
+   back, `suffix` to remainder, `class` to size class where it means one. `leaf` is not renamed: the
+   leaves disappear in 3.3.
+2. **The bench reads the values it times.** Today the timed loops read only the header of a string
+   value (`weigh` in `bench/cmd/bench/value_str.go`), which favours every candidate that holds
+   pointers to the caller's strings: a real caller reads the bytes and pays the cache miss there.
+   Make `weigh` read the length and the first byte. Note in `bench/README.md` that string-value numbers
+   before and after are not comparable.
+3. **Pointer values in the bench.** A build tag `ptrvals` with `V = *T` (`T` a small record of 16
+   bytes, one object per distinct value, as an application would have), next to `strvals`.
+4. **The reference runs** (PC; then the same as M1 jobs): `node-layout` (`mkbaseline -ref 7b8a8d8`,
+   check that it builds with today's bench) and the competitors, for the four cases on `street`
+   and `dirs` (multi and unique; sizes 4,096, 16,384 and the corpus) and `u64` keys with `*T`
+   values (4K, 16K, 256K). These are the numbers step 3 is measured against.
 
-**Gate 2:**
-- **Lookup gate:** point lookups (`valuesFor`) of string keys at 16K-64K keys at least 0.85 of
-  `node-layout`, else pages only for short suffixes. (Step 1 measured pages alone; this is the first
-  time they sit below a tree.)
-- Credo 1 and 2 for every key kind with one value per key. Ranges at least `btree-map`, memory
-  at most `btree-map`. That closes the str, uuid, email, url, path and street gap.
-- No cell below 0.85 against `node-layout` (credo 3), 4K and 16K included.
-- u64 not worse than `node-pages` beyond noise.
-- Objects of unique cases: at least 95% at multiples of 128 bytes.
+### 3.1 Design note (`step3-skmv-design.md`, approved by the user before code)
 
-## Step 3: several values per key (redesigned 2026-10-03, see GLOSSARY.md)
+Start from the user's sketch ([whataleafneedstostore.md](whataleafneedstostore.md), SKMV cases 2a
+to 2d). The note must answer:
 
-Decided with the user on 2026-10-03: a page may hold **one multi-value entry** (the single-key page,
-SKMV in [whataleafneedstostore.md](whataleafneedstostore.md)). No page holds entries with different
-numbers of values for now. The leaf kinds go; what they did moves into the single-key page.
+- **Layout for variable-length values** (strings): kind byte, remainder length, number of values,
+  value lengths, remainder bytes, value bytes. Where the remainder lies relative to the value
+  lengths, so that the key check of a lookup needs one round and `ValuesFor` two at most (R5).
+  How many values fit: what fits, not a number fixed by the header. How a value of more than 255
+  bytes is stored.
+- **Layout for fixed-size values** (`uint64`, `*T`, any fixed `T`): the remainder and an array of `T`;
+  with pointers, an object typed for the GC (one Go type per size class).
+- **Set semantics.** Adding a value checks that it is not there: the cost by number of values,
+  and from which number a value overflow is cheaper than a linear check.
+- **Size classes and growth.** 128, 256, 384 and 512 bytes (the user's sketch); when a page grows,
+  shrinks (the sketch: only if that saves 50 %), and what happens beyond 512.
+- **Value overflow** (sketch 2b): a pointer to a value set when the values do not fit. First with
+  the existing value set (`internal/vset`: array, then hash set); whether its inline stage is still
+  needed.
+- **Oversized object** (sketch 2c/2d, decided 2026-10-03): a remainder that does not fit 512 bytes
+  stays inline in a larger object, exempt from R1; no pointer to a key.
+- **The end page** of a byte node is a single-key page.
+- **How the generic tree picks the layout for `T`** (variable-length for `string`, fixed-size
+  otherwise) without a second copy of the tree (the experiment `internal/artstr` was a full copy;
+  that is not to be repeated).
+- **The prediction:** memory per key of the four cases on `street` and `dirs` from a model of the
+  real entries (key remainder lengths, value counts and lengths), against the leaves of
+  `node-layout` and the competitors; rounds per operation.
 
-- **Single-key page.** One entry with all its values inline, as many as fit; each value up to 255 bytes
-  as long as its length is one byte, longer ones need an escape (open). The number of values is not
-  to be capped by the header, as the 6 or 7 of the first sketch are. Fixed-size values get a
-  specialized variant later, which swaps instead of shifting when it compacts. It replaces flat leaves, typed leaves and the inline
-  part of set leaves. The end page of a node (today the term leaf) is a single-key page.
-- **Long remainders stay inline.** A remainder that does not fit the largest class goes into an
-  *oversized object* of the size Go gives it. It is exempt from R1 and counted separately in the
-  object statistic. There is no pointer to a key any more.
-- **Value overflow.** Only when the values do not fit, the page holds a pointer to a value set
-  (array, then hash set) at a fixed offset. A page without that pointer stays pointer-free. Measure
-  whether the value set still needs an inline stage.
-- **Layout of the multi-key page.** The sketch of the user (header of lengths, common prefix first so
-  that, if possible, its first 64 or 128 bytes decide a mismatch; how many entries a page holds
-  follows from the header: `4m-1` for `8m` bytes in the sketch, 2, 6 or 10 if another byte is needed,
-  or fewer with four size classes) and the layout of step 2 (directory of tags, slots, heap) are compared by
-  measurement. Both are for variable-length values; the one of step 2 holds one word per value.
-  Do not commit to any entry count per page before the memory per key is measured (a 512-byte
-  page holds up to 29 `uint64` keys today).
-- **Header room for values.** A header that starts the data at +8 has room for 5 to 7 values; with 16
-  bytes, for 14. [The statistic](../../bench/results-layout/step3-entries/README.md) says what the
-  fallback then catches: among entries with several values, 4 values cover 70%, 6 cover 74%, 10 cover
-  82%, 14 cover 90% (street names with natural counts: 74, 82, 89, 92%). The knee is at 4 to 6. Every
-  header takes the fallback for the 5% of entries with more than 64 values; choose by measuring `multi`
-  lookups and memory, not by the share alone.
-- **Fall back stays** as long as a single-key page cuts a multi-key page in two. Whether to lift
-  that with a page that holds entries of different value counts (STRATEGY 4.2) is decided after
-  this step, by what the multi profile shows.
-- Look at multi `churn` at 1M u64 (0.82 since `node-layout`) with the new structure.
-- **First tree measurement (2026-10-04, [step3-tree-pages.md](step3-tree-pages.md)):** the multi-key page for
-  string values is in the tree as an experiment (`internal/artstr`). On the natural mix of `street` and
-  `dirs` the rule "a page holds entries with one value" leaves no page standing; a page that holds a key
-  with several values (key once, values behind it) gives -27 to -29 % memory and half the scanned bytes at
-  the price of slower mutation. The decision on mixed value counts (STRATEGY 4.2) is due now, before the
-  single-key page is built.
+### 3.2 The single-key page standalone
 
-**Gate 3:**
-- Multi against `node-layout` (all key kinds, 4K-256K, 1M spot check): no cell below 0.85.
-- Against `hashed`, `btree-sets` and `map-sets`: credo 1.
-- Memory not above `node-layout`.
-- Objects: 100% at multiples of 64, at least 95% at multiples of 128; oversized objects are
-  listed on their own and do not count against R1.
-- Flat leaves, typed leaves, set leaves and key overflow are gone from the code, or the report says
-  why one of them stays.
+Its own package (as `vpage` and `lpage` were), 100 % coverage, fuzzed, with microbenchmarks on the
+real entries of `street` and `dirs` against the leaf kinds of today (flat, typed, set leaf with its
+value set): lookup of the key, `ValuesFor`, add and remove of a value. Short report: memory and
+cost per operation against the prediction. **Stop for the user.**
 
-## Step 4: the routing layer
+### 3.3 In the tree: `string -> {string}`
 
-- **Remove N5.** The smallest inner node is N12 with 128 bytes. N5 stays only where R2 allows it
-  (anomalous chains), and only if measuring shows it is needed there.
-- **Remove path tails.**
+The single-key page replaces the leaves for string values; multi-key pages and the fall back off.
+Measure against `node-layout` and the competitors on `street` and `dirs`, multi and unique, three
+sizes, with memory and the object statistic; plus one run of the fixed-size layout with
+`T = string` (see above). Report against the prediction. **Stop for the user.**
+
+### 3.4 Value overflow
+
+On the real data, 1.5 to 2.5 % of the keys hold about half of the values (step3-tree-pages.md), and
+their value sets were nearly half of the heap in the experiment. Design note first: the existing
+value set against value blocks of 128-byte multiples (STRATEGY R6), with the prediction. Then build,
+measure as in 3.3. **Stop for the user.**
+
+### 3.5 The other cases
+
+`string -> {uint64}`, `string -> {*T}`, `uint64 -> {*T}`, each measured as in 3.3 (`u64` keys at 4K,
+16K, 256K and a 1M spot check on the PC).
+
+### Gate 3 (decided 2026-10-04: credo 1 hard, the rest reported)
+
+- **Hard:** credo 1 for the four cases, multi and unique, every size measured: `Ordered` beats
+  `btree-sets` (and `btree-map` for one value per key) in point lookups, `churn` and `build`, and
+  `hashed` in range scans.
+- **Hard:** memory per key not above `node-layout`, with the bytes of string values counted for
+  every candidate (the "fair" column of step3-tree-pages.md).
+- **Reported, not gating:** every cell against `node-layout`. A cell below 0.70 is explained in
+  the report with its cause.
+- Objects: 100 % at multiples of 128, except oversized objects and the value sets of the value
+  overflow, which are listed on their own.
+- Flat, typed and set leaves are gone from the code, or the report says why one stays.
+
+## Step 4: the multi-key page (MKSV) as the special case
+
+Many keys with one value each in one page, the object of steps 1 and 2. It comes back on top of
+the single-key page of step 3.
+
+- Choose the layout (A, `vpage`, or B, `lpage`) by a measurement on `street` and `dirs`, with what
+  step3-layout.md and step3-tree-pages.md found as input (the header and class runs of
+  `lpage` there are input, not decisions).
+- The interplay with the single-key page: an entry that gets a second value leaves its multi-key
+  page (promote); a subtree crowded with multi-value entries falls back. On the natural mix the fall
+  back took every multi-key page away (step3-tree-pages.md); this step shows where multi-key pages
+  pay (one value per key, `u64` keys) and that the natural mix keeps at least the speed of step 3.
+- Design note with prediction first, as in step 3.
+
+**Gate 4:** gate 3 again, plus credo 2 for one value per key (ranges at least `btree-map`, memory
+at most `btree-map`), and no cell of the natural mix below step 3 beyond noise.
+
+## Step 5: multi-value entries in multi-key pages (MKMV), last
+
+Decided by the user on 2026-10-04 to be the last of the three: it makes the code much more complex.
+Starting point: the parked branch `mkmv-experiment` (`internal/artstr` with `Map.Pairs`, layout B with
+entries that repeat the key before them) and its measurements in step3-tree-pages.md. If it works,
+the promote and the fall back go. Design note with prediction first.
+
+## Step 6: the routing layer
+
+- **Remove the smallest byte node** (N5, 64 bytes). The smallest is then N12 with 128 bytes. N5
+  stays only where R2 allows it (anomalous chains), and only if measuring shows it is needed there.
+- **Remove the tails of common prefixes in nodes.**
   - Up to 12 bytes stay in the header.
-  - Longer shared suffix bytes go into the page's shared-prefix field.
-  - Long chains above inner nodes get a path node (128 bytes, R2 allows 64).
-- Check whether range nodes or inner nodes should route where, now that pages hold every key.
+  - Longer common prefixes go into the page's common prefix.
+  - Long chains above byte nodes get a path node (128 bytes, R2 allows 64).
+- **A range node for few children.** An R8 node (128 bytes) held 2.6 to 3.1 ranges and cost 11 to
+  16 % of the objects in the experiment (step3-tree-pages.md).
 - **Single slots in the range node** (user's idea, 2026-10-03): check exact byte values first, then
   the ranges, so that an entry with a page of its own does not cut its neighbours' page in two.
-  Today a single slot is a range of width 1; `place` (insert.go) cuts the page around an entry only
-  if the entry is alone with its byte at the node, else it rebuilds the page's keys into a subtree.
-  Singles would save the cut for entries alone with their byte; for entries that share the byte they
-  would not help, since a byte cannot tell them apart. Measure how often each case occurs before
-  building it; an ordered scan has to step through a page with holes.
+  Measure how often that case occurs before building it.
+- Whether byte nodes are still needed once pages hold every key.
 
-**Gate 4:**
-- Object statistic: no object outside R1-R3.
-- No regression beyond noise against step 3, url and path in particular.
+**Gate 6:** object statistic: no object outside R1-R3; no regression beyond noise against step 5,
+`url` and `path` in particular.
 
-## Step 5: values with pointers
-
-- Typed pages for values with pointers (string values, `strvals`): generic, sized to 256 or 512
-  bytes.
-- Remove typed leaves.
-
-**Gate 5:**
-- The `strvals` suite against `node-layout` with string values: no cell below 0.85.
-- Memory not above `node-layout`.
-- GC CPU per cycle not above `node-layout`.
-
-## Step 6: clean-up and release measurement
+## Step 7: clean-up and release measurement
 
 - Remove dead code, so that one leaf-free structure remains.
-- Update the package documentation in `node.go`, `page.go` and `rnode.go`.
+- Update the package documentation.
 - Release suite on Windows: all key kinds, 4K-1M, serial and parallel, against `main`,
   `node-layout` and all competitors.
 - Selected arm64 jobs.

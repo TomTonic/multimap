@@ -14,7 +14,10 @@ ranges), and never far behind either. The credo, in force for every change:
 2. **Unique profile.** With one value per key, ranges at least as fast as `btree-map`, memory
    not larger.
 3. **Regression.** At most 15% slower than the reference (`main`, or the step before) in any
-   cell.
+   cell. *Loosened for step 3 (user, 2026-10-04):* the user had the impression that tuning against
+   thresholds had caught the work in a local optimum. In step 3 the regression against the
+   reference is measured and reported, not gating; a cell below 0.70 must be explained with its
+   cause. Credo 1 and the memory stay hard (PLAN.md, gate 3).
 4. **Robustness.** All key kinds (u64, str, uuid, email, url, path, street), all sizes (4K, 16K,
    256K, 1M; 16K and 256K are unlucky fill sizes), both value profiles. Small maps must never
    get noticeably worse: they are far more common than large ones.
@@ -31,9 +34,9 @@ Rules that follow, binding for every object the tree allocates:
 
 | rule | detail |
 |---|---|
-| R1 sizes | 128, 256 or 512 bytes. Pointer-free objects may also be 1024 or 2048. Exception (2026-10-03): an *oversized object*, a single-key page whose remainder does not fit 512 bytes, keeps the remainder inline and takes the size Go gives it; it saves the cache miss of a pointer to the key. |
+| R1 sizes | 128, 256 or 512 bytes; pages also 384 (the user's sketch, whataleafneedstostore.md; a Go size class, aligned to 128). Pointer-free objects may also be 1024 or 2048. Exception (2026-10-03): an *oversized object*, a single-key page whose remainder does not fit 512 bytes, keeps the remainder inline and takes the size Go gives it; it saves the cache miss of a pointer to the key. |
 | R2 64 bytes | Only for anomalous inner nodes, such as chains of path bytes in file paths. Never for pages, leaves or the objects of small maps. |
-| R3 alignment | Use Go size classes that are multiples of 128. Up to 512 bytes they are aligned to their size. Objects with pointers above 512 bytes get an 8-byte malloc header and lose alignment, so they are allowed only for the 256-way nodes (N256, R256): rare, at the top of the tree, and always hot. |
+| R3 alignment | Use Go size classes that are multiples of 128. Up to 512 bytes they are aligned to their size (384 to 128). Objects with pointers above 512 bytes get an 8-byte malloc header and lose alignment, so they are allowed only for the 256-way nodes (N256, R256): rare, at the top of the tree, and always hot. |
 | R4 (struck 2026-10-03) | It meant "no separately allocated string object on the Go heap for a key". That follows from keeping long remainders inline (the oversized object), so it needs no rule of its own. The number is kept so that the other rules keep theirs. |
 | R5 rounds per lookup | A lookup inside an object takes at most two rounds of cache-line loads (defined below the table). Round 1 reads only the first 128 bytes of the object (if possible its first 64 bytes), which hold everything that says where the key's data lies. Round 2 reads all of that data at once. |
 | R6 values | A key's few values sit next to it in the page. Many values go to a value object built from 128- or 256-byte blocks. |
@@ -135,6 +138,12 @@ entry with all its values inline, and replaces the leaf kinds. No page mixes ent
 numbers of values yet. The plan below, with values inline next to the key in a multi-key page, is the
 step after: it is what removes the per-key object and the fall back, and is decided by what the
 multi profile shows.
+
+**Order of 2026-10-04 (user):** the single-key page first, with `string -> {string}` as the base case
+and `string -> {uint64}`, `string -> {*T}` and `uint64 -> {*T}` after it; then the multi-key page with
+single-value entries (MKSV) as the special case; multi-value entries in multi-key pages (MKMV, the
+plan below) last, because it makes the code much more complex. An experiment of MKMV exists (branch
+`mkmv-experiment`, [step3-tree-pages.md](step3-tree-pages.md)).
 
 - **Up to about 4 values stay inline**, next to the key's entry. That covers 85% of the keys of
   the multi profile.

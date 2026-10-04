@@ -23,9 +23,5 @@ func weigh(v V) uint64 { return v }
 // the value itself.
 func checkWeigh(v V) uint64 { return v }
 
-// hasPages says whether the bench has the candidate with pages for string
-// values (ordered-lpage); it needs strings.
-const hasPages = false
-
 // valueBytes returns the bytes of the string values vals; none for uint64.
 func valueBytes(_ []V) int { return 0 }

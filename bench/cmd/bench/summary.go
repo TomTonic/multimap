@@ -136,7 +136,7 @@ func writeMem(c config, rows []memResult) error {
 	for _, profile := range c.profiles {
 		for _, kind := range c.kinds {
 			if g := groups[key{profile + valueTag, kind, ordered}]; len(g) > 0 && g[0].ValueBytes > 0 {
-				notes = append(notes, fmt.Sprintf("- %s %s%s: the values are %.0f bytes of string per key. Only ordered-lpage holds them in its heap; every other candidate holds 16-byte headers that point into one shared buffer (see toVs), so its heap figure does not count them.", profile+valueTag, kind, "", g[0].ValueBytes))
+				notes = append(notes, fmt.Sprintf("- %s %s%s: the values are %.0f bytes of string per key. A candidate that copies values into its own objects holds them in its heap; one that holds 16-byte headers points into one shared buffer (see toVs), and its heap figure does not count them.", profile+valueTag, kind, "", g[0].ValueBytes))
 			}
 		}
 	}

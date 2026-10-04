@@ -1,9 +1,13 @@
 // Package lpage is the second candidate for the multi-key page of the redesign
-// (docs/redesign, PLAN step 3): a page whose header lists the lengths of its
+// (docs/redesign, PLAN step 4): a page whose header lists the lengths of its
 // entries instead of holding a directory of tags. It follows the sketch of the
 // user in docs/redesign/whataleafneedstostore.md (MKSV) and is built to be
 // compared with the page of internal/vpage, in memory per key, in lookup time
-// and in the cost of changes. It is a prototype and not yet part of the tree.
+// and in the cost of changes. It is a prototype and not part of the tree on
+// this branch. The tree experiment that used it (internal/artstr, with the
+// operations of tree.go and the entries that repeat the key before them: a
+// multi-key page with multi-value entries) is parked on the branch
+// mkmv-experiment; see docs/redesign/step3-tree-pages.md.
 //
 // A page holds the stripped suffixes of keys, each with one value, in one object
 // of 128, 256, 384 or 512 bytes without pointers:
