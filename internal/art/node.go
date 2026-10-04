@@ -10,7 +10,7 @@
 //     bytes in a sorted array searched with SWAR, eight bytes per step; the
 //     26- and 58-way nodes find a child by the rank of its byte in a 256-bit
 //     bitmap (branch-free); the 256-way node indexes directly.
-//   - The node header is 16 bytes: kind, child count, prefix length and the
+//   - The node header is 16 bytes: type, child count, prefix length and the
 //     first 12 bytes of the common prefix. The rest of a longer common prefix
 //     follows the node in the same object (prefix.go), so every key byte on
 //     the way down is checked in the nodes (pessimistic common prefix).
@@ -26,7 +26,7 @@
 //     live in typed leaves (typed.go) the same way: the object is allocated
 //     with its real type, one of eight value capacities up to 16 values and
 //     one of eight key areas up to 58 bytes. Beyond that, and for other
-//     values, a leaf holds a vset.Set after its key (set leaves).
+//     values, a leaf holds a vset.Set after its key (value overflows).
 //   - A key that ends at a byte node (a prefix of other keys) is that
 //     node's end page. It takes the node's last child slot, which the byte
 //     children reach only when there is no end page: few keys are prefixes of
@@ -43,7 +43,7 @@
 //     (rebuild.go). Only keys in such a tree's pages and range nodes pay for
 //     that; every other map has none of them.
 //
-// The tree code is not generic. It works on leafHead, the key part every leaf
+// The tree code is not generic. It works on singleKeyHead, the key part every leaf
 // starts with, so no generic dictionary calls sit on the traversal path; only
 // Map[T], which creates leaves and reaches their values, is generic.
 //
@@ -58,15 +58,15 @@ import (
 	"github.com/TomTonic/multimap/internal/vset"
 )
 
-// kind tells the node or leaf type, and a flat leaf's size class: an object
-// is a leaf iff its kind is at most maxLeafByte (see isLeaf). The kinds step by
-// two: the lowest bit of the kind byte of a leaf or page is bit 8 of the length
-// of its key remainder (see leafHead.rem), so the type of such an object is
-// kind&^1.
-type kind uint8
+// type tells the type of a node or page, and a flat leaf's size class: an object
+// is a single-key page iff its type is at most maxSingleKeyByte (see isSingleKey). The types step by
+// two: the lowest bit of the type byte of a leaf or page is bit 8 of the length
+// of its key remainder (see singleKeyHead.rem), so the type of such an object is
+// type&^1.
+type objType uint8
 
 const (
-	kSet kind = (iota + 1) << 1 // set leaf; kSet+2c is a flat leaf of class c (see flatSizes), or in a map of values with a pointer a typed leaf of class c (see typedCaps)
+	kValueOverflow objType = (iota + 1) << 1 // value overflow; kValueOverflow+2c is a flat leaf of class c (see flatSizes), or in a map of values with a pointer a typed leaf of class c (see typedCaps)
 	_
 	_
 	_
@@ -75,11 +75,11 @@ const (
 	_
 	_
 	_
-	kLastLeaf // flat leaf of the largest class
-	kPage     // page of the smallest class; kPage+2c is a page of class c (see page.go)
+	kLastSingleKey // flat leaf of the largest class
+	kMultiKey      // page of the smallest class; kMultiKey+2c is a page of class c (see page.go)
 	_
 	_
-	kLastPage // page of the largest class
+	kLastMultiKey // page of the largest class
 	kN5
 	kN12
 	kN26
@@ -91,19 +91,19 @@ const (
 	kR256
 )
 
-// A descent ends at an object of a kind byte up to maxPageByte: leaves and pages
+// A descent ends at an object of a type byte up to maxMultiKeyByte: single-key and multi-key pages
 // come first, so that one comparison detects them. The byte of a leaf or page
 // may have its lowest bit set (a long remainder), so the largest byte of a
-// class is its largest kind plus one.
+// class is its largest type plus one.
 const (
-	maxLeafByte = kLastLeaf | 1
-	maxPageByte = kLastPage | 1
+	maxSingleKeyByte = kLastSingleKey | 1
+	maxMultiKeyByte  = kLastMultiKey | 1
 )
 
-// kindMask maps a kind to an index of the tables below, which hold every kind.
-const kindMask = 63
+// objTypeMask maps a type to an index of the tables below, which hold every type.
+const objTypeMask = 63
 
-// Shrink thresholds: a node turns into the next smaller kind once it holds
+// Shrink thresholds: a node turns into the next smaller type once it holds
 // this many byte children or fewer. They lie below the next smaller capacity
 // less the end page's slot, so a node that has just grown does not shrink back
 // after one removal.
@@ -114,30 +114,30 @@ const (
 	shrink256 = 48
 )
 
-// maxInline is the longest key remainder a leaf holds inline: in a set leaf
+// maxInline is the longest key remainder a leaf holds inline: in a value overflow
 // in an array of 16 to 256 bytes, whichever is the smallest that fits, in a
 // flat leaf right before its values. A longer one makes the leaf hold its
 // whole key as a string, which costs a separate allocation and a pointer
 // chase on every comparison.
 const maxInline = 254
 
-// maxKeyLen is the longest key a leaf holds a remainder of; leafHead.kl must
+// maxKeyLen is the longest key a leaf holds a remainder of; singleKeyHead.kl must
 // hold its length. A longer key is held whole, as a string.
 const maxKeyLen = 1<<16 - 1
 
 // header is the common start of all byte nodes (16 B).
 type header struct {
-	kind   kind
-	count  uint8                // byte children; a 256-way node keeps its count in node256.total
-	plen   uint16               // length of the common prefix, or longPrefix
-	prefix [swar.PrefixLen]byte // first min(plen, 12) bytes of the common prefix; the rest is in the tail
+	objType objType
+	count   uint8                // byte children; a 256-way node keeps its count in node256.total
+	plen    uint16               // length of the common prefix, or longPrefix
+	prefix  [swar.PrefixLen]byte // first min(plen, 12) bytes of the common prefix; the rest is in the tail
 }
 
 // longPrefix in header.plen stands for a common prefix of that many bytes or more, whose
 // tail is a string: its length is then 12 plus the string's (see prefixLen).
 const longPrefix = 1<<16 - 1
 
-// leafHead is the start of every leaf (6 B). The key remainder follows at
+// singleKeyHead is the start of every single-key page (6 B). The key remainder follows at
 // keyOff; a whole key held as a string sits at strOff.
 //
 // A leaf holds its key from its base on, the pathLen it was created at: the
@@ -145,39 +145,40 @@ const longPrefix = 1<<16 - 1
 // move deeper later, when a node is split in above it, and still holds the
 // bytes from its base, which are then also on its path; it moves up only
 // with a new base (see rekeyFunc).
-type leafHead struct {
-	kind kind   // kSet, or kSet+2c for a flat or typed leaf of class c; its lowest bit is bit 8 of the remainder length
-	klen uint8  // bits 0 to 7 of the length of the inline key remainder, or of longKey for a whole key held as a string
-	n    uint16 // flat and typed leaves: number of values
-	kl   uint16 // length of the whole key, if the remainder is inline
+type singleKeyHead struct {
+	objType objType // kValueOverflow, or kValueOverflow+2c for a flat or typed leaf of class c; its lowest bit is bit 8 of the remainder length
+	klen    uint8   // bits 0 to 7 of the length of the inline key remainder, or of longKey for a whole key held as a string
+	n       uint16  // flat and typed leaves: number of values
+	kl      uint16  // length of the whole key, if the remainder is inline
 }
 
-// isLeaf reports whether an object of kind k is a leaf.
-func isLeaf(k kind) bool { return k <= maxLeafByte }
+// isSingleKey reports whether an object of type k is a single-key page (in any of its
+// forms: the flat and typed leaf, the value overflow).
+func isSingleKey(k objType) bool { return k <= maxSingleKeyByte }
 
-// isPage reports whether an object of kind k is a page.
-func isPage(k kind) bool { return k-kPage <= maxPageByte-kPage }
+// isMultiKey reports whether an object of type k is a multi-key page.
+func isMultiKey(k objType) bool { return k-kMultiKey <= maxMultiKeyByte-kMultiKey }
 
-// isRange reports whether an object of kind k is a range node.
-func isRange(k kind) bool { return k >= kR8 }
+// isRange reports whether an object of type k is a range node.
+func isRange(k objType) bool { return k >= kR8 }
 
 // cls returns the size class of a flat leaf (see flatSizes), or 0 for a set
 // leaf.
-func (l *leafHead) cls() uint8 { return uint8(l.kind&^1-kSet) >> 1 }
+func (l *singleKeyHead) cls() uint8 { return uint8(l.objType&^1-kValueOverflow) >> 1 }
 
-// isSet reports whether l is a set leaf (class 0).
-func (l *leafHead) isSet() bool { return l.kind&^1 == kSet }
+// isValueOverflow reports whether l is a value overflow (class 0).
+func (l *singleKeyHead) isValueOverflow() bool { return l.objType&^1 == kValueOverflow }
 
 // setClass makes l a leaf of class c, keeping its remainder length.
-func (l *leafHead) setClass(c uint8) { l.kind = kSet + kind(c)<<1 | l.kind&1 }
+func (l *singleKeyHead) setClass(c uint8) { l.objType = kValueOverflow + objType(c)<<1 | l.objType&1 }
 
 // rem returns the length of the inline key remainder, or longKey: nine bits,
-// the lowest bit of the kind byte on top of klen.
-func (l *leafHead) rem() int { return int(l.klen) | int(l.kind&1)<<8 }
+// the lowest bit of the type byte on top of klen.
+func (l *singleKeyHead) rem() int { return int(l.klen) | int(l.objType&1)<<8 }
 
-// setRem sets the remainder length n, at most longKey, and keeps the kind.
-func (l *leafHead) setRem(n int) {
-	l.kind = l.kind&^1 | kind(n>>8)
+// setRem sets the remainder length n, at most longKey, and keeps the type.
+func (l *singleKeyHead) setRem(n int) {
+	l.objType = l.objType&^1 | objType(n>>8)
 	l.klen = uint8(n)
 }
 
@@ -185,38 +186,38 @@ func (l *leafHead) setRem(n int) {
 const longKey = 1<<9 - 1
 
 // keyOff is the offset of an inline key in every leaf: right after the
-// leafHead. A string key sits at strOff, where a string is aligned.
+// singleKeyHead. A string key sits at strOff, where a string is aligned.
 const (
-	keyOff = unsafe.Sizeof(leafHead{})
+	keyOff = unsafe.Sizeof(singleKeyHead{})
 	strOff = 8
 )
 
-// keyArea is the storage of a set leaf's key: an inline array of one of the
+// keyArea is the storage of a value overflow's key: an inline array of one of the
 // size classes for the remainder, or a string for the whole key.
 type keyArea interface {
 	[16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte | string
 }
 
-// leaf is a set leaf: a leafHead followed by its key and the values of its
+// leaf is a value overflow: a singleKeyHead followed by its key and the values of its
 // key. For T = uint64 it is 64 B with a remainder of up to 16 bytes.
 type leaf[T comparable, K keyArea] struct {
-	leafHead
+	singleKeyHead
 	k    K
 	vals vset.Set[T]
 }
 
-// newLeafFunc creates a leaf for key with base base (see leafHead) and returns
+// newLeafFunc creates a leaf for key with base base (see singleKeyHead) and returns
 // its head. Map[T] supplies it so that the tree code does not need to know T.
-type newLeafFunc func(key []byte, base int) *leafHead
+type newLeafFunc func(key []byte, base int) *singleKeyHead
 
 // rekeyFunc moves leaf l to pathLen, which is below its base: it returns a leaf
 // with the same values that holds its key from pathLen on. The tree calls it when
 // a node above l goes away and l takes its place. l's whole key is pre, then
 // the byte b unless b is negative, then l's key from there on. Map[T] supplies
 // it, and gets by without the whole key when the longer remainder still fits l.
-type rekeyFunc func(l *leafHead, pre []byte, b int, pathLen int) *leafHead
+type rekeyFunc func(l *singleKeyHead, pre []byte, b int, pathLen int) *singleKeyHead
 
-// Every node kind but the 256-way one keeps its end page, if any, in its
+// Every node type but the 256-way one keeps its end page, if any, in its
 // last child slot, which is free whenever there is an end page (see endPageOf).
 
 type node5 struct { // 64 B
@@ -253,21 +254,21 @@ type node256 struct { // 2080 B
 }
 
 // The casts below are valid because every node and leaf type starts with a
-// kind byte at offset 0, and a pointer is only ever cast to the type its kind
+// type byte at offset 0, and a pointer is only ever cast to the type its type
 // names. The garbage collector traces objects by their allocated type, not by
 // the static type of the pointer.
 
-func asLeaf(h *header) *leafHead  { return (*leafHead)(unsafe.Pointer(h)) }
-func asN5(h *header) *node5       { return (*node5)(unsafe.Pointer(h)) }
-func asN12(h *header) *node12     { return (*node12)(unsafe.Pointer(h)) }
-func asN26(h *header) *node26     { return (*node26)(unsafe.Pointer(h)) }
-func asN58(h *header) *node58     { return (*node58)(unsafe.Pointer(h)) }
-func asN256(h *header) *node256   { return (*node256)(unsafe.Pointer(h)) }
-func leafHdr(l *leafHead) *header { return (*header)(unsafe.Pointer(l)) }
+func asSingleKey(h *header) *singleKeyHead  { return (*singleKeyHead)(unsafe.Pointer(h)) }
+func asN5(h *header) *node5                 { return (*node5)(unsafe.Pointer(h)) }
+func asN12(h *header) *node12               { return (*node12)(unsafe.Pointer(h)) }
+func asN26(h *header) *node26               { return (*node26)(unsafe.Pointer(h)) }
+func asN58(h *header) *node58               { return (*node58)(unsafe.Pointer(h)) }
+func asN256(h *header) *node256             { return (*node256)(unsafe.Pointer(h)) }
+func singleKeyHdr(l *singleKeyHead) *header { return (*header)(unsafe.Pointer(l)) }
 
 // stored returns the key bytes the leaf holds: its key from its base on, or
 // its whole key. The slice aliases the leaf and must not be modified.
-func (l *leafHead) stored() []byte {
+func (l *singleKeyHead) stored() []byte {
 	if n := l.rem(); n != longKey {
 		return unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), n)
 	}
@@ -276,7 +277,7 @@ func (l *leafHead) stored() []byte {
 }
 
 // keyLen returns the length of the leaf's whole key.
-func (l *leafHead) keyLen() int {
+func (l *singleKeyHead) keyLen() int {
 	if l.rem() != longKey {
 		return int(l.kl)
 	}
@@ -284,10 +285,10 @@ func (l *leafHead) keyLen() int {
 }
 
 // base returns the pathLen the leaf holds its key from.
-func (l *leafHead) base() int { return l.keyLen() - len(l.stored()) }
+func (l *singleKeyHead) base() int { return l.keyLen() - len(l.stored()) }
 
 // from returns the leaf's key from pathLen on; pathLen must not be below its base.
-func (l *leafHead) from(pathLen int) []byte {
+func (l *singleKeyHead) from(pathLen int) []byte {
 	s := l.stored()
 	return s[pathLen-(l.keyLen()-len(s)):]
 }
@@ -296,7 +297,7 @@ func (l *leafHead) from(pathLen int) []byte {
 // on, which a key of the leaf's length has at the same distance from its end,
 // so no pathLen is needed; the bytes from the base down to l are checked twice.
 // Kept small enough to inline into find.
-func (l *leafHead) matches(key []byte) bool {
+func (l *singleKeyHead) matches(key []byte) bool {
 	k := l.rem()
 	if k == longKey {
 		return string(key) == *(*string)(unsafe.Add(unsafe.Pointer(l), strOff))
@@ -306,7 +307,7 @@ func (l *leafHead) matches(key []byte) bool {
 
 // wholeKey returns l's whole key, from its position in a rekeyFunc call: pre,
 // the byte b unless it is negative, then l's key from there on.
-func wholeKey(l *leafHead, pre []byte, b int) []byte {
+func wholeKey(l *singleKeyHead, pre []byte, b int) []byte {
 	k := append(make([]byte, 0, l.keyLen()), pre...)
 	at := len(pre)
 	if b >= 0 {
@@ -327,7 +328,7 @@ func fillHead(dst, pre []byte, b, pathLen int) {
 // slots returns all child slots of n, including the one its end page takes; n must
 // not be a 256-way or a range node.
 func slots(n *header) []*header {
-	switch n.kind {
+	switch n.objType {
 	case kN5:
 		return asN5(n).child[:]
 	case kN12:
@@ -338,7 +339,7 @@ func slots(n *header) []*header {
 	return asN58(n).child[:]
 }
 
-// slotCap and endPageOff give, by kind, the number of child slots and the offset
+// slotCap and endPageOff give, by type, the number of child slots and the offset
 // of the last one, where the end page sits. The 256-way node's header count
 // (255) never equals its slotCap (0): its end page slot is its own.
 var (
@@ -360,27 +361,27 @@ const ptrSize = unsafe.Sizeof(uintptr(0))
 
 // endPageOf returns the leaf of the key that ends exactly at n, or nil. It sits
 // in n's last slot, unless the byte children fill every slot.
-func endPageOf(n *header) *leafHead {
-	k := n.kind & kindMask
+func endPageOf(n *header) *singleKeyHead {
+	k := n.objType & objTypeMask
 	if n.count == slotCap[k] {
 		return nil
 	}
-	return *(**leafHead)(unsafe.Add(unsafe.Pointer(n), endPageOff[k]))
+	return *(**singleKeyHead)(unsafe.Add(unsafe.Pointer(n), endPageOff[k]))
 }
 
 // endPageSlot returns the address of n's end page slot, which holds its end page
 // whenever it has one.
 func endPageSlot(n *header) **header {
-	return (**header)(unsafe.Add(unsafe.Pointer(n), endPageOff[n.kind&kindMask]))
+	return (**header)(unsafe.Add(unsafe.Pointer(n), endPageOff[n.objType&objTypeMask]))
 }
 
 // setEndPageSlot stores l, or nil to remove the end page, in n's end page slot; n must
 // have room for it.
-func setEndPageSlot(n *header, l *leafHead) { *endPageSlot(n) = leafHdr(l) }
+func setEndPageSlot(n *header, l *singleKeyHead) { *endPageSlot(n) = singleKeyHdr(l) }
 
 // full reports whether n has no room for another byte child or an end page.
 func full(n *header) bool {
-	if n.kind == kN256 || isRange(n.kind) {
+	if n.objType == kN256 || isRange(n.objType) {
 		return false
 	}
 	s := slots(n)
@@ -390,7 +391,7 @@ func full(n *header) bool {
 // sorted returns the child bytes and children of a node that keeps them in
 // sorted arrays: n must be a 5- or 12-way node.
 func sorted(n *header) ([]byte, []*header) {
-	if n.kind == kN5 {
+	if n.objType == kN5 {
 		x := asN5(n)
 		return x.keys[:x.count], x.child[:x.count]
 	}
@@ -401,7 +402,7 @@ func sorted(n *header) ([]byte, []*header) {
 // bitmapOf returns the bitmap and the full child array of a 26- or 58-way
 // node; the first count children are in use, in key-byte order.
 func bitmapOf(n *header) (*[4]uint64, []*header) {
-	if n.kind == kN26 {
+	if n.objType == kN26 {
 		x := asN26(n)
 		return &x.bitmap, x.child[:]
 	}

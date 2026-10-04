@@ -36,7 +36,7 @@ func (t *Tree) removeRaw(key []byte, want uint64, rk rekeyFunc) int8 {
 
 // del deletes key from the subtree at *loc, whose common prefix starts at
 // key[pathLen:], and reports whether it was there. On the way back up,
-// every node on the path shrinks to the smallest kind that fits and collapses
+// every node on the path shrinks to the smallest type that fits and collapses
 // when it no longer branches, so the tree after a delete has the shape it
 // would have had if the key had never been inserted. Below a range node, a
 // range whose child is gone goes to its neighbour, and a page merges with a
@@ -49,12 +49,12 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8
 	if n == nil {
 		return absent
 	}
-	if n.kind <= maxPageByte {
-		if isPage(n.kind) {
+	if n.objType <= maxMultiKeyByte {
+		if isMultiKey(n.objType) {
 			return delFromPage(loc, key, want)
 		}
 		switch {
-		case !asLeaf(n).matches(key):
+		case !asSingleKey(n).matches(key):
 			return absent
 		case want != nil:
 			return keptLeaf
@@ -77,7 +77,7 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8
 			return keptLeaf
 		}
 		setEndPageSlot(n, nil)
-	case isRange(n.kind):
+	case isRange(n.objType):
 		r := asR(n)
 		i := r.index(key[d])
 		c := &r.children()[i]
@@ -87,7 +87,7 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8
 		switch {
 		case *c == nil:
 			n = rRemove(n, i)
-		case isPage((*c).kind) && asPage(*c).Thin():
+		case isMultiKey((*c).objType) && asMultiKey(*c).Thin():
 			// Two pages merge only if they fit one page together, so one that is
 			// not thin does not need its neighbours looked at.
 			n = rMerge(n, i)
@@ -112,7 +112,7 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc, want *uint64) int8
 // delFromPage deletes key from the page at *loc, unless want is not nil and
 // the key's value is not *want, and reports what it found (see del).
 func delFromPage(loc **header, key []byte, want *uint64) int8 {
-	p := asPage(*loc)
+	p := asMultiKey(*loc)
 	i, ok := p.FindIn(key)
 	switch {
 	case !ok:
@@ -120,7 +120,7 @@ func delFromPage(loc **header, key []byte, want *uint64) int8 {
 	case want != nil && p.Val(i) != *want:
 		return keptEntry
 	}
-	*loc = pageHdr(p.DeleteAt(i))
+	*loc = multiKeyHdr(p.DeleteAt(i))
 	return deleted
 }
 
@@ -138,20 +138,20 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 		if endPageOf(n) == nil {
 			return nil
 		}
-		return leafHdr(lift(endPageOf(n), key[:d], pathLen, rk))
+		return singleKeyHdr(lift(endPageOf(n), key[:d], pathLen, rk))
 	case c > 1 || endPageOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
-	if c.kind <= maxPageByte {
-		if isPage(c.kind) {
+	if c.objType <= maxMultiKeyByte {
+		if isMultiKey(c.objType) {
 			return pageUp(n, c, key, pathLen)
 		}
-		l := asLeaf(c)
+		l := asSingleKey(c)
 		if l.base() <= pathLen {
 			return c
 		}
-		return leafHdr(rk(l, key[:d], b, pathLen))
+		return singleKeyHdr(rk(l, key[:d], b, pathLen))
 	}
 	var buf [prefixBuf]byte // on the stack for the common short prefixes
 	p := appendPrefix(buf[:0], n)
@@ -166,12 +166,12 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 // or n itself if the page cannot take the bytes of n's common prefix in front of its
 // keys.
 func pageUp(n, c *header, key []byte, pathLen int) *header {
-	p := asPage(c)
+	p := asMultiKey(c)
 	if p.Base() <= pathLen {
 		return c
 	}
 	if q := p.Rebase(pathLen, key[pathLen:p.Base()]); q != nil {
-		return pageHdr(q)
+		return multiKeyHdr(q)
 	}
 	return n
 }
@@ -179,7 +179,7 @@ func pageUp(n, c *header, key []byte, pathLen int) *header {
 // childCount returns the number of byte children of a byte node, or of ranges
 // of a range node.
 func childCount(n *header) int {
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		return int(asR(n).n)
 	}
 	return int(n.count)
@@ -187,7 +187,7 @@ func childCount(n *header) int {
 
 // lift returns leaf l, whose key is k, ready to stand at pathLen: l itself if it
 // holds its key from there on, the leaf from rk otherwise.
-func lift(l *leafHead, k []byte, pathLen int, rk rekeyFunc) *leafHead {
+func lift(l *singleKeyHead, k []byte, pathLen int, rk rekeyFunc) *singleKeyHead {
 	if l.base() <= pathLen {
 		return l
 	}
@@ -196,10 +196,10 @@ func lift(l *leafHead, k []byte, pathLen int, rk rekeyFunc) *leafHead {
 
 // onlyChild returns the single child of n and the byte it sits under, or -1
 // for a range node's child. Only a 5-way node or a range node of the smallest
-// class can fall to one child: every larger kind shrinks into the next smaller
+// class can fall to one child: every larger type shrinks into the next smaller
 // one well before.
 func onlyChild(n *header) (int, *header) {
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		return -1, asR(n).children()[0]
 	}
 	x := asN5(n)
@@ -207,10 +207,10 @@ func onlyChild(n *header) (int, *header) {
 }
 
 // removeChild deletes the child under byte b, which must be present, and
-// shrinks n into the next smaller kind once it falls to that kind's
+// shrinks n into the next smaller type once it falls to that type's
 // threshold. It returns n or its replacement.
 func removeChild(n *header, b byte) *header {
-	switch n.kind {
+	switch n.objType {
 	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		r := swar.Rank(bm, b)
@@ -219,7 +219,7 @@ func removeChild(n *header, b byte) *header {
 		child[n.count] = nil
 		bm[b>>6] &^= uint64(1) << (b & 63)
 		switch {
-		case n.kind == kN58 && n.count <= shrink58:
+		case n.objType == kN58 && n.count <= shrink58:
 			x := asN58(n)
 			y := newLike(n, kN26)
 			z := asN26(y)
@@ -227,7 +227,7 @@ func removeChild(n *header, b byte) *header {
 			copy(z.child[:], x.child[:x.count])
 			setEndPageSlot(y, endPageOf(n))
 			return y
-		case n.kind == kN26 && n.count <= shrink26:
+		case n.objType == kN26 && n.count <= shrink26:
 			x := asN26(n)
 			y := newLike(n, kN12)
 			z := asN12(y)
@@ -262,7 +262,7 @@ func removeChild(n *header, b byte) *header {
 	copy(child[i:last], child[i+1:])
 	child[last] = nil
 	n.count--
-	if n.kind == kN12 && n.count <= shrink12 {
+	if n.objType == kN12 && n.count <= shrink12 {
 		y := newLike(n, kN5)
 		z := asN5(y)
 		copy(z.keys[:], keys[:last])

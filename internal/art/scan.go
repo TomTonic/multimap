@@ -10,7 +10,7 @@ import (
 	"github.com/TomTonic/multimap/internal/vpage"
 )
 
-// Bounds selects a key range. A bound that is not set leaves that side open.
+// Bounds selects a key range. A bound that is not value overflows that side open.
 type Bounds struct {
 	From, To         []byte
 	HasFrom, HasTo   bool
@@ -34,7 +34,7 @@ type keyBuf struct {
 }
 
 // reach sets kb.key to the key of leaf l, whose path is in kb.path.
-func (kb *keyBuf) reach(l *leafHead) {
+func (kb *keyBuf) reach(l *singleKeyHead) {
 	kb.key = append(append(kb.key[:0], kb.path[:l.base()]...), l.stored()...)
 }
 
@@ -55,11 +55,11 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 	if n == nil {
 		return true
 	}
-	if n.kind <= maxPageByte {
-		if isLeaf(n.kind) {
-			return scanLeaf(asLeaf(n), b, pathLen, lo, hi, kb, fn)
+	if n.objType <= maxMultiKeyByte {
+		if isSingleKey(n.objType) {
+			return scanLeaf(asSingleKey(n), b, pathLen, lo, hi, kb, fn)
 		}
-		return scanPage(asPage(n), b, lo, hi, fn)
+		return scanPage(asMultiKey(n), b, lo, hi, fn)
 	}
 	pl := n.prefixLen()
 	if (lo || hi) && pl > 0 {
@@ -98,7 +98,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 		if kb != nil {
 			kb.reach(t)
 		}
-		if !fn(leafHdr(t), 0, 1) {
+		if !fn(singleKeyHdr(t), 0, 1) {
 			return false
 		}
 	}
@@ -122,7 +122,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 // scanLeaf calls fn for leaf l at pathLen if it lies within b. On a bound's
 // path the key agrees with the bound up to pathLen, so comparing the rest
 // decides.
-func scanLeaf(l *leafHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
+func scanLeaf(l *singleKeyHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf, fn func(n *header, i, j int) bool) bool {
 	if lo {
 		if c := bytes.Compare(l.from(pathLen), b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
 			return true
@@ -136,7 +136,7 @@ func scanLeaf(l *leafHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf, fn f
 	if kb != nil {
 		kb.reach(l)
 	}
-	return fn(leafHdr(l), 0, 1)
+	return fn(singleKeyHdr(l), 0, 1)
 }
 
 // scanPage hands fn the run of the page's keys within b. The page's keys start
@@ -151,7 +151,7 @@ func scanPage(p *vpage.Page, b *Bounds, lo, hi bool, fn func(n *header, i, j int
 	if hi {
 		j = max(i, seek(p, b.To[p.Base():], b.ToIncl))
 	}
-	if i < j && !fn(pageHdr(p), i, j) {
+	if i < j && !fn(multiKeyHdr(p), i, j) {
 		return false
 	}
 	return !hi // on To's path, everything after the page is above To
@@ -176,7 +176,7 @@ func scanChildren(n *header, b *Bounds, pathLen int, lo, hi bool, loB, hiB byte,
 		}
 		return scanRange(c, b, pathLen+1, lo && k == loB, hi && k == hiB, leafTail, kb, fn)
 	}
-	switch n.kind {
+	switch n.objType {
 	case kR8, kR24, kR56, kR256:
 		// The children of a range node start at its pathLen; only the ranges
 		// holding loB and hiB lie on the bounds' paths.
@@ -252,12 +252,12 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 	}
 	var acc uint8
 	touch := func(c *header) {
-		acc += uint8(c.kind)
-		if isLeaf(c.kind) {
+		acc += uint8(c.objType)
+		if isSingleKey(c.objType) {
 			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTail))
 		}
 	}
-	switch n.kind {
+	switch n.objType {
 	case kR8, kR24, kR56, kR256:
 		r := asR(n)
 		i0, i1 := r.index(loB), r.index(hiB)

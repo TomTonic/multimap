@@ -16,13 +16,13 @@ func shapeOf(n *header) shape {
 		switch {
 		case n == nil:
 			return
-		case isLeaf(n.kind):
+		case isSingleKey(n.objType):
 			s.leaves++
 			return
-		case isPage(n.kind):
+		case isMultiKey(n.objType):
 			s.pages++
 			return
-		case isRange(n.kind):
+		case isRange(n.objType):
 			s.ranges++
 			for _, c := range asR(n).children()[:asR(n).n] {
 				walk(c)
@@ -142,7 +142,7 @@ func TestFallBackKeepsEndPage(t *testing.T) {
 	}
 	m.Add([]byte("ab"), 2)
 	checkInvariants(t, &m.t)
-	if s := shapeOf(m.t.root); !isRange(m.t.root.kind) || endPageOf(m.t.root) == nil || s.pages != 1 {
+	if s := shapeOf(m.t.root); !isRange(m.t.root.objType) || endPageOf(m.t.root) == nil || s.pages != 1 {
 		t.Fatalf("%+v: want a range node with the endPage and one page", s)
 	}
 	m.Add([]byte("abc"), 2)

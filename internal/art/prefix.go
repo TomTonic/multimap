@@ -48,7 +48,7 @@ func tailClass(plen int) int {
 	return tailStr
 }
 
-// fixedSize is the size of each node kind without its tail, which is where
+// fixedSize is the size of each node type without its tail, which is where
 // the tail starts.
 var fixedSize = [64]uintptr{
 	kN5:   unsafe.Sizeof(node5{}),
@@ -62,24 +62,24 @@ var fixedSize = [64]uintptr{
 	kR256: unsafe.Sizeof(rnode256{}),
 }
 
-type nodeKinds interface {
+type nodeTypes interface {
 	node5 | node12 | node26 | node58 | node256 | rnode8 | rnode24 | rnode56 | rnode256
 }
 
-type tailKinds interface {
+type tailTypes interface {
 	[16]byte | [48]byte | [112]byte | string
 }
 
-// tailed is a node of kind N with a prefix tail of type T. Every node kind is a
+// tailed is a node of type N with a prefix tail of type T. Every node type is a
 // multiple of 8 bytes, so the tail starts right at fixedSize.
-type tailed[N nodeKinds, T tailKinds] struct {
+type tailed[N nodeTypes, T tailTypes] struct {
 	n N
 	t T
 }
 
 // allocOf allocates a zeroed node of type N with a tail of class tc. It is
 // allocated with its real type, so the garbage collector sees its children.
-func allocOf[N nodeKinds](tc int) *header {
+func allocOf[N nodeTypes](tc int) *header {
 	switch tc {
 	case tailNone:
 		return (*header)(unsafe.Pointer(new(N)))
@@ -93,9 +93,9 @@ func allocOf[N nodeKinds](tc int) *header {
 	return (*header)(unsafe.Pointer(new(tailed[N, string])))
 }
 
-// newNode allocates an empty node of kind k with room for a prefix of plen
+// newNode allocates an empty node of type k with room for a prefix of plen
 // bytes; the caller stores the prefix (storePrefix).
-func newNode(k kind, plen int) *header {
+func newNode(k objType, plen int) *header {
 	tc := tailClass(plen)
 	var h *header
 	switch k {
@@ -123,17 +123,17 @@ func newNode(k kind, plen int) *header {
 		h = allocOf[rnode256](tc)
 		h.count = 255
 	}
-	h.kind = k
+	h.objType = k
 	return h
 }
 
-// newLike allocates a node of kind k with n's header and prefix, for n to grow
+// newLike allocates a node of type k with n's header and prefix, for n to grow
 // or shrink into. The caller copies the children.
-func newLike(n *header, k kind) *header {
+func newLike(n *header, k objType) *header {
 	pl := n.prefixLen()
 	y := newNode(k, pl)
 	*y = *n
-	y.kind = k
+	y.objType = k
 	switch tailClass(pl) {
 	case tailNone:
 	case tailStr:
@@ -146,7 +146,7 @@ func newLike(n *header, k kind) *header {
 
 // tailPtr returns the address of n's tail.
 func tailPtr(n *header) unsafe.Pointer {
-	return unsafe.Add(unsafe.Pointer(n), fixedSize[n.kind&kindMask])
+	return unsafe.Add(unsafe.Pointer(n), fixedSize[n.objType&objTypeMask])
 }
 
 // prefixLen returns the length of n's common prefix.
@@ -196,7 +196,7 @@ func storePrefix(n *header, p []byte) {
 // when p needs another tail class. p must not alias n.
 func withPrefix(n *header, p []byte) *header {
 	if tailClass(len(p)) != tailClass(n.prefixLen()) {
-		m := newNode(n.kind, len(p))
+		m := newNode(n.objType, len(p))
 		copyFixed(m, n)
 		n = m
 	}
@@ -205,10 +205,10 @@ func withPrefix(n *header, p []byte) *header {
 }
 
 // copyFixed copies the fixed part of node src, children included, into dst of
-// the same kind. The copy is typed, so the garbage collector sees the pointers
+// the same type. The copy is typed, so the garbage collector sees the pointers
 // move.
 func copyFixed(dst, src *header) {
-	switch src.kind {
+	switch src.objType {
 	case kR8:
 		*(*rnode8)(unsafe.Pointer(dst)) = *(*rnode8)(unsafe.Pointer(src))
 	case kR24:

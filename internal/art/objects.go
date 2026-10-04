@@ -5,12 +5,12 @@ import "unsafe"
 // This file measures the objects of a tree against the cache-line rules of
 // docs/redesign/STRATEGY.md: how many objects there are, how big each is, and
 // where the Go allocator puts it. The bench's cmd/objstat reports it for every
-// benchmark case. A new object kind needs a case in Objects, which the test
+// benchmark case. A new object type needs a case in Objects, which the test
 // that adds up the keys of all objects (TestObjects) fails without.
 
 // Object describes one allocated object of a tree.
 type Object struct {
-	// Label names the kind of the object: "N5", "R56+tail", "page", "flat
+	// Label names the type of the object: "N5", "R56+tail", "page", "flat
 	// leaf" and so on. A "+tail" node holds a prefix tail beyond its header.
 	Label string
 	// Size is the size of the object in bytes, as Go allocates the type.
@@ -64,31 +64,31 @@ func Block(size int, pointers bool) (block, offset int) {
 
 // Objects calls fn for every object of the tree, in key order of the paths to
 // them, nodes before their children. It does not count what a value set of
-// a set leaf allocates for itself (see vset).
+// a value overflow allocates for itself (see vset).
 func (m *Map[T]) Objects(fn func(Object)) {
 	if m.t.root != nil {
 		m.objects(m.t.root, fn)
 	}
 }
 
-var kindLabels = [64]string{
+var objTypeLabels = [64]string{
 	kN5: "N5", kN12: "N12", kN26: "N26", kN58: "N58", kN256: "N256",
 	kR8: "R8", kR24: "R24", kR56: "R56", kR256: "R256",
 }
 
 // leafObject describes leaf l of a map of T.
-func (m *Map[T]) leafObject(l *leafHead) Object {
+func (m *Map[T]) leafObject(l *singleKeyHead) Object {
 	o := m.leafKind(l)
 	o.Values, o.Remainder = m.leafValues(l), len(l.stored())
 	return o
 }
 
 // leafValues returns the number of values of leaf l.
-func (m *Map[T]) leafValues(l *leafHead) int {
-	if l.isSet() && m.flat == 3 {
-		return int((*strSetOf(l)).Size())
+func (m *Map[T]) leafValues(l *singleKeyHead) int {
+	if l.isValueOverflow() && m.flat == 3 {
+		return int((*overflowSetOf(l)).Size())
 	}
-	if l.isSet() {
+	if l.isValueOverflow() {
 		return vals[T](l).Len()
 	}
 	return int(l.n)
@@ -96,7 +96,7 @@ func (m *Map[T]) leafValues(l *leafHead) int {
 
 // leafKind describes the object of leaf l of a map of T, without its values
 // and remainder.
-func (m *Map[T]) leafKind(l *leafHead) Object {
+func (m *Map[T]) leafKind(l *singleKeyHead) Object {
 	var z T
 	switch {
 	case l.cls() > 0 && m.flat == 1:
@@ -107,7 +107,7 @@ func (m *Map[T]) leafKind(l *leafHead) Object {
 		return Object{Label: "typed leaf", Size: int(typedOff(l.rem())) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), Pointers: true, Keys: 1}
 	}
 	if m.flat == 3 {
-		return Object{Label: "set leaf", Size: int(setLeaf3Size(l.rem())), Pointers: true, Keys: 1}
+		return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
 	}
 	var size uintptr
 	switch k := l.rem(); {
@@ -130,20 +130,20 @@ func (m *Map[T]) leafKind(l *leafHead) Object {
 	default:
 		size = unsafe.Sizeof(leaf[T, string]{})
 	}
-	return Object{Label: "set leaf", Size: int(size), Pointers: true, Keys: 1}
+	return Object{Label: "value overflow", Size: int(size), Pointers: true, Keys: 1}
 }
 
 // object describes the object n, a leaf, page or node, without what is below
 // it.
 func (m *Map[T]) object(n *header) Object {
 	switch {
-	case isLeaf(n.kind):
-		return m.leafObject(asLeaf(n))
-	case isPage(n.kind):
-		p := asPage(n)
+	case isSingleKey(n.objType):
+		return m.leafObject(asSingleKey(n))
+	case isMultiKey(n.objType):
+		p := asMultiKey(n)
 		return Object{Label: "page", Size: p.Size(), Keys: p.Len()}
 	}
-	size, label := int(fixedSize[n.kind&kindMask]), kindLabels[n.kind]
+	size, label := int(fixedSize[n.objType&objTypeMask]), objTypeLabels[n.objType]
 	if tc := tailClass(n.prefixLen()); tc != tailNone {
 		size += [...]int{tail16: 16, tail48: 48, tail112: 112, tailStr: 16}[tc]
 		label += "+tail"
@@ -154,13 +154,13 @@ func (m *Map[T]) object(n *header) Object {
 // objects reports the subtree n.
 func (m *Map[T]) objects(n *header, fn func(Object)) {
 	fn(m.object(n))
-	if isLeaf(n.kind) || isPage(n.kind) {
+	if isSingleKey(n.objType) || isMultiKey(n.objType) {
 		return
 	}
 	if t := endPageOf(n); t != nil {
 		fn(m.leafObject(t))
 	}
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		for _, c := range asR(n).children()[:asR(n).n] {
 			m.objects(c, fn)
 		}

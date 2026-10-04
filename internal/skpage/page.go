@@ -6,12 +6,12 @@
 //
 // A page is an object of 32, 64, 128, 256, 384 or 512 bytes:
 //
-//	kind | r | n (2 bytes) | kl (2 bytes) | remainder (r bytes) | length 1, value 1 | length 2, value 2 | ...
+//	type | r | n (2 bytes) | kl (2 bytes) | remainder (r bytes) | length 1, value 1 | length 2, value 2 | ...
 //
-// kind is the size class (plus KindBase), r the length of the remainder (0 to
+// type is the size class (plus TypeBase), r the length of the remainder (0 to
 // 254), n the number of values (1 to 254: every value takes a byte at least, and
 // the largest class has 512), kl the length of the whole key. The first six
-// bytes are those of the leaves of internal/art (kind, key remainder length,
+// bytes are those of the leaves of internal/art (type, key remainder length,
 // number of values, whole key length), so that the tree's code for keys, which
 // holds the key from the base it was made at and compares the end of a key with
 // the remainder, works on a page as on a leaf (design note, section 5: the
@@ -36,7 +36,7 @@ const (
 	// MaxRemainder is the longest remainder a page holds: nine bits of length,
 	// and a page of 512 bytes less the header and one length byte.
 	MaxRemainder = 505
-	// Header is the size of the fixed part: kind, r, n, kl.
+	// Header is the size of the fixed part: type, r, n, kl.
 	Header = 6
 	// BackLimit is the content, in bytes, up to which the value set of a key
 	// goes back into a page (half of the largest class). A key moves into a
@@ -52,19 +52,19 @@ var sizes = [...]int{32, 64, 128, 256, 384, 512}
 // Classes is the number of size classes.
 const Classes = len(sizes)
 
-// KindBase is added to the kind byte of every page, so that a tree whose
-// objects tell their kind by their first byte can give the pages the kinds
-// KindBase, KindBase+2, ... KindBase+2*(Classes-1): the lowest bit of the kind
+// TypeBase is added to the type byte of every page, so that a tree whose
+// objects tell their type by their first byte can give the pages the types
+// TypeBase, TypeBase+2, ... TypeBase+2*(Classes-1): the lowest bit of the type
 // byte is bit 8 of the length of the remainder. A package that uses pages standalone
 // leaves it 0.
-var KindBase uint8
+var TypeBase uint8
 
 // Page is the first three bytes of a page; the page is the object they start.
 type Page struct {
-	kind uint8  // KindBase plus twice the size class, plus bit 8 of the length of the remainder
-	r    uint8  // bits 0 to 7 of the length of the remainder
-	n    uint16 // number of values
-	kl   uint16 // length of the whole key
+	objType uint8  // TypeBase plus twice the size class, plus bit 8 of the length of the remainder
+	r       uint8  // bits 0 to 7 of the length of the remainder
+	n       uint16 // number of values
+	kl      uint16 // length of the whole key
 }
 
 // Result says what Add did.
@@ -81,15 +81,15 @@ const (
 	Full
 )
 
-func (p *Page) class() int { return int(p.kind&^1-KindBase) >> 1 }
+func (p *Page) class() int { return int(p.objType&^1-TypeBase) >> 1 }
 
 // rem returns the length of the remainder: nine bits, the lowest bit of the
-// kind byte on top of r.
-func (p *Page) rem() int { return int(p.r) | int(p.kind&1)<<8 }
+// type byte on top of r.
+func (p *Page) rem() int { return int(p.r) | int(p.objType&1)<<8 }
 
 // setRem sets the length of the remainder and keeps the class.
 func (p *Page) setRem(n int) {
-	p.kind = p.kind&^1 | uint8(n>>8)
+	p.objType = p.objType&^1 | uint8(n>>8)
 	p.r = uint8(n)
 }
 
@@ -127,7 +127,7 @@ func classFor(need int) int {
 // of kl bytes.
 func newPage(c, r, kl int) *Page {
 	p := alloc(c)
-	p.kind, p.kl = KindBase+uint8(c)<<1, uint16(kl)
+	p.objType, p.kl = TypeBase+uint8(c)<<1, uint16(kl)
 	p.setRem(r)
 	return p
 }

@@ -22,7 +22,7 @@ import (
 // with a new base (see collapse); it may sit deeper than its base, when a node is
 // split in above it.
 
-func init() { vpage.KindBase = uint8(kPage) }
+func init() { vpage.TypeBase = uint8(kMultiKey) }
 
 // maxPagePathLen is the deepest base a page has; a key whose path is longer gets
 // a leaf. maxPageRemainder is the longest part of a key a page holds from its
@@ -32,8 +32,8 @@ const (
 	maxPageRemainder = 255
 )
 
-func asPage(h *header) *vpage.Page  { return (*vpage.Page)(unsafe.Pointer(h)) }
-func pageHdr(p *vpage.Page) *header { return (*header)(unsafe.Pointer(p)) }
+func asMultiKey(h *header) *vpage.Page  { return (*vpage.Page)(unsafe.Pointer(h)) }
+func multiKeyHdr(p *vpage.Page) *header { return (*header)(unsafe.Pointer(p)) }
 
 // pageable reports whether the key of a page at pathLen may go into a page.
 func (t *Tree) pageable(key []byte, pathLen int) bool {

@@ -20,7 +20,7 @@ import (
 // are prefixes of other keys, the empty key, paths longer than the 12 inline
 // bytes and longer than the 64K a header can count, keys of every length from
 // 0 to 99 (every size class of the leaves and beyond), zero bytes, dense and
-// sparse integers (which drive nodes through every kind), nodes whose slots a
+// sparse integers (which drive nodes through every type), nodes whose slots a
 // end page fills up, and shared string prefixes.
 func keySets() map[string][][]byte {
 	// size is the number of keys of a big set: full, or a tenth of it under the
@@ -167,7 +167,7 @@ func (r reference) sortedKeys() []string {
 // of heavy deletion, and that after every phase the tree has the shape its
 // invariants demand (see checkInvariants). It runs every corpus with flat
 // leaves, which small pointer-free values get, with typed leaves, which small
-// values with a pointer get, and with set leaves, which all other values get.
+// values with a pointer get, and with value overflows, which all other values get.
 func TestAgainstReference(t *testing.T) {
 	str := func(v uint64) string { return fmt.Sprint("value ", v) }
 	// values of 20 to 140 bytes, so that a key with a few of them outgrows a page
@@ -176,7 +176,7 @@ func TestAgainstReference(t *testing.T) {
 		for name, keys := range keySets() {
 			t.Run(fmt.Sprintf("%s/leaves=%d", name, mode), func(t *testing.T) {
 				if underRace && name == "paths-over-64k" && mode != 0 && mode != -2 {
-					t.Skip("the long paths are the same for every leaf kind; the race detector makes them slow")
+					t.Skip("the long paths are the same for every leaf type; the race detector makes them slow")
 				}
 				switch mode {
 				case 0:
@@ -460,7 +460,7 @@ func TestBoundsContains(t *testing.T) {
 // TestEmptyMap makes sure that a new, empty multimap.Ordered answers every
 // query with nothing. It covers the ART package's Map with no keys, where the
 // tree has no root: lookups find nothing, removals are ignored and range
-// queries of any kind call back not once.
+// queries of any type call back not once.
 func TestEmptyMap(t *testing.T) {
 	var m Map[uint64]
 	m.Remove([]byte("k"), 1)
@@ -483,7 +483,7 @@ func leafLayout[T comparable, K keyArea]() (size, kOff, vOff uintptr) {
 
 // TestLeafLayout makes sure that every key of multimap.Ordered keeps its bytes
 // and its values, whatever its length and whatever the value type. It covers
-// the set leaves of the ART behind Ordered, which hold a key's remainder
+// the value overflows of the ART behind Ordered, which hold a key's remainder
 // inline in the smallest of eight size classes, or the whole key as a string
 // beyond 254 bytes, and which the untyped tree code reads through fixed
 // offsets. For each class boundary it checks that the leaf holds an
@@ -522,10 +522,10 @@ func TestLeafLayout(t *testing.T) {
 		}
 	}
 	if tail := (&Map[uint64]{flat: -1}).leafTail(); tail >= u64[0].size {
-		t.Errorf("leafTail = %d lies outside the smallest set leaf for uint64 (%d B)", tail, u64[0].size)
+		t.Errorf("leafTail = %d lies outside the smallest value overflow for uint64 (%d B)", tail, u64[0].size)
 	}
 	if tail := (&Map[string]{flat: -1}).leafTail(); tail >= str[0].size {
-		t.Errorf("leafTail = %d lies outside the smallest set leaf for string (%d B)", tail, str[0].size)
+		t.Errorf("leafTail = %d lies outside the smallest value overflow for string (%d B)", tail, str[0].size)
 	}
 	if tail := (&Map[uint64]{flat: 1}).leafTail(); tail >= flatSizes[1] {
 		t.Errorf("leafTail = %d lies outside the smallest flat leaf (%d B)", tail, flatSizes[1])
@@ -563,9 +563,9 @@ func TestLeafLayout(t *testing.T) {
 			if tc.n > maxInline {
 				wantLen = longKey
 			}
-			for _, x := range []*leafHead{l, ls} {
-				if !x.isSet() || x.rem() != wantLen || x.keyLen() != tc.n || x.base() != 0 || !bytes.Equal(x.stored(), want) {
-					t.Fatalf("leaf holds kind %d, klen %d, key %v; want a set leaf of %d bytes %v", x.kind, x.rem(), x.stored(), tc.n, want)
+			for _, x := range []*singleKeyHead{l, ls} {
+				if !x.isValueOverflow() || x.rem() != wantLen || x.keyLen() != tc.n || x.base() != 0 || !bytes.Equal(x.stored(), want) {
+					t.Fatalf("leaf holds type %d, klen %d, key %v; want a value overflow of %d bytes %v", x.objType, x.rem(), x.stored(), tc.n, want)
 				}
 			}
 			gotU := uintptr(unsafe.Pointer(vals[uint64](l))) - uintptr(unsafe.Pointer(l))
@@ -584,11 +584,11 @@ func TestLeafLayout(t *testing.T) {
 }
 
 // TestNodeLayout makes sure that the byte nodes of multimap.Ordered stay the
-// cache-line sized objects the tree is designed around: every node kind of
+// cache-line sized objects the tree is designed around: every node type of
 // the adaptive radix tree fills a Go size class of 64, 128, 256 or 512 bytes
-// (the 256-way node excepted), behind a 16-byte header shared by all kinds,
-// the kind byte sits where leaves keep theirs, and the tail of a long path
-// starts right after the fixed part of every kind, where the untyped tree
+// (the 256-way node excepted), behind a 16-byte header shared by all types,
+// the type byte sits where leaves keep theirs, and the tail of a long path
+// starts right after the fixed part of every type, where the untyped tree
 // code reads it.
 func TestNodeLayout(t *testing.T) {
 	for _, tc := range []struct {
@@ -602,9 +602,9 @@ func TestNodeLayout(t *testing.T) {
 		{"26-way node", unsafe.Sizeof(node26{}), 256},
 		{"58-way node", unsafe.Sizeof(node58{}), 512},
 		{"256-way node", unsafe.Sizeof(node256{}), 2080},
-		{"kind at the start of a node", unsafe.Offsetof(header{}.kind), 0},
-		{"kind at the start of a leaf", unsafe.Offsetof(leafHead{}.kind), 0},
-		{"leaf head", unsafe.Sizeof(leafHead{}), 6},
+		{"type at the start of a node", unsafe.Offsetof(header{}.objType), 0},
+		{"type at the start of a leaf", unsafe.Offsetof(singleKeyHead{}.objType), 0},
+		{"leaf head", unsafe.Sizeof(singleKeyHead{}), 6},
 		{"tail of a 5-way node", unsafe.Offsetof(tailed[node5, [16]byte]{}.t), fixedSize[kN5]},
 		{"string tail of a 12-way node", unsafe.Offsetof(tailed[node12, string]{}.t), fixedSize[kN12]},
 		{"tail of a 26-way node", unsafe.Offsetof(tailed[node26, [48]byte]{}.t), fixedSize[kN26]},
@@ -634,7 +634,7 @@ func checkInvariants(t *testing.T, tr *Tree) {
 
 // checkLeaf fails unless leaf l, reached through path, holds its key from a
 // base within path on, and the bytes it holds of path agree with it.
-func checkLeaf(t *testing.T, l *leafHead, path []byte) {
+func checkLeaf(t *testing.T, l *singleKeyHead, path []byte) {
 	t.Helper()
 	b := l.base()
 	if b < 0 || b > len(path) || l.keyLen() < len(path) || !bytes.Equal(l.stored()[:len(path)-b], path[b:]) {
@@ -646,43 +646,43 @@ func checkLeaf(t *testing.T, l *leafHead, path []byte) {
 // it, and returns its number of leaves.
 func checkNode(t *testing.T, n *header, path []byte) int {
 	t.Helper()
-	if isLeaf(n.kind) {
-		checkLeaf(t, asLeaf(n), path)
+	if isSingleKey(n.objType) {
+		checkLeaf(t, asSingleKey(n), path)
 		return 1
 	}
-	if isPage(n.kind) {
-		return checkPage(t, asPage(n), path)
+	if isMultiKey(n.objType) {
+		return checkPage(t, asMultiKey(n), path)
 	}
-	limits := map[kind][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
+	limits := map[objType][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
 		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256},
-		kR8: {1, 8}, kR24: {rShrink[1] + 1, 24}, kR56: {rShrink[2] + 1, 56}, kR256: {rShrink[3] + 1, 256}}[n.kind]
+		kR8: {1, 8}, kR24: {rShrink[1] + 1, 24}, kR56: {rShrink[2] + 1, 56}, kR256: {rShrink[3] + 1, 256}}[n.objType]
 	count, endPage := int(n.count), endPageOf(n)
-	if n.kind == kN256 {
+	if n.objType == kN256 {
 		if n.count != 255 {
 			t.Fatalf("256-way node with header count %d, want 255", n.count)
 		}
 		count = int(asN256(n).total)
 	}
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		if n.count != 255 {
 			t.Fatalf("range node with header count %d, want 255", n.count)
 		}
 		count = int(asR(n).n)
 	}
 	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
-		t.Fatalf("kind %d holds %d children, allowed %d..%d", n.kind, count, lo, hi)
+		t.Fatalf("type %d holds %d children, allowed %d..%d", n.objType, count, lo, hi)
 	}
 	if count+b2i(endPage != nil) < 2 && !pinned(n) {
-		t.Fatalf("node does not branch (kind %d, count %d, endPage %v): it should have collapsed", n.kind, count, endPage != nil)
+		t.Fatalf("node does not branch (type %d, count %d, endPage %v): it should have collapsed", n.objType, count, endPage != nil)
 	}
-	if n.kind != kN256 && !isRange(n.kind) {
+	if n.objType != kN256 && !isRange(n.objType) {
 		s := slots(n)
 		if count+b2i(endPage != nil) > len(s) {
-			t.Fatalf("kind %d holds %d children and a endPage in %d slots", n.kind, count, len(s))
+			t.Fatalf("type %d holds %d children and a endPage in %d slots", n.objType, count, len(s))
 		}
 		for i := count; i < len(s)-1; i++ {
 			if s[i] != nil {
-				t.Fatalf("kind %d: unused slot %d is not empty", n.kind, i)
+				t.Fatalf("type %d: unused slot %d is not empty", n.objType, i)
 			}
 		}
 	}
@@ -704,7 +704,7 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		}
 		leaves++
 	}
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		return leaves + checkRangeNode(t, n, end)
 	}
 	children, bytesOf := 0, -1
@@ -723,7 +723,7 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 }
 
 func eachChild(n *header, fn func(byte, *header)) {
-	switch n.kind {
+	switch n.objType {
 	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		i := 0
@@ -748,7 +748,7 @@ func eachChild(n *header, fn func(byte, *header)) {
 }
 
 // TestShrinkAndCollapse checks that deleting keys one by one takes every node
-// kind back down through each smaller kind to nothing, collapsing and
+// type back down through each smaller type to nothing, collapsing and
 // re-merging common prefixes (short and longer than 12 bytes) on the way,
 // moving the end page of the widest node along, and that the tree satisfies its
 // invariants after every single delete.
@@ -800,8 +800,8 @@ func TestShrinkAndCollapse(t *testing.T) {
 // short keys from a tiny alphabet (which maximises shared paths, splits and
 // merges), checking every result against the reference and the structural
 // invariants at the end. The same operations run on a map of uint64, whose
-// first byte's lowest bit chooses flat or set leaves and third bit pages, and
-// on a map of strings, whose second bit chooses typed or set leaves.
+// first byte's lowest bit chooses flat or value overflows and third bit pages, and
+// on a map of strings, whose second bit chooses typed or value overflows.
 func FuzzOperations(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
@@ -864,10 +864,10 @@ func FuzzOperations(f *testing.F) {
 // common parts, such as URLs of one site or files of one directory, while
 // other keys split those parts and merge them again and the number of keys
 // below them grows and shrinks. It covers the prefix tails of the ART nodes
-// (prefix.go): for paths at every tail class boundary and every node kind, a
+// (prefix.go): for paths at every tail class boundary and every node type, a
 // key that leaves the path in its middle moves the rest of the path into a
 // node of another tail class, removing that key merges the path back, and
-// growing and shrinking the node carries its tail through every kind. After
+// growing and shrinking the node carries its tail through every type. After
 // every step the map must agree with a reference and satisfy its invariants.
 func TestLongPaths(t *testing.T) {
 	for _, pl := range []int{12, 13, 28, 29, 60, 61, 124, 125, 300} {
@@ -919,14 +919,14 @@ func TestLongPaths(t *testing.T) {
 	}
 }
 
-// findLeaf returns the leaf of key in tr, or nil if the key is absent or lives
+// findSingleKey returns the leaf of key in tr, or nil if the key is absent or lives
 // in a page.
-func findLeaf(tr *Tree, key []byte) *leafHead {
+func findSingleKey(tr *Tree, key []byte) *singleKeyHead {
 	n, _ := tr.find(key)
-	if n == nil || !isLeaf(n.kind) {
+	if n == nil || !isSingleKey(n.objType) {
 		return nil
 	}
-	return asLeaf(n)
+	return asSingleKey(n)
 }
 
 // checkPage fails unless the keys of page p are strictly ascending and start
@@ -955,7 +955,7 @@ func checkPage(t *testing.T, p *vpage.Page, path []byte) int {
 // node's path has left it with a page that could stand alone (the next delete
 // through it takes the node away).
 func pinned(n *header) bool {
-	return isRange(n.kind) && asR(n).n == 1 && endPageOf(n) == nil && isPage(asR(n).children()[0].kind)
+	return isRange(n.objType) && asR(n).n == 1 && endPageOf(n) == nil && isMultiKey(asR(n).children()[0].objType)
 }
 
 // checkRangeNode checks the ranges of range node n, whose path ends at end, and

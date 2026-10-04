@@ -8,7 +8,7 @@ import (
 
 // A flat leaf holds a key and its values in one object without pointers:
 //
-//	leafHead (6 B) | key remainder (klen bytes) | padding to T's alignment | values [n]T
+//	singleKeyHead (6 B) | key remainder (klen bytes) | padding to T's alignment | values [n]T
 //
 // The object is one of the Go size classes in flatSizes, allocated as an
 // array of uint64 so that the garbage collector never scans it. A new key
@@ -19,7 +19,7 @@ import (
 // smaller class only once that class would still be half empty, and never
 // below a cache line. A key whose count hovers at a class boundary, or
 // between one and a few values, therefore does not move on every change. A key with more values than the largest class holds becomes
-// a set leaf (spill), and a set leaf becomes flat again once its values fill
+// a value overflow (spill), and a value overflow becomes flat again once its values fill
 // half of the largest class (unspill).
 //
 // Values are unsorted: a lookup scans them, an insertion appends after the
@@ -27,8 +27,8 @@ import (
 // Up to 512 bytes the scan reads a few adjacent cache lines, which costs less
 // than the extra cache miss of a separate value array.
 
-// flatSizes are the size classes of flat leaves, indexed by leafHead.cls();
-// class 0 marks a set leaf.
+// flatSizes are the size classes of flat leaves, indexed by singleKeyHead.cls();
+// class 0 marks a value overflow.
 var flatSizes = [...]uintptr{0, 32, 48, 64, 96, 128, 192, 256, 384, 512}
 
 // minGrown is the smallest class a flat leaf grows into or shrinks back to:
@@ -95,7 +95,7 @@ func flatClass[T comparable](klen, n int) uint8 {
 }
 
 // allocFlat allocates an empty flat leaf of class cls.
-func allocFlat(cls uint8) *leafHead {
+func allocFlat(cls uint8) *singleKeyHead {
 	var p unsafe.Pointer
 	switch flatSizes[cls] {
 	case 32:
@@ -117,16 +117,16 @@ func allocFlat(cls uint8) *leafHead {
 	default:
 		p = unsafe.Pointer(new([64]uint64))
 	}
-	l := (*leafHead)(p)
+	l := (*singleKeyHead)(p)
 	l.setClass(cls)
 	return l
 }
 
 // newFlatLeaf allocates a flat leaf that holds key from base on, in the
 // smallest class that holds one value; a key that no flat leaf holds gets a
-// set leaf. It captures nothing, so passing it as a newLeafFunc allocates no
+// value overflow. It captures nothing, so passing it as a newLeafFunc allocates no
 // closure.
-func newFlatLeaf[T comparable](key []byte, base int) *leafHead {
+func newFlatLeaf[T comparable](key []byte, base int) *singleKeyHead {
 	c := flatClassFor[T](key, base, 1)
 	if c == 0 {
 		return newSetLeaf[T](key, base)
@@ -145,7 +145,7 @@ func flatClassFor[T comparable](key []byte, base, n int) uint8 {
 
 // flatWithKey allocates a flat leaf of class c holding a copy of the key
 // remainder s of a key of kl bytes, and no values.
-func flatWithKey(c uint8, s []byte, kl int) *leafHead {
+func flatWithKey(c uint8, s []byte, kl int) *singleKeyHead {
 	l := allocFlat(c)
 	l.setRem(len(s))
 	l.kl = uint16(kl)
@@ -156,7 +156,7 @@ func flatWithKey(c uint8, s []byte, kl int) *leafHead {
 // reflat copies flat leaf l into a leaf that holds key from base on (see
 // rekeyFunc): a flat leaf at least l's class if one holds the values, a set
 // leaf otherwise.
-func reflat[T comparable](l *leafHead, key []byte, base int) *leafHead {
+func reflat[T comparable](l *singleKeyHead, key []byte, base int) *singleKeyHead {
 	vs := flatVals[T](l)
 	c := flatClassFor[T](key, base, len(vs))
 	if c == 0 {
@@ -179,7 +179,7 @@ func reflat[T comparable](l *leafHead, key []byte, base int) *leafHead {
 // that reflat would make costs an allocation, which a delete that merges a node
 // into its only leaf would otherwise pay every time. The bytes it adds come
 // from a rekeyFunc's pre and b. It reports whether it did.
-func flatPrepend[T comparable](l *leafHead, pre []byte, b, pathLen int) bool {
+func flatPrepend[T comparable](l *singleKeyHead, pre []byte, b, pathLen int) bool {
 	var z T
 	old, klen := l.rem(), l.keyLen()-pathLen
 	if klen > maxInline || flatOff[T](klen)+uintptr(l.n)*unsafe.Sizeof(z) > flatSizes[l.cls()] {
@@ -196,13 +196,13 @@ func flatPrepend[T comparable](l *leafHead, pre []byte, b, pathLen int) bool {
 }
 
 // flatVals returns the values of flat leaf l. The slice aliases the leaf.
-func flatVals[T comparable](l *leafHead) []T {
+func flatVals[T comparable](l *singleKeyHead) []T {
 	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), flatOff[T](l.rem()))), l.n)
 }
 
 // flatAdd adds v to flat leaf l. It returns the leaf that replaces l when l
 // had no room, or nil when l still holds the key's values.
-func flatAdd[T comparable](l *leafHead, v T) *leafHead {
+func flatAdd[T comparable](l *singleKeyHead, v T) *singleKeyHead {
 	if slices.Contains(flatVals[T](l), v) {
 		return nil
 	}
@@ -224,7 +224,7 @@ func flatAdd[T comparable](l *leafHead, v T) *leafHead {
 }
 
 // appendFlat stores v after the values of flat leaf l, which has room.
-func appendFlat[T comparable](l *leafHead, v T) {
+func appendFlat[T comparable](l *singleKeyHead, v T) {
 	n := int(l.n)
 	unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), flatOff[T](l.rem()))), n+1)[n] = v
 	l.n++
@@ -233,7 +233,7 @@ func appendFlat[T comparable](l *leafHead, v T) {
 // flatRemove removes v from flat leaf l. empty reports that l held v as its
 // last value; shrink is the smaller class l should move to (see resize), or
 // 0. The caller moves it, since only it can reach the leaf's slot.
-func flatRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
+func flatRemove[T comparable](l *singleKeyHead, v T) (shrink uint8, empty bool) {
 	vs := flatVals[T](l)
 	i := slices.Index(vs, v)
 	if i < 0 {
@@ -252,7 +252,7 @@ func flatRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 }
 
 // resize copies flat leaf l into a new leaf of class c, which holds its values.
-func resize[T comparable](l *leafHead, c uint8) *leafHead {
+func resize[T comparable](l *singleKeyHead, c uint8) *singleKeyHead {
 	var z T
 	used := flatOff[T](l.rem()) + uintptr(l.n)*unsafe.Sizeof(z)
 	nl := allocFlat(c)
@@ -263,7 +263,7 @@ func resize[T comparable](l *leafHead, c uint8) *leafHead {
 
 // spill turns flat leaf l, which is full in the largest class, into a set
 // leaf holding its values and v.
-func spill[T comparable](l *leafHead, v T) *leafHead {
+func spill[T comparable](l *singleKeyHead, v T) *singleKeyHead {
 	sl := newSetLeafOf[T](l.stored(), l.keyLen())
 	s := vals[T](sl)
 	for _, x := range flatVals[T](l) {
@@ -273,9 +273,9 @@ func spill[T comparable](l *leafHead, v T) *leafHead {
 	return sl
 }
 
-// unspillClass returns the class that set leaf l should turn into once its
-// values fill at most half of the largest class, or 0 if l stays a set leaf.
-func unspillClass[T comparable](l *leafHead) uint8 {
+// unspillClass returns the class that value overflow l should turn into once its
+// values fill at most half of the largest class, or 0 if l stays a value overflow.
+func unspillClass[T comparable](l *singleKeyHead) uint8 {
 	s := l.stored()
 	if len(s) > maxInline || l.keyLen() > maxKeyLen {
 		return 0
@@ -283,8 +283,8 @@ func unspillClass[T comparable](l *leafHead) uint8 {
 	return flatClass[T](len(s), 2*vals[T](l).Len())
 }
 
-// unspill copies set leaf l into a flat leaf of class c.
-func unspill[T comparable](l *leafHead, c uint8) *leafHead {
+// unspill copies value overflow l into a flat leaf of class c.
+func unspill[T comparable](l *singleKeyHead, c uint8) *singleKeyHead {
 	nl := flatWithKey(c, l.stored(), l.keyLen())
 	vals[T](l).Each(func(v T) bool { appendFlat(nl, v); return true })
 	return nl

@@ -38,12 +38,12 @@ func TestPageLifecycle(t *testing.T) {
 	for i, k := range keys {
 		m.Add(k, uint64(i))
 		checkInvariants(t, &m.t)
-		if r := m.t.root; !isPage(r.kind) {
+		if r := m.t.root; !isMultiKey(r.objType) {
 			if split == 0 {
 				split = i + 1 // the number of keys the page held when it overflowed, plus one
 			}
 			continue
-		} else if c := asPage(r).Class(); c < class {
+		} else if c := asMultiKey(r).Class(); c < class {
 			t.Fatalf("after %d keys the root page shrank from class %d to %d", i+1, class, c)
 		} else {
 			class = c
@@ -53,13 +53,13 @@ func TestPageLifecycle(t *testing.T) {
 		t.Fatalf("the page grew to class %d and overflowed at key %d, want class 2 and a split between the 20th and 40th key", class, split)
 	}
 	r := m.t.root
-	if !isRange(r.kind) || r.plen != 6 {
-		t.Fatalf("after the split: root kind %d, path %d; want a range node, path 6", r.kind, r.plen)
+	if !isRange(r.objType) || r.plen != 6 {
+		t.Fatalf("after the split: root type %d, path %d; want a range node, path 6", r.objType, r.plen)
 	}
 	pages := 0
 	for _, c := range asR(r).children()[:asR(r).n] {
-		if !isPage(c.kind) {
-			t.Fatalf("after the split: child kind %d, want a page", c.kind)
+		if !isMultiKey(c.objType) {
+			t.Fatalf("after the split: child type %d, want a page", c.objType)
 		}
 		pages++
 	}
@@ -139,7 +139,7 @@ func checkValueType[T comparable](t *testing.T, vs []T) {
 	for i, v := range vs {
 		m.Add(key(i), v)
 	}
-	if got, want := isPage(m.t.root.kind), takesPages[T](); got != want {
+	if got, want := isMultiKey(m.t.root.objType), takesPages[T](); got != want {
 		t.Fatalf("root is a page: %v, want %v", got, want)
 	}
 	var got []T
@@ -187,7 +187,7 @@ func TestPagePromotion(t *testing.T) {
 		compare(t, &m, ref, id, r)
 		checkInvariants(t, &m.t)
 	}
-	leafAt := func(k []byte) bool { return findLeaf(&m.t, k) != nil }
+	leafAt := func(k []byte) bool { return findSingleKey(&m.t, k) != nil }
 	key := func(a, b byte) []byte { return []byte{9, 9, 9, 9, 9, 9, a, b} }
 
 	// 10 keys with one value each share a U8-1 page; a second value gives a
@@ -196,11 +196,11 @@ func TestPagePromotion(t *testing.T) {
 		add(key(0, b), 1)
 	}
 	add(key(0, 3), 1) // the same value again changes nothing
-	if !isPage(m.t.root.kind) {
+	if !isMultiKey(m.t.root.objType) {
 		t.Fatalf("a repeated value changed the page")
 	}
 	add(key(0, 3), 2)
-	if !leafAt(key(0, 3)) || !isRange(m.t.root.kind) || asR(m.t.root).n != 3 {
+	if !leafAt(key(0, 3)) || !isRange(m.t.root.objType) || asR(m.t.root).n != 3 {
 		t.Fatalf("a second value did not give the key a leaf between two pages")
 	}
 	// many values, and more keys than a leaf's flat values hold
@@ -238,14 +238,14 @@ func TestPagePromotion(t *testing.T) {
 
 // TestPageLayout makes sure that every page class has the size and the layout
 // the code that reaches into it assumes. It covers the pages of the ART behind
-// multimap.Ordered, which the tree reads through the kind byte at their start:
-// a page of class c has the kind kPage+c, the header is 8 bytes, and the range
+// multimap.Ordered, which the tree reads through the type byte at their start:
+// a page of class c has the type kMultiKey+c, the header is 8 bytes, and the range
 // nodes, which hold pages, have the layout their offsets say.
 func TestPageLayout(t *testing.T) {
 	for class := range 4 {
 		h := (*header)(unsafe.Pointer(vpage.New(class, 0)))
-		if k := asPage(h).Class(); k != class || h.kind != kPage+kind(class)<<1 || !isPage(h.kind) || isLeaf(h.kind) {
-			t.Errorf("page of class %d has class %d, kind %d", class, k, h.kind)
+		if k := asMultiKey(h).Class(); k != class || h.objType != kMultiKey+objType(class)<<1 || !isMultiKey(h.objType) || isSingleKey(h.objType) {
+			t.Errorf("page of class %d has class %d, type %d", class, k, h.objType)
 		}
 	}
 	for _, tc := range []struct {
@@ -277,7 +277,7 @@ func TestPageLayout(t *testing.T) {
 // holds, and one with more, keep their values, also when they get a second
 // one. It covers the limits of the pages of the ART behind multimap.Ordered
 // (255 bytes below the base) and the leaf a key gets that is too long for a page,
-// a flat leaf up to 254 bytes of its key and a set leaf beyond.
+// a flat leaf up to 254 bytes of its key and a value overflow beyond.
 func TestPageLongRemainder(t *testing.T) {
 	r := rand.New(rand.NewPCG(5, 6))
 	var m Map[uint64]
@@ -296,7 +296,7 @@ func TestPageLongRemainder(t *testing.T) {
 	key := func(n int, last byte) []byte { return append(bytes.Repeat([]byte("k"), n-1), last) }
 	m.Add(key(255, 'a'), 1) // a key with 255 bytes below the root page, the most it holds,
 	m.Add(key(255, 'b'), 1)
-	m.Add(key(255, 'a'), 2) // gets a second value: a set leaf, as the key is too long for a flat one
+	m.Add(key(255, 'a'), 2) // gets a second value: a value overflow, as the key is too long for a flat one
 	ref.add(key(255, 'a'), 1)
 	ref.add(key(255, 'b'), 1)
 	ref.add(key(255, 'a'), 2)
@@ -355,7 +355,7 @@ func TestPageMovesUp(t *testing.T) {
 			}
 			checkInvariants(t, &m.t)
 			compare(t, &m, ref, id, rand.New(rand.NewPCG(7, 8)))
-			if got := isRange(m.t.root.kind); got != tc.pinned {
+			if got := isRange(m.t.root.objType); got != tc.pinned {
 				t.Fatalf("root is a range node: %v, want %v", got, tc.pinned)
 			}
 		})

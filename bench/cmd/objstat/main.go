@@ -21,7 +21,7 @@
 //
 //   - block: the Go size class an object occupies, with the 8-byte malloc
 //     header of objects with pointers above 512 bytes (art.Block). The tool
-//     counts the index only: not what a value set of a set leaf allocates for
+//     counts the index only: not what a value set of a value overflow allocates for
 //     itself (2% of the leaves of natural maps), nor the keys and values the
 //     caller owns.
 //   - not x64, not x128: the share of objects whose block is not a multiple of

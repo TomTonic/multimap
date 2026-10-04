@@ -41,11 +41,11 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 			t.size++
 			return loc
 		}
-		if n.kind <= maxPageByte {
-			if n.kind > maxLeafByte {
+		if n.objType <= maxMultiKeyByte {
+			if n.objType > maxSingleKeyByte {
 				return t.upsertPage(loc, par, pi, key, pathLen, v, nl)
 			}
-			return t.splitLeaf(loc, asLeaf(n), key, pathLen, v, nl, belowByteNode)
+			return t.splitLeaf(loc, asSingleKey(n), key, pathLen, v, nl, belowByteNode)
 		}
 		if n.plen > 0 {
 			pl := int(n.plen)
@@ -66,7 +66,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 			return endPageSlot(*loc)
 		}
 		b := key[pathLen]
-		if isRange(n.kind) {
+		if isRange(n.objType) {
 			x := asR(n)
 			i := x.index(b)
 			c := &x.children()[i]
@@ -90,7 +90,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 		c := findLoc(n, b)
 		if c == nil {
 			var slot **header
-			*loc, slot = addChild(n, b, leafHdr(nl(key, pathLen+1)))
+			*loc, slot = addChild(n, b, singleKeyHdr(nl(key, pathLen+1)))
 			t.size++
 			return slot
 		}
@@ -102,7 +102,7 @@ func (t *Tree) upsert(key []byte, v uint64, nl newLeafFunc) **header {
 // range node. Below a root that is a byte node there are none, and there
 // never are (see rebuild.go).
 func (t *Tree) hasPages() bool {
-	return t.root != nil && (isPage(t.root.kind) || isRange(t.root.kind))
+	return t.root != nil && (isMultiKey(t.root.objType) || isRange(t.root.objType))
 }
 
 // firstByte returns byte pathLen of every key below c, a child of a range
@@ -110,9 +110,9 @@ func (t *Tree) hasPages() bool {
 // node. A page's keys may differ there.
 func firstByte(c *header, pathLen int) (byte, bool) {
 	switch {
-	case isLeaf(c.kind):
-		return asLeaf(c).from(pathLen)[0], true
-	case isPage(c.kind) || c.plen == 0:
+	case isSingleKey(c.objType):
+		return asSingleKey(c).from(pathLen)[0], true
+	case isMultiKey(c.objType) || c.plen == 0:
 		return 0, false
 	}
 	return c.prefix[0], true
@@ -122,9 +122,9 @@ func firstByte(c *header, pathLen int) (byte, bool) {
 // fits a page, else a new leaf made by nl, for a child at pathLen.
 func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc, pathLen int) *header {
 	if !t.pageable(key, pathLen) {
-		return leafHdr(nl(key, pathLen))
+		return singleKeyHdr(nl(key, pathLen))
 	}
-	return pageHdr(newPageFor(key, pathLen, v))
+	return multiKeyHdr(newPageFor(key, pathLen, v))
 }
 
 // upsertPage handles a key whose descent reaches the page at *loc, whose keys
@@ -132,7 +132,7 @@ func (t *Tree) newChild(key []byte, v uint64, nl newLeafFunc, pathLen int) *head
 // rebuilt with it (see build) because the page is full or the key does not fit
 // it.
 func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, pathLen int, v uint64, nl newLeafFunc) **header {
-	p := asPage(*loc)
+	p := asMultiKey(*loc)
 	base := p.Base()
 	full := false // the key fits the page but for its room
 	if len(key)-base <= maxPageRemainder {
@@ -143,7 +143,7 @@ func (t *Tree) upsertPage(loc, par **header, pi int, key []byte, pathLen int, v 
 		}
 		q, res := p.InsertIn(i, key, v) // the remainder is not too long: checked above
 		if res != vpage.Full {
-			*loc = pageHdr(q)
+			*loc = multiKeyHdr(q)
 			t.size++
 			return loc
 		}
@@ -182,9 +182,9 @@ func (t *Tree) burst(loc **header, p *vpage.Page, key []byte, pathLen int, v uin
 	first := p.Key(0, &buf)[pathLen-base:] // the first key, from pathLen on: it holds the shared bytes
 	shared := first[:d-pathLen]
 	if m := swar.Lcp(shared, key[pathLen:]); pathLen+m < d {
-		return t.fork(loc, pageHdr(p), false, key, pathLen, pathLen+m, v, nl)
+		return t.fork(loc, multiKeyHdr(p), false, key, pathLen, pathLen+m, v, nl)
 	}
-	var endPage *leafHead
+	var endPage *singleKeyHead
 	if len(first) == d-pathLen {
 		// The first key is the shared bytes: it ends at the range node, so it is
 		// the node's end page, and a leaf. The others are longer.
@@ -192,7 +192,7 @@ func (t *Tree) burst(loc **header, p *vpage.Page, key []byte, pathLen int, v uin
 		endPage = t.mk(whole, d, p.Val(0))
 		p = p.DeleteAt(0) // the page was full: it has more keys
 	}
-	*loc = makeR(key[pathLen:d], endPage, []rng{{0, pageHdr(p)}})
+	*loc = makeR(key[pathLen:d], endPage, []rng{{0, multiKeyHdr(p)}})
 	return t.upsert(key, v, nl)
 }
 
@@ -203,7 +203,7 @@ func (t *Tree) burst(loc **header, p *vpage.Page, key []byte, pathLen int, v uin
 // and allocates one. It reports false and changes nothing when all keys share
 // their byte at pathLen.
 func splitFull(loc, par **header, pi, pathLen int) bool {
-	p := asPage(*loc)
+	p := asMultiKey(*loc)
 	n := p.Len()
 	at := func(i int) byte { return p.ByteAt(i, pathLen-p.Base()) }
 	if at(0) == at(n-1) {
@@ -223,7 +223,7 @@ func splitFull(loc, par **header, pi, pathLen int) bool {
 	}
 	rb := at(s)
 	left, right := p.SplitOff(s)
-	*par = rSplice(*par, pi, []rng{{0, pageHdr(left)}, {rb, pageHdr(right)}})
+	*par = rSplice(*par, pi, []rng{{0, multiKeyHdr(left)}, {rb, multiKeyHdr(right)}})
 	return true
 }
 
@@ -242,7 +242,7 @@ func (t *Tree) replace(at, par **header, pi int, items []item, pathLen int) {
 // l, which holds its key from sp.pathLen on and its values, and lets the subtree
 // around it fall back to byte nodes if keys with several values crowd it
 // (see fallBack).
-func (t *Tree) promote(sp spot, l *leafHead, key []byte) {
+func (t *Tree) promote(sp spot, l *singleKeyHead, key []byte) {
 	t.place(sp, l, key)
 	t.fallBack(key)
 }
@@ -252,11 +252,11 @@ func (t *Tree) promote(sp spot, l *leafHead, key []byte) {
 // the key when the key is alone with its byte below a range node, else the
 // page's keys are rebuilt with the leaf in the key's place (see ranges), which
 // gives it a range or a subtree of its own.
-func (t *Tree) place(sp spot, l *leafHead, key []byte) {
-	p, i := asPage(*sp.loc), sp.i
+func (t *Tree) place(sp spot, l *singleKeyHead, key []byte) {
+	p, i := asMultiKey(*sp.loc), sp.i
 	n := p.Len()
 	if n == 1 {
-		*sp.loc = leafHdr(l) // the page held only this key
+		*sp.loc = singleKeyHdr(l) // the page held only this key
 		return
 	}
 	// Below a range node, a key alone with its byte gets a range of its own
@@ -272,12 +272,12 @@ func (t *Tree) place(sp spot, l *leafHead, key []byte) {
 		if i > 0 {
 			var left *vpage.Page
 			left, p = p.SplitAt(i)
-			rs = append(rs, rng{0, pageHdr(left)})
+			rs = append(rs, rng{0, multiKeyHdr(left)})
 		}
-		rs = append(rs, rng{b, leafHdr(l)})
+		rs = append(rs, rng{b, singleKeyHdr(l)})
 		if i < n-1 {
 			_, right := p.SplitAt(1)
-			rs = append(rs, rng{after, pageHdr(right)})
+			rs = append(rs, rng{after, multiKeyHdr(right)})
 		}
 		*sp.par = rSplice(*sp.par, sp.pi, rs)
 		return
@@ -291,14 +291,14 @@ func (t *Tree) place(sp spot, l *leafHead, key []byte) {
 // key's leaf, or both keys go below a new node holding their common prefix, a
 // range node if the new key goes into a page (unless l is below a byte node),
 // else a byte node. l keeps its base and moves below the new node.
-func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, pathLen int, v uint64, nl newLeafFunc, belowByteNode bool) **header {
+func (t *Tree) splitLeaf(loc **header, l *singleKeyHead, key []byte, pathLen int, v uint64, nl newLeafFunc, belowByteNode bool) **header {
 	ls, rest := l.from(pathLen), key[pathLen:]
 	if len(key) == l.keyLen() && bytes.Equal(ls, rest) {
 		return loc
 	}
 	p := swar.Lcp(ls, rest)
 	if d := pathLen + p; !belowByteNode && t.pageable(key, d) {
-		return t.fork(loc, leafHdr(l), d == l.keyLen(), key, pathLen, d, v, nl)
+		return t.fork(loc, singleKeyHdr(l), d == l.keyLen(), key, pathLen, d, v, nl)
 	}
 	nn := newNode(kN5, p)
 	storePrefix(nn, rest[:p])
@@ -315,7 +315,7 @@ func (t *Tree) splitLeaf(loc **header, l *leafHead, key []byte, pathLen int, v u
 func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, pathLen int, v uint64, nl newLeafFunc) **header {
 	var buf [prefixBuf]byte
 	pk := appendPrefix(buf[:0], n) // a copy: n's common prefix changes below
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		// Below a range node, n keeps the byte it branches on in its common prefix.
 		return t.fork(loc, withPrefix(n, pk[mis:]), false, key, pathLen, pathLen+mis, v, nl)
 	}
@@ -341,10 +341,10 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, pathLen, d
 		return endPageSlot(*loc)
 	}
 	nc := t.newChild(key, v, nl, d)
-	var endPage *leafHead
+	var endPage *singleKeyHead
 	rs := []rng{{0, nc}}
 	if oend {
-		endPage = asLeaf(old)
+		endPage = asSingleKey(old)
 	} else if ob := forkByte(old, d); key[d] < ob {
 		rs = append(rs, rng{ob, old})
 	} else {
@@ -360,8 +360,8 @@ func (t *Tree) fork(loc **header, old *header, oend bool, key []byte, pathLen, d
 // starts there or a page whose keys all share that byte, which fork puts next to
 // a new key.
 func forkByte(old *header, d int) byte {
-	if isPage(old.kind) {
-		return asPage(old).ByteAt(0, d-asPage(old).Base())
+	if isMultiKey(old.objType) {
+		return asMultiKey(old).ByteAt(0, d-asMultiKey(old).Base())
 	}
 	b, _ := firstByte(old, d)
 	return b
@@ -371,17 +371,17 @@ func forkByte(old *header, d int) byte {
 // byte on: as h's end page if rest is empty, as the child under rest[0]
 // otherwise. It returns h or its grown replacement, and the slot that holds
 // l.
-func attachAt(h *header, rest []byte, l *leafHead) (*header, **header) {
+func attachAt(h *header, rest []byte, l *singleKeyHead) (*header, **header) {
 	if len(rest) == 0 {
 		h = setEndPage(h, l)
 		return h, endPageSlot(h)
 	}
-	return addChild(h, rest[0], leafHdr(l))
+	return addChild(h, rest[0], singleKeyHdr(l))
 }
 
 // setEndPage makes l the end page of n, which has none yet, growing n into the
-// next larger kind when its slots are full. It returns n or its replacement.
-func setEndPage(n *header, l *leafHead) *header {
+// next larger type when its slots are full. It returns n or its replacement.
+func setEndPage(n *header, l *singleKeyHead) *header {
 	if full(n) {
 		n = grow(n)
 	}
@@ -390,14 +390,14 @@ func setEndPage(n *header, l *leafHead) *header {
 }
 
 // addChild inserts child c under byte b, which must not be present yet,
-// growing n into the next larger kind when it is full. It returns n or its
+// growing n into the next larger type when it is full. It returns n or its
 // replacement, and the slot that holds c.
 func addChild(n *header, b byte, c *header) (*header, **header) {
 	if full(n) {
 		n = grow(n)
 	}
 	var slot **header
-	switch n.kind {
+	switch n.objType {
 	case kN5:
 		x := asN5(n)
 		slot = insertSorted(x.keys[:], x.child[:], int(x.count), b, c)
@@ -419,11 +419,11 @@ func addChild(n *header, b byte, c *header) (*header, **header) {
 }
 
 // grow copies the full node n, common prefix, children and end page, into the next larger
-// kind.
+// type.
 func grow(n *header) *header {
 	endPage := endPageOf(n)
 	var y *header
-	switch n.kind {
+	switch n.objType {
 	case kN5:
 		x := asN5(n)
 		y = newLike(n, kN12)

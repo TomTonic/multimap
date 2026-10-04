@@ -18,7 +18,7 @@ type Tree struct {
 	// gets a second value needs in place of its page entry.
 	small bool
 	at    spot // where upsert found a key that was in a page
-	mk    func(key []byte, base int, raw uint64) *leafHead
+	mk    func(key []byte, base int, raw uint64) *singleKeyHead
 }
 
 // Len returns the number of keys.
@@ -38,13 +38,13 @@ func (t *Tree) find(key []byte) (*header, int) {
 	n := t.root
 	pathLen := 0
 	for n != nil {
-		if n.kind <= maxPageByte {
-			if n.kind > maxLeafByte {
-				return findInPage(asPage(n), key)
+		if n.objType <= maxMultiKeyByte {
+			if n.objType > maxSingleKeyByte {
+				return findInPage(asMultiKey(n), key)
 			}
 			// The nodes have checked the key up to pathLen; the leaf holds the
 			// rest.
-			if asLeaf(n).matches(key) {
+			if asSingleKey(n).matches(key) {
 				return n, 0
 			}
 			return nil, 0
@@ -63,12 +63,12 @@ func (t *Tree) find(key []byte) (*header, int) {
 			if t == nil {
 				return nil, 0
 			}
-			n = leafHdr(t)
+			n = singleKeyHdr(t)
 			continue
 		}
 		b := key[pathLen]
 		pathLen++
-		switch n.kind {
+		switch n.objType {
 		case kN5:
 			x := asN5(n)
 			i := swar.Index8(swar.Word(x.keys[:]), b)
@@ -113,7 +113,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 // findInPage looks for key in page p, which holds its keys from its base on.
 func findInPage(p *vpage.Page, key []byte) (*header, int) {
 	if i, ok := p.FindIn(key); ok { // the descent has checked the bytes above the base
-		return pageHdr(p), i
+		return multiKeyHdr(p), i
 	}
 	return nil, 0
 }
@@ -124,13 +124,13 @@ func findInPage(p *vpage.Page, key []byte) (*header, int) {
 // follows them.
 func (t *Tree) findSlot(key []byte) **header {
 	loc, pathLen := &t.root, 0
-	for !isLeaf((*loc).kind) {
+	for !isSingleKey((*loc).objType) {
 		n := *loc
 		pathLen += n.prefixLen()
 		switch {
 		case pathLen == len(key):
 			loc = endPageSlot(n)
-		case isRange(n.kind):
+		case isRange(n.objType):
 			x := asR(n)
 			loc = &x.children()[x.index(key[pathLen])]
 		default:
@@ -150,7 +150,7 @@ func childAt(c **header, i int) *header {
 
 // findLoc returns the slot holding the child for byte b, or nil.
 func findLoc(n *header, b byte) **header {
-	switch n.kind {
+	switch n.objType {
 	case kN26, kN58:
 		bm, child := bitmapOf(n)
 		if swar.Has(bm, b) {
@@ -166,13 +166,13 @@ func findLoc(n *header, b byte) **header {
 	}
 	x := asN5(n) // a 5- and a 12-way node start alike
 	i := swar.Index8(swar.Word(x.keys[:]), b)
-	if i == 8 && n.kind == kN12 {
+	if i == 8 && n.objType == kN12 {
 		i = 8 + swar.Index8(swar.Word(asN12(n).keys[8:16]), b)
 	}
 	if i >= int(n.count) {
 		return nil
 	}
-	if n.kind == kN5 {
+	if n.objType == kN5 {
 		return &x.child[i]
 	}
 	return &asN12(n).child[i]

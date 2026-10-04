@@ -10,9 +10,9 @@ import (
 // item is one key during a rebuild of a subtree (see build): a key with its
 // one raw value, which may go into a page, or a key that has a leaf.
 type item struct {
-	key  []byte    // the whole key
-	val  uint64    // the key's value, if it has no leaf
-	leaf *leafHead // holds key from a base of some pathLen on, or nil
+	key  []byte         // the whole key
+	val  uint64         // the key's value, if it has no leaf
+	leaf *singleKeyHead // holds key from a base of some pathLen on, or nil
 }
 
 // leafOf returns the leaf of it, ready to stand at pathLen: the leaf it has, or a
@@ -21,7 +21,7 @@ type item struct {
 // fallBack), and in a tree of byte nodes a leaf stands where its key first
 // differs from every other key. Every node above a leaf branches on a byte its
 // key shares with another one, so the leaf stood no deeper before.
-func (t *Tree) leafOf(it item, pathLen int) *leafHead {
+func (t *Tree) leafOf(it item, pathLen int) *singleKeyHead {
 	if it.leaf == nil {
 		return t.mk(it.key, pathLen, it.val)
 	}
@@ -35,15 +35,15 @@ func (t *Tree) leafOf(it item, pathLen int) *leafHead {
 // takes their common path and splits them into ranges (see ranges).
 func (t *Tree) build(items []item, pathLen int) *header {
 	if p := pageFor(items, pathLen); p != nil {
-		return pageHdr(p)
+		return multiKeyHdr(p)
 	}
 	if len(items) == 1 {
-		return leafHdr(t.leafOf(items[0], pathLen)) // a key that no page holds, or that has a leaf
+		return singleKeyHdr(t.leafOf(items[0], pathLen)) // a key that no page holds, or that has a leaf
 	}
 	first, last := items[0].key, items[len(items)-1].key
 	plen := swar.Lcp(first[pathLen:], last[pathLen:])
 	d := pathLen + plen
-	var endPage *leafHead
+	var endPage *singleKeyHead
 	if len(first) == d {
 		// A key that ends here sorts first.
 		endPage = t.leafOf(items[0], d)
@@ -69,7 +69,7 @@ func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 		return append(out, rng{first, t.build(items, d)})
 	}
 	if p := pageFor(items, d); p != nil {
-		return append(out, rng{first, pageHdr(p)})
+		return append(out, rng{first, multiKeyHdr(p)})
 	}
 	k := slices.IndexFunc(items, func(it item) bool { return it.leaf != nil })
 	lo := n / 2
@@ -118,7 +118,7 @@ func (t *Tree) ranges(items []item, d int, out []rng) []rng {
 // Below a byte node, a tree never holds pages or range nodes: a new key
 // there gets a leaf, and splits make byte nodes (see upsert). A byte
 // node below a range node starts its path with its byte, like every child of a
-// range node, so the two kinds of subtree mix freely. There is no way back to
+// range node, so the two types of subtree mix freely. There is no way back to
 // pages, except that a subtree that falls to a single leaf takes new keys in
 // pages again.
 
@@ -142,7 +142,7 @@ func (t *Tree) fallBack(key []byte) {
 	var buf [16]rpos
 	path := buf[:0]
 	loc, pathLen := &t.root, 0
-	for n := *loc; isRange(n.kind); n = *loc {
+	for n := *loc; isRange(n.objType); n = *loc {
 		path = append(path, rpos{loc, pathLen})
 		pathLen += n.prefixLen()
 		if pathLen == len(key) {
@@ -171,9 +171,9 @@ func needsFallBack(r *rhead, gained int) bool {
 	multi, keys, ranges := gained, 0, -gained
 	for _, c := range r.children()[:r.n] {
 		switch {
-		case isPage(c.kind):
-			keys += asPage(c).Len()
-		case isRange(c.kind):
+		case isMultiKey(c.objType):
+			keys += asMultiKey(c).Len()
+		case isRange(c.objType):
 			ranges++
 		default:
 			multi++
@@ -200,7 +200,7 @@ func (t *Tree) items(n *header, pathLen int, pre []byte) []item {
 
 // leaf appends the item of leaf l, which holds its key from a base within the
 // current path.
-func (w *walker) leaf(l *leafHead) {
+func (w *walker) leaf(l *singleKeyHead) {
 	start := len(w.arena)
 	w.arena = append(append(w.arena, w.path[:l.base()]...), l.stored()...)
 	k := w.arena[start:len(w.arena):len(w.arena)]
@@ -211,11 +211,11 @@ func (w *walker) leaf(l *leafHead) {
 // w.out.
 func (w *walker) walk(n *header, pathLen int) {
 	switch {
-	case isLeaf(n.kind):
-		w.leaf(asLeaf(n))
+	case isSingleKey(n.objType):
+		w.leaf(asSingleKey(n))
 		return
-	case isPage(n.kind):
-		w.out = append(w.out, pageItems(asPage(n), w.path)...)
+	case isMultiKey(n.objType):
+		w.out = append(w.out, pageItems(asMultiKey(n), w.path)...)
 		return
 	}
 	w.path = appendPrefix(w.path[:pathLen], n)
@@ -223,7 +223,7 @@ func (w *walker) walk(n *header, pathLen int) {
 	if t := endPageOf(n); t != nil {
 		w.leaf(t)
 	}
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		for _, c := range asR(n).children()[:asR(n).n] {
 			w.walk(c, pathLen)
 		}
@@ -237,7 +237,7 @@ func (w *walker) walk(n *header, pathLen int) {
 
 // eachByteNode calls fn for every byte child of the byte node n in byte order.
 func eachByteNode(n *header, fn func(b byte, c *header)) {
-	switch n.kind {
+	switch n.objType {
 	case kN5, kN12:
 		keys, child := sorted(n)
 		for i, c := range child {
@@ -261,9 +261,9 @@ func eachByteNode(n *header, fn func(b byte, c *header)) {
 	}
 }
 
-// byteNodeKind returns the smallest kind of byte node with room for groups byte
+// byteNodeType returns the smallest type of byte node with room for groups byte
 // children and, if end page, an end page.
-func byteNodeKind(groups int, endPage bool) kind {
+func byteNodeType(groups int, endPage bool) objType {
 	switch need := groups + b2i(endPage); {
 	case need <= 5:
 		return kN5
@@ -283,12 +283,12 @@ func byteNodeKind(groups int, endPage bool) kind {
 // leaf keep it.
 func (t *Tree) byteNodes(items []item, pathLen int) *header {
 	if len(items) == 1 {
-		return leafHdr(t.leafOf(items[0], pathLen))
+		return singleKeyHdr(t.leafOf(items[0], pathLen))
 	}
 	first, last := items[0].key, items[len(items)-1].key
 	plen := swar.Lcp(first[pathLen:], last[pathLen:])
 	d := pathLen + plen
-	var endPage *leafHead
+	var endPage *singleKeyHead
 	if len(first) == d {
 		// A key that ends here sorts first.
 		endPage = t.leafOf(items[0], d)
@@ -298,7 +298,7 @@ func (t *Tree) byteNodes(items []item, pathLen int) *header {
 	for i := 1; i < len(items); i++ {
 		groups += b2i(items[i].key[d] != items[i-1].key[d])
 	}
-	n := newNode(byteNodeKind(groups, endPage != nil), plen)
+	n := newNode(byteNodeType(groups, endPage != nil), plen)
 	storePrefix(n, first[pathLen:d])
 	setEndPageSlot(n, endPage)
 	for i := 0; i < len(items); {

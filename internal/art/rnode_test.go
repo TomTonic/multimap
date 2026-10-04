@@ -7,22 +7,22 @@ import (
 	"testing"
 )
 
-// kindsOf counts the objects below n by kind, end pages included.
-func kindsOf(n *header, count map[kind]int) {
-	count[n.kind]++
-	if n.kind <= maxPageByte {
+// typesOf counts the objects below n by type, end pages included.
+func typesOf(n *header, count map[objType]int) {
+	count[n.objType]++
+	if n.objType <= maxMultiKeyByte {
 		return
 	}
 	if endPageOf(n) != nil {
-		count[kSet]++
+		count[kValueOverflow]++
 	}
-	if isRange(n.kind) {
+	if isRange(n.objType) {
 		for _, c := range asR(n).children()[:asR(n).n] {
-			kindsOf(c, count)
+			typesOf(c, count)
 		}
 		return
 	}
-	eachChild(n, func(_ byte, c *header) { kindsOf(c, count) })
+	eachChild(n, func(_ byte, c *header) { typesOf(c, count) })
 }
 
 // TestRangeNodeClasses makes sure that integer keys whose first bytes spread
@@ -33,11 +33,11 @@ func kindsOf(n *header, count map[kind]int) {
 // and hold its invariants.
 func TestRangeNodeClasses(t *testing.T) {
 	r := rand.New(rand.NewPCG(11, 12))
-	seen := map[kind]bool{}
+	seen := map[objType]bool{}
 	note := func(m *Map[uint64]) {
-		count := map[kind]int{}
+		count := map[objType]int{}
 		if m.t.root != nil {
-			kindsOf(m.t.root, count)
+			typesOf(m.t.root, count)
 		}
 		for k := range count {
 			seen[k] = true
@@ -68,9 +68,9 @@ func TestRangeNodeClasses(t *testing.T) {
 		}
 		compare(t, &m, ref, id, r)
 	}
-	for _, k := range []kind{kR8, kR24, kR56, kR256} {
+	for _, k := range []objType{kR8, kR24, kR56, kR256} {
 		if !seen[k] {
-			t.Errorf("no range node of kind %d appeared", k)
+			t.Errorf("no range node of type %d appeared", k)
 		}
 	}
 }
@@ -100,17 +100,17 @@ func TestPageKeyLength(t *testing.T) {
 		compare(t, &m, ref, id, r)
 	}
 	pages := func() int {
-		count := map[kind]int{}
-		kindsOf(m.t.root, count)
+		count := map[objType]int{}
+		typesOf(m.t.root, count)
 		n := 0
-		for k := kPage; k <= kLastPage; k += 2 {
+		for k := kMultiKey; k <= kLastMultiKey; k += 2 {
 			n += count[k]
 		}
 		return n
 	}
 	leaves := func(m *Map[uint64]) int {
 		n := 0
-		m.Objects(func(o Object) { n += b2i(o.Label == "flat leaf" || o.Label == "set leaf") })
+		m.Objects(func(o Object) { n += b2i(o.Label == "flat leaf" || o.Label == "value overflow") })
 		return n
 	}
 	fill(2000)

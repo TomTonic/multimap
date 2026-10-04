@@ -9,16 +9,16 @@ import (
 // A typed leaf holds a key and its values like a flat leaf, in one object, for
 // values that hold a pointer (strings, pointers, interfaces, structs of them):
 //
-//	leafHead (6 B) | key remainder (klen bytes) | padding to 8 | values [n]T
+//	singleKeyHead (6 B) | key remainder (klen bytes) | padding to 8 | values [n]T
 //
 // Such an object must be allocated with its real type, or the garbage
 // collector would not see the pointers in the values. The type is a struct of
 // the head, a key array and a value array, so a leaf has one of eight value
-// capacities (typedCaps, the leaf's kind) and one of eight key area sizes
+// capacities (typedCaps, the leaf's type) and one of eight key area sizes
 // (2 to 58 bytes, so that the head and the key fill whole words and the values
 // start at typedOff(klen) in every one of them). A longer remainder makes the
-// leaf a set leaf, as does a key with more values than the largest capacity
-// holds; the set leaf turns into a typed one again once its values fill half
+// leaf a value overflow, as does a key with more values than the largest capacity
+// holds; the value overflow turns into a typed one again once its values fill half
 // of it.
 //
 // Values are unsorted as in a flat leaf: a lookup scans them, an insertion
@@ -27,7 +27,7 @@ import (
 // what it no longer contains.
 
 // typedCaps are the value capacities of the typed leaf classes, indexed by
-// leafHead.cls(); class 0 marks a set leaf.
+// singleKeyHead.cls(); class 0 marks a value overflow.
 var typedCaps = [...]int{0, 1, 2, 3, 4, 6, 8, 12, 16}
 
 // minGrownTyped is the smallest class a typed leaf grows into or shrinks back
@@ -78,16 +78,16 @@ type keyArr interface {
 
 // typedLeaf is the type of a typed leaf object.
 type typedLeaf[T any, V valArr[T], K keyArr] struct {
-	leafHead
+	singleKeyHead
 	k K
 	v V
 }
 
 // allocTyped allocates an empty typed leaf of class c for a key remainder of
 // klen bytes, at most maxTypedKey; the caller stores the key.
-func allocTyped[T comparable](c uint8, klen int) *leafHead {
+func allocTyped[T comparable](c uint8, klen int) *singleKeyHead {
 	j := int(typedOff(klen)-8) / 8
-	var l *leafHead
+	var l *singleKeyHead
 	switch c {
 	case 1:
 		l = allocTypedK[T, [1]T](j)
@@ -112,32 +112,32 @@ func allocTyped[T comparable](c uint8, klen int) *leafHead {
 
 // allocTypedK allocates a typed leaf with value array V and the key area of
 // size class j.
-func allocTypedK[T comparable, V valArr[T]](j int) *leafHead {
+func allocTypedK[T comparable, V valArr[T]](j int) *singleKeyHead {
 	switch j {
 	case 0:
-		return &new(typedLeaf[T, V, [2]byte]).leafHead
+		return &new(typedLeaf[T, V, [2]byte]).singleKeyHead
 	case 1:
-		return &new(typedLeaf[T, V, [10]byte]).leafHead
+		return &new(typedLeaf[T, V, [10]byte]).singleKeyHead
 	case 2:
-		return &new(typedLeaf[T, V, [18]byte]).leafHead
+		return &new(typedLeaf[T, V, [18]byte]).singleKeyHead
 	case 3:
-		return &new(typedLeaf[T, V, [26]byte]).leafHead
+		return &new(typedLeaf[T, V, [26]byte]).singleKeyHead
 	case 4:
-		return &new(typedLeaf[T, V, [34]byte]).leafHead
+		return &new(typedLeaf[T, V, [34]byte]).singleKeyHead
 	case 5:
-		return &new(typedLeaf[T, V, [42]byte]).leafHead
+		return &new(typedLeaf[T, V, [42]byte]).singleKeyHead
 	case 6:
-		return &new(typedLeaf[T, V, [50]byte]).leafHead
+		return &new(typedLeaf[T, V, [50]byte]).singleKeyHead
 	default:
-		return &new(typedLeaf[T, V, [58]byte]).leafHead
+		return &new(typedLeaf[T, V, [58]byte]).singleKeyHead
 	}
 }
 
 // newTypedLeaf allocates a leaf for key that holds it from base on, a typed
 // leaf of the smallest class or, if the remainder is longer than a typed leaf
-// holds, a set leaf. It captures nothing, so passing it as a newLeafFunc
+// holds, a value overflow. It captures nothing, so passing it as a newLeafFunc
 // allocates no closure.
-func newTypedLeaf[T comparable](key []byte, base int) *leafHead {
+func newTypedLeaf[T comparable](key []byte, base int) *singleKeyHead {
 	if len(key) > maxKeyLen || len(key)-base > maxTypedKey {
 		return newSetLeaf[T](key, base)
 	}
@@ -146,7 +146,7 @@ func newTypedLeaf[T comparable](key []byte, base int) *leafHead {
 
 // typedWithKey allocates a typed leaf of class c holding a copy of the key
 // remainder s of a key of kl bytes, and no values.
-func typedWithKey[T comparable](c uint8, s []byte, kl int) *leafHead {
+func typedWithKey[T comparable](c uint8, s []byte, kl int) *singleKeyHead {
 	l := allocTyped[T](c, len(s))
 	l.setRem(len(s))
 	l.kl = uint16(kl)
@@ -155,13 +155,13 @@ func typedWithKey[T comparable](c uint8, s []byte, kl int) *leafHead {
 }
 
 // typedVals returns the values of typed leaf l. The slice aliases the leaf.
-func typedVals[T comparable](l *leafHead) []T {
+func typedVals[T comparable](l *singleKeyHead) []T {
 	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), typedOff(l.rem()))), l.n)
 }
 
 // typedAdd adds v to typed leaf l. It returns the leaf that replaces l when l
 // had no room, or nil when l still holds the key's values.
-func typedAdd[T comparable](l *leafHead, v T) *leafHead {
+func typedAdd[T comparable](l *singleKeyHead, v T) *singleKeyHead {
 	vs := typedVals[T](l)
 	if slices.Contains(vs, v) {
 		return nil
@@ -185,7 +185,7 @@ func typedAdd[T comparable](l *leafHead, v T) *leafHead {
 }
 
 // appendTyped stores v after the values of typed leaf l, which has room.
-func appendTyped[T comparable](l *leafHead, v T) {
+func appendTyped[T comparable](l *singleKeyHead, v T) {
 	n := int(l.n)
 	unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(l), typedOff(l.rem()))), n+1)[n] = v
 	l.n++
@@ -194,7 +194,7 @@ func appendTyped[T comparable](l *leafHead, v T) {
 // typedRemove removes v from typed leaf l. empty reports that l held v as its
 // last value; shrink is the smaller class l should move to (see resizeTyped),
 // or 0. The caller moves it, since only it can reach the leaf's slot.
-func typedRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
+func typedRemove[T comparable](l *singleKeyHead, v T) (shrink uint8, empty bool) {
 	vs := typedVals[T](l)
 	i := slices.Index(vs, v)
 	if i < 0 {
@@ -216,7 +216,7 @@ func typedRemove[T comparable](l *leafHead, v T) (shrink uint8, empty bool) {
 
 // resizeTyped copies typed leaf l into a new leaf of class c, which holds its
 // values.
-func resizeTyped[T comparable](l *leafHead, c uint8) *leafHead {
+func resizeTyped[T comparable](l *singleKeyHead, c uint8) *singleKeyHead {
 	nl := typedWithKey[T](c, l.stored(), l.keyLen())
 	copy(unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(nl), typedOff(nl.rem()))), l.n), typedVals[T](l))
 	nl.n = l.n
@@ -224,8 +224,8 @@ func resizeTyped[T comparable](l *leafHead, c uint8) *leafHead {
 }
 
 // typedSpill turns typed leaf l, which is full in the largest class, into a
-// set leaf holding its values and v.
-func typedSpill[T comparable](l *leafHead, v T) *leafHead {
+// value overflow holding its values and v.
+func typedSpill[T comparable](l *singleKeyHead, v T) *singleKeyHead {
 	sl := newSetLeafOf[T](l.stored(), l.keyLen())
 	s := vals[T](sl)
 	for _, x := range typedVals[T](l) {
@@ -235,18 +235,18 @@ func typedSpill[T comparable](l *leafHead, v T) *leafHead {
 	return sl
 }
 
-// unspillTypedClass returns the class that set leaf l should turn into once
+// unspillTypedClass returns the class that value overflow l should turn into once
 // its values fill at most half of the largest class, or 0 if l stays a set
 // leaf.
-func unspillTypedClass[T comparable](l *leafHead) uint8 {
+func unspillTypedClass[T comparable](l *singleKeyHead) uint8 {
 	if len(l.stored()) > maxTypedKey || l.keyLen() > maxKeyLen {
 		return 0
 	}
 	return typedClassFor(2 * vals[T](l).Len())
 }
 
-// unspillTyped copies set leaf l into a typed leaf of class c.
-func unspillTyped[T comparable](l *leafHead, c uint8) *leafHead {
+// unspillTyped copies value overflow l into a typed leaf of class c.
+func unspillTyped[T comparable](l *singleKeyHead, c uint8) *singleKeyHead {
 	nl := typedWithKey[T](c, l.stored(), l.keyLen())
 	vals[T](l).Each(func(v T) bool { appendTyped(nl, v); return true })
 	return nl
@@ -254,9 +254,9 @@ func unspillTyped[T comparable](l *leafHead, c uint8) *leafHead {
 
 // rekeyTyped is rekey for a map of typed leaves: a typed leaf grows to hold
 // its longer key in place when the values stay where they are, and moves into
-// a typed leaf of the longer key, or a set leaf, otherwise.
-func rekeyTyped[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
-	if l.isSet() {
+// a typed leaf of the longer key, or a value overflow, otherwise.
+func rekeyTyped[T comparable](l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
+	if l.isValueOverflow() {
 		return rekey[T](l, pre, b, pathLen)
 	}
 	old, klen := l.rem(), l.keyLen()-pathLen

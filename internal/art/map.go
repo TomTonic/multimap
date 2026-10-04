@@ -8,31 +8,31 @@ import (
 
 // Map is a multimap from byte-string keys to sets of T on top of Tree. Every
 // leaf holds its key's values: a flat leaf right after the key remainder
-// (see flat.go), a set leaf in a vset.Set. Reading them costs no pointer chase beyond the
+// (see flat.go), a value overflow in a vset.Set. Reading them costs no pointer chase beyond the
 // leaf until a key holds more values than a flat leaf of 512 bytes. The zero
 // value is an empty map.
 type Map[T comparable] struct {
 	t    Tree
-	flat int8 // 1: T takes flat leaves, 2: typed leaves, 3: single-key pages (string), -1: set leaves only, 0: not decided yet
+	flat int8 // 1: T takes flat leaves, 2: typed leaves, 3: single-key pages (string), -1: value overflows only, 0: not decided yet
 }
 
-// newSetLeaf allocates a set leaf that holds key from base on, in the
+// newSetLeaf allocates a value overflow that holds key from base on, in the
 // smallest size class that fits it, or the whole key as a string when the
 // rest is too long to hold inline. It captures nothing, so passing it as a
 // newLeafFunc allocates no closure.
-func newSetLeaf[T comparable](key []byte, base int) *leafHead {
+func newSetLeaf[T comparable](key []byte, base int) *singleKeyHead {
 	if len(key) > maxKeyLen || len(key)-base > maxInline {
 		l := &leaf[T, string]{k: string(key)}
-		l.kind = kSet
+		l.objType = kValueOverflow
 		l.setRem(longKey)
-		return &l.leafHead
+		return &l.singleKeyHead
 	}
 	return newSetLeafOf[T](key[base:], len(key))
 }
 
-// newSetLeafOf allocates a set leaf holding the key remainder s, at most
+// newSetLeafOf allocates a value overflow holding the key remainder s, at most
 // maxInline bytes, of a key of kl bytes.
-func newSetLeafOf[T comparable](s []byte, kl int) *leafHead {
+func newSetLeafOf[T comparable](s []byte, kl int) *singleKeyHead {
 	switch n := len(s); {
 	case n <= 16:
 		return newInline[T, [16]byte](s, kl)
@@ -52,18 +52,18 @@ func newSetLeafOf[T comparable](s []byte, kl int) *leafHead {
 	return newInline[T, [256]byte](s, kl)
 }
 
-// newInline allocates a set leaf that holds the key remainder s inline in an
+// newInline allocates a value overflow that holds the key remainder s inline in an
 // array of type K.
-func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte](s []byte, kl int) *leafHead {
+func newInline[T comparable, K [16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte](s []byte, kl int) *singleKeyHead {
 	l := &leaf[T, K]{}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), s)
-	l.kind = kSet
+	l.objType = kValueOverflow
 	l.setRem(len(s))
 	l.kl = uint16(kl)
-	return &l.leafHead
+	return &l.singleKeyHead
 }
 
-// Offsets of the value set in the set leaf of each key size class. They do
+// Offsets of the value set in the value overflow of each key size class. They do
 // not depend on T: a vset.Set holds a pointer, so it is always 8-aligned.
 var (
 	setOff16  = unsafe.Offsetof(leaf[struct{}, [16]byte]{}.vals)
@@ -77,9 +77,9 @@ var (
 	setOffStr = unsafe.Offsetof(leaf[struct{}, string]{}.vals)
 )
 
-// valsOff returns the offset of the value set in set leaf l: it depends on the
+// valsOff returns the offset of the value set in value overflow l: it depends on the
 // size class of the key area only.
-func valsOff(l *leafHead) uintptr {
+func valsOff(l *singleKeyHead) uintptr {
 	off := setOffStr
 	switch k := l.rem(); {
 	case k <= 16:
@@ -102,8 +102,8 @@ func valsOff(l *leafHead) uintptr {
 	return off
 }
 
-// vals returns the value set of a set leaf, created by newSetLeaf[T].
-func vals[T comparable](l *leafHead) *vset.Set[T] {
+// vals returns the value set of a value overflow, created by newSetLeaf[T].
+func vals[T comparable](l *singleKeyHead) *vset.Set[T] {
 	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), valsOff(l)))
 }
 
@@ -111,8 +111,8 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 // rekeyFunc). It captures nothing, so passing it allocates no closure. It
 // keeps l where it is when the longer remainder fits its size class, and
 // builds the whole key only when it has to copy l.
-func rekey[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
-	if !l.isSet() {
+func rekey[T comparable](l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
+	if !l.isValueOverflow() {
 		if flatPrepend[T](l, pre, b, pathLen) {
 			return l
 		}
@@ -126,7 +126,7 @@ func rekey[T comparable](l *leafHead, pre []byte, b, pathLen int) *leafHead {
 	return nl
 }
 
-// setKeyCap returns the size of the key area of a set leaf whose key
+// setKeyCap returns the size of the key area of a value overflow whose key
 // remainder is klen bytes long, at most maxInline: the class that klen falls
 // in (see vals); the largest holds 256 bytes, of which a remainder uses
 // maxInline.
@@ -139,12 +139,12 @@ func setKeyCap(klen int) int {
 	return maxInline
 }
 
-// setPrepend makes set leaf l hold its key from pathLen on in place when the
+// setPrepend makes value overflow l hold its key from pathLen on in place when the
 // longer remainder still fits the key area of l's class, which keeps its value
 // set where it is. It saves rekey the allocation of a new leaf, see
-// flatPrepend, and reports whether it did. keyCap is setKeyCap, or set3KeyCap
-// for the set leaf of a string map.
-func setPrepend(l *leafHead, pre []byte, b, pathLen int, keyCap func(int) int) bool {
+// flatPrepend, and reports whether it did. keyCap is setKeyCap, or overflowKeyCap
+// for the value overflow of a string map.
+func setPrepend(l *singleKeyHead, pre []byte, b, pathLen int, keyCap func(int) int) bool {
 	old, klen := l.rem(), l.keyLen()-pathLen // a string leaf holds its whole key, and never gets here
 	if klen > keyCap(old) {
 		return false
@@ -184,10 +184,10 @@ func pageType[T comparable]() bool {
 
 // leafWith allocates a flat leaf that holds key from base on and the value that
 // raw holds, a page's word, as its only value. It is the Tree's mk.
-func leafWith[T comparable](key []byte, base int, raw uint64) *leafHead {
-	l := newFlatLeaf[T](key, base) // a set leaf if the key is too long for a flat one
+func leafWith[T comparable](key []byte, base int, raw uint64) *singleKeyHead {
+	l := newFlatLeaf[T](key, base) // a value overflow if the key is too long for a flat one
 	v := *(*T)(unsafe.Pointer(&raw))
-	if l.isSet() {
+	if l.isValueOverflow() {
 		vals[T](l).Add(v)
 	} else {
 		appendFlat(l, v)
@@ -226,9 +226,9 @@ func (m *Map[T]) Add(key []byte, v T) {
 	loc := m.t.upsert(key, raw, nl)
 	n := *loc
 	switch {
-	case isLeaf(n.kind):
-		m.addToLeaf(loc, asLeaf(n), key, v)
-		if m.t.size != size && m.t.small && isRange(m.t.root.kind) {
+	case isSingleKey(n.objType):
+		m.addToLeaf(loc, asSingleKey(n), key, v)
+		if m.t.size != size && m.t.small && isRange(m.t.root.objType) {
 			// A new leaf among pages: keys that need leaves may crowd them.
 			m.t.fallBack(key)
 		}
@@ -237,33 +237,33 @@ func (m *Map[T]) Add(key []byte, v T) {
 	default:
 		// The key has one value in a page; a second one gives it a leaf.
 		sp := m.t.at
-		old := asPage(n).ValPtr(sp.i)
+		old := asMultiKey(n).ValPtr(sp.i)
 		if *(*T)(unsafe.Pointer(old)) == v {
 			return
 		}
 		l := m.t.mk(key, sp.pathLen, *old)
-		slot := leafHdr(l)
+		slot := singleKeyHdr(l)
 		m.addToLeaf(&slot, l, key, v)
-		m.t.promote(sp, asLeaf(slot), key)
+		m.t.promote(sp, asSingleKey(slot), key)
 	}
 }
 
 // addToLeaf adds v to the values of leaf l of key, which sits in slot loc.
-func (m *Map[T]) addToLeaf(loc **header, l *leafHead, key []byte, v T) {
+func (m *Map[T]) addToLeaf(loc **header, l *singleKeyHead, key []byte, v T) {
 	switch {
-	case l.isSet() && m.flat == 3:
-		strSetAdd(l, *(*string)(unsafe.Pointer(&v)))
-	case l.isSet():
+	case l.isValueOverflow() && m.flat == 3:
+		overflowAdd(l, *(*string)(unsafe.Pointer(&v)))
+	case l.isValueOverflow():
 		vals[T](l).Add(v)
 	case m.flat == 3:
 		addSK(loc, l, key, *(*string)(unsafe.Pointer(&v)))
 	case m.flat == 2:
 		if nl := typedAdd(l, v); nl != nil {
-			*loc = leafHdr(nl)
+			*loc = singleKeyHdr(nl)
 		}
 	default:
 		if nl := flatAdd(l, v); nl != nil {
-			*loc = leafHdr(nl)
+			*loc = singleKeyHdr(nl)
 		}
 	}
 }
@@ -288,8 +288,8 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	if n == nil {
 		return
 	}
-	l := asLeaf(n)
-	if !l.isSet() {
+	l := asSingleKey(n)
+	if !l.isValueOverflow() {
 		if m.flat == 3 {
 			m.t.removeSK(l, key, *(*string)(unsafe.Pointer(&v)), rk)
 			return
@@ -302,12 +302,12 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		case empty:
 			m.t.remove(key, rk)
 		case c != 0:
-			*m.t.findSlot(key) = leafHdr(resize[T](l, c))
+			*m.t.findSlot(key) = singleKeyHdr(resize[T](l, c))
 		}
 		return
 	}
 	if m.flat == 3 {
-		m.removeFromSet3(l, key, *(*string)(unsafe.Pointer(&v)), rk)
+		m.removeFromOverflowSet(l, key, *(*string)(unsafe.Pointer(&v)), rk)
 		return
 	}
 	s := vals[T](l)
@@ -317,37 +317,37 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		m.t.remove(key, rk)
 	case m.flat == 1:
 		if c := unspillClass[T](l); c != 0 {
-			*m.t.findSlot(key) = leafHdr(unspill[T](l, c))
+			*m.t.findSlot(key) = singleKeyHdr(unspill[T](l, c))
 		}
 	case m.flat == 2:
 		if c := unspillTypedClass[T](l); c != 0 {
-			*m.t.findSlot(key) = leafHdr(unspillTyped[T](l, c))
+			*m.t.findSlot(key) = singleKeyHdr(unspillTyped[T](l, c))
 		}
 	}
 }
 
-// removeFromSet3 removes v from the set leaf l of key in a map of strings, and
+// removeFromOverflowSet removes v from the value overflow l of key in a map of strings, and
 // moves the key into a page once its values fit one.
-func (m *Map[T]) removeFromSet3(l *leafHead, key []byte, v string, rk rekeyFunc) {
-	s := *strSetOf(l)
+func (m *Map[T]) removeFromOverflowSet(l *singleKeyHead, key []byte, v string, rk rekeyFunc) {
+	s := *overflowSetOf(l)
 	switch {
 	case !s.Remove(v):
 	case s.Size() == 0:
 		m.t.remove(key, rk)
 	default:
-		if p := unspillSK(l); p != nil {
-			*m.t.findSlot(key) = leafHdr(skLeaf(p))
+		if p := fromValueOverflow(l); p != nil {
+			*m.t.findSlot(key) = singleKeyHdr(skHead(p))
 		}
 	}
 }
 
 // removeTyped removes v from the typed leaf l of key; rk is the map's rekeyFunc.
-func (m *Map[T]) removeTyped(l *leafHead, key []byte, v T, rk rekeyFunc) {
+func (m *Map[T]) removeTyped(l *singleKeyHead, key []byte, v T, rk rekeyFunc) {
 	switch c, empty := typedRemove(l, v); {
 	case empty:
 		m.t.remove(key, rk)
 	case c != 0:
-		*m.t.findSlot(key) = leafHdr(resizeTyped[T](l, c))
+		*m.t.findSlot(key) = singleKeyHdr(resizeTyped[T](l, c))
 	}
 }
 
@@ -356,7 +356,7 @@ func (m *Map[T]) RemoveKey(key []byte) {
 	m.t.remove(key, m.rekeyFunc())
 }
 
-// rekeyFunc returns the map's rekeyFunc: the one for its kind of leaf.
+// rekeyFunc returns the map's rekeyFunc: the one for its type of leaf.
 func (m *Map[T]) rekeyFunc() rekeyFunc {
 	switch m.flat {
 	case 2:
@@ -379,24 +379,24 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 	n, i := m.t.find(key)
 	switch {
 	case n == nil:
-	case isPage(n.kind):
-		yield(*(*T)(unsafe.Pointer(asPage(n).ValPtr(i))))
+	case isMultiKey(n.objType):
+		yield(*(*T)(unsafe.Pointer(asMultiKey(n).ValPtr(i))))
 	default:
-		eachValue(asLeaf(n), m.flat, yield)
+		eachValue(asSingleKey(n), m.flat, yield)
 	}
 }
 
 // eachValue calls yield for every value of leaf l and reports whether it ran
 // to completion.
-func eachValue[T comparable](l *leafHead, flat int8, yield func(T) bool) bool {
+func eachValue[T comparable](l *singleKeyHead, flat int8, yield func(T) bool) bool {
 	if flat == 3 { // T is string
 		y := *(*func(string) bool)(unsafe.Pointer(&yield))
-		if l.isSet() {
-			return strSetEach(l, y)
+		if l.isValueOverflow() {
+			return overflowEach(l, y)
 		}
 		return asSK(l).Strings(y)
 	}
-	if l.isSet() {
+	if l.isValueOverflow() {
 		return vals[T](l).Each(yield)
 	}
 	for _, v := range flatVals[T](l) {
@@ -431,10 +431,10 @@ func (m *Map[T]) leafTail() uintptr {
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 	var kb keyBuf
 	m.t.scan(b, m.leafTail(), &kb, func(n *header, i, j int) bool {
-		if isLeaf(n.kind) {
+		if isSingleKey(n.objType) {
 			return fn(kb.key)
 		}
-		p := asPage(n)
+		p := asMultiKey(n)
 		for k := i; k < j; k++ {
 			if !fn(kb.pageKey(p, k)) {
 				return false
@@ -448,10 +448,10 @@ func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 // in ascending key order, until yield returns false.
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
 	m.t.scan(b, m.leafTail(), nil, func(n *header, i, j int) bool {
-		if isLeaf(n.kind) {
-			return eachValue(asLeaf(n), m.flat, yield)
+		if isSingleKey(n.objType) {
+			return eachValue(asSingleKey(n), m.flat, yield)
 		}
-		sl := asPage(n).Slots(i, j)
+		sl := asMultiKey(n).Slots(i, j)
 		for k := range sl {
 			if !yield(*(*T)(unsafe.Pointer(&sl[k].Val))) {
 				return false

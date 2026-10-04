@@ -375,15 +375,15 @@ func TestEqual(t *testing.T) {
 	}
 }
 
-// TestKindBase covers a tree that numbers its object kinds: pages take the
-// kinds from KindBase on, and a page still finds its class.
-func TestKindBase(t *testing.T) {
-	KindBase = 40
-	defer func() { KindBase = 0 }()
+// TestTypeBase covers a tree that numbers its object types: pages take the
+// types from TypeBase on, and a page still finds its class.
+func TestTypeBase(t *testing.T) {
+	TypeBase = 40
+	defer func() { TypeBase = 0 }()
 	p := New([]byte("ab"), keyLen, []byte("v"))
 	q := p.Prepend(bytes.Repeat([]byte("x"), 100))
-	if p.kind != 40 || q.kind != 40+2*2 || q.Size() != 128 {
-		t.Fatalf("kinds %d and %d", p.kind, q.kind)
+	if p.objType != 40 || q.objType != 40+2*2 || q.Size() != 128 {
+		t.Fatalf("types %d and %d", p.objType, q.objType)
 	}
 	verify(t, q, model{strings.Repeat("x", 100) + "ab", []string{"v"}})
 }

@@ -287,11 +287,11 @@ func wholeTree(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 			size += 1 + valueLen(c, v)
 		}
 		contentB += min(size, 512)
-		if size > 512 { // a set leaf of 128 bytes and a value set of Go strings
+		if size > 512 { // a value overflow of 128 bytes and a value set of Go strings
 			n := len(es[i].vals)
 			ovKeys++
 			ovVals += n
-			pageB += 128 - classFor(classes, 512) // the set leaf replaces the page
+			pageB += 128 - classFor(classes, 512) // the value overflow replaces the page
 			if n <= 64 {
 				ovBytes += 24 * n // an array of string headers, grown by halves
 			} else {

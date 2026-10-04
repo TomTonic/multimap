@@ -16,7 +16,7 @@ import (
 // remainder and move through size classes as values arrive: after every step
 // the key must hold exactly the values added and not removed, a flat leaf
 // must sit in a class that fits its values, a key with more values than the
-// largest class holds must have spilled into a set leaf, and it must turn
+// largest class holds must have spilled into a value overflow, and it must turn
 // flat again once half of the largest class would do. The values must also
 // survive a garbage collection, since the leaves are memory the collector
 // never scans.
@@ -41,7 +41,7 @@ func TestFlatLeaves(t *testing.T) {
 				if len(want) == 0 {
 					return
 				}
-				l := findLeaf(&m.t, key)
+				l := findSingleKey(&m.t, key)
 				switch {
 				case rem > maxInline:
 					if l.cls() != 0 {
@@ -52,7 +52,7 @@ func TestFlatLeaves(t *testing.T) {
 						t.Fatalf("flat leaf of class %d holds %d values, want %d", l.cls(), l.n, len(want))
 					}
 				case len(want) <= maxCap/2:
-					t.Fatalf("set leaf with %d values, want a flat leaf again", len(want))
+					t.Fatalf("value overflow with %d values, want a flat leaf again", len(want))
 				}
 			}
 			for v := range uint64(2*maxCap + 10) {
@@ -60,7 +60,7 @@ func TestFlatLeaves(t *testing.T) {
 				m.Add(key, v) // a duplicate changes nothing
 				want = append(want, v)
 				check()
-				if l := findLeaf(&m.t, key); rem <= maxInline && len(want) > maxCap && l.cls() != 0 {
+				if l := findSingleKey(&m.t, key); rem <= maxInline && len(want) > maxCap && l.cls() != 0 {
 					t.Fatalf("%d values in a flat leaf, the largest holds %d", len(want), maxCap)
 				}
 			}
@@ -92,14 +92,14 @@ func TestFlatLeafHysteresis(t *testing.T) {
 	for v := range uint64(full + 1) {
 		m.Add(key, v)
 	}
-	l := findLeaf(&m.t, key)
+	l := findSingleKey(&m.t, key)
 	if want := flatClass[uint64](len(key), 2*full); l.cls() != want {
 		t.Fatalf("leaf in class %d after %d values, want class %d, which holds twice as many", l.cls(), full+1, want)
 	}
 	for range 10 {
 		m.Remove(key, uint64(full))
 		m.Add(key, uint64(full))
-		if findLeaf(&m.t, key) != l {
+		if findSingleKey(&m.t, key) != l {
 			t.Fatalf("hovering at %d values moved the leaf", full)
 		}
 	}
@@ -110,7 +110,7 @@ func TestFlatLeafHysteresis(t *testing.T) {
 	for v := range uint64(4) { // one more than the smallest leaf holds
 		m.Add(few, v)
 	}
-	l = findLeaf(&m.t, few)
+	l = findSingleKey(&m.t, few)
 	for range 10 {
 		for v := range uint64(3) {
 			m.Remove(few, v+1)
@@ -118,7 +118,7 @@ func TestFlatLeafHysteresis(t *testing.T) {
 		for v := range uint64(3) {
 			m.Add(few, v+1)
 		}
-		if findLeaf(&m.t, few) != l || l.cls() != minGrown {
+		if findSingleKey(&m.t, few) != l || l.cls() != minGrown {
 			t.Fatalf("hovering between 1 and 4 values moved the leaf or left the cache line")
 		}
 	}
@@ -127,7 +127,7 @@ func TestFlatLeafHysteresis(t *testing.T) {
 // TestFlatValueTypes makes sure that multimap.Ordered keeps values of every
 // type correctly, whether its ART stores them in flat leaves (small values
 // without pointers, of any alignment), in typed leaves (small values with a
-// pointer) or in set leaves (everything else).
+// pointer) or in value overflows (everything else).
 func TestFlatValueTypes(t *testing.T) {
 	type small struct {
 		a uint32
@@ -140,7 +140,7 @@ func TestFlatValueTypes(t *testing.T) {
 	ptrs := make([]int, 300)
 	for _, tc := range []struct {
 		name string
-		mode int8 // 1: flat leaves, 2: typed leaves, -1: set leaves only
+		mode int8 // 1: flat leaves, 2: typed leaves, -1: value overflows only
 		run  func(t *testing.T) int8
 	}{
 		{"uint64", 1, roundTrip(func(i int) uint64 { return uint64(i) * 0x9E3779B97F4A7C15 })},
@@ -238,7 +238,7 @@ func TestPointerFree(t *testing.T) {
 // behind Ordered a leaf holds only the part of its key below its node; when
 // that node goes, the leaf takes its place and must hold more of its key
 // (rekey). A flat leaf then moves into a class that holds the longer key and
-// its values, or, if no flat leaf does, into a set leaf.
+// its values, or, if no flat leaf does, into a value overflow.
 func TestLeafMovesUp(t *testing.T) {
 	common := bytes.Repeat([]byte("c"), 200)
 	for _, n := range []int{1, 5, 62} {
@@ -253,20 +253,20 @@ func TestLeafMovesUp(t *testing.T) {
 				m.Add(k1, v)
 				want = append(want, v)
 			}
-			if l := findLeaf(&m.t, k1); len(l.stored()) != 0 {
+			if l := findSingleKey(&m.t, k1); len(l.stored()) != 0 {
 				t.Fatalf("leaf below the common part holds %q, want nothing", l.stored())
 			}
 			m.RemoveKey(k2)
 			m.RemoveKey(k3)
 			checkInvariants(t, &m.t)
-			l := findLeaf(&m.t, k1)
+			l := findSingleKey(&m.t, k1)
 			got := valuesOf(&m, k1)
 			slices.Sort(got)
 			if !slices.Equal(got, want) || l.base() != 0 || !bytes.Equal(l.stored(), k1) {
 				t.Fatalf("after moving up the leaf holds %d bytes from %d and values %v, want the whole key and %v", len(l.stored()), l.base(), got, want)
 			}
-			if flat := flatClassFor[uint64](k1, 0, n) != 0; flat != (!l.isSet()) {
-				t.Fatalf("leaf of kind %d, want a flat leaf: %v", l.kind, flat)
+			if flat := flatClassFor[uint64](k1, 0, n) != 0; flat != (!l.isValueOverflow()) {
+				t.Fatalf("leaf of type %d, want a flat leaf: %v", l.objType, flat)
 			}
 		})
 	}
@@ -275,7 +275,7 @@ func TestLeafMovesUp(t *testing.T) {
 // TestRekeyInPlace makes sure a leaf that has to hold more of its key, because
 // the node above it went away, keeps every value, and that it stays where it is
 // as long as the longer key still fits its size class. It covers rekey for
-// flat leaves (integer values) and set leaves (values that hold a pointer): a
+// flat leaves (integer values) and value overflows (values that hold a pointer): a
 // delete that merges a node into its only leaf then costs no new leaf, which
 // with one value per key is what churn and build pay for most; a longer key
 // than the class holds moves the leaf.
@@ -292,15 +292,15 @@ func TestRekeyInPlace(t *testing.T) {
 		{"flat leaf with room", true, 20, 17, 11, 1, true},
 		{"flat leaf with several values and room", true, 20, 17, 11, 3, true},
 		{"flat leaf without room", true, 40, 37, 0, 1, false},
-		{"set leaf with room in its class", false, 20, 17, 6, 1, true},
-		{"set leaf beyond its class", false, 20, 17, 2, 1, false},
-		{"set leaf in the largest class", false, 230, 30, 1, 1, true},
-		{"set leaf up to the longest inline remainder", false, 300, 100, 46, 1, true},
-		{"set leaf beyond the longest inline remainder", false, 300, 100, 45, 1, false},
+		{"value overflow with room in its class", false, 20, 17, 6, 1, true},
+		{"value overflow beyond its class", false, 20, 17, 2, 1, false},
+		{"value overflow in the largest class", false, 230, 30, 1, 1, true},
+		{"value overflow up to the longest inline remainder", false, 300, 100, 46, 1, true},
+		{"value overflow beyond the longest inline remainder", false, 300, 100, 45, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k := key[:tc.keyLen]
-			var l, nl *leafHead
+			var l, nl *singleKeyHead
 			var got []string
 			want := make([]string, tc.values)
 			for i := range want {

@@ -102,9 +102,9 @@ func next(c int) int {
 }
 
 // TestObjectSizes makes sure that the object statistic of the index sees every
-// kind of object at the size Go really allocates it. It belongs to the object
+// type of object at the size Go really allocates it. It belongs to the object
 // statistic of the ART behind multimap.Ordered (docs/redesign), which reports
-// per benchmark case how the objects fill cache lines. For every kind of node,
+// per benchmark case how the objects fill cache lines. For every type of node,
 // page and leaf, in every size class, the test creates the object, asks the
 // statistic for its size and compares the block the statistic derives with the
 // number of bytes the runtime allocated.
@@ -132,25 +132,25 @@ func TestObjectSizes(t *testing.T) {
 		}
 		long := bytes.Repeat([]byte("v"), 251)
 		check(t, &pages, func() unsafe.Pointer { // 512 bytes
-			return unsafe.Pointer(skLeaf(skpage.New(bytes.Repeat([]byte("k"), 254), 300, long)))
+			return unsafe.Pointer(skHead(skpage.New(bytes.Repeat([]byte("k"), 254), 300, long)))
 		})
 	})
 	t.Run("nodes, with and without a prefix tail", func(t *testing.T) {
-		for k, label := range kindLabels {
+		for k, label := range objTypeLabels {
 			if label == "" {
 				continue
 			}
 			for _, plen := range []int{0, 12, 13, 28, 29, 60, 61, 124} { // the ends of the tail classes
 				path := make([]byte, plen)
 				mk := func() unsafe.Pointer {
-					n := newNode(kind(k), plen)
+					n := newNode(objType(k), plen)
 					storePrefix(n, path)
 					return unsafe.Pointer(n)
 				}
 				check(t, &flat, mk)
 			}
 			// a path beyond the tail classes is a string in a 16-byte tail
-			long := func() unsafe.Pointer { return unsafe.Pointer(newNode(kind(k), 200)) }
+			long := func() unsafe.Pointer { return unsafe.Pointer(newNode(objType(k), 200)) }
 			size := int(fixedSize[k]) + 16
 			if b, _ := Block(size, true); b != allocated(long) {
 				t.Errorf("%s with a long path of %d bytes: Block %d, runtime allocated %d", label, size, b, allocated(long))
@@ -178,7 +178,7 @@ func TestObjectSizes(t *testing.T) {
 			}
 		}
 	})
-	t.Run("set leaves of every key area, and with the key as a string", func(t *testing.T) {
+	t.Run("value overflows of every key area, and with the key as a string", func(t *testing.T) {
 		for _, n := range []int{0, 16, 17, 32, 33, 48, 49, 64, 65, 96, 97, 128, 129, 192, 193, maxInline} {
 			key := make([]byte, n)
 			check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newSetLeafOf[uint64](key, n)) })
@@ -195,8 +195,8 @@ func TestObjectSizes(t *testing.T) {
 // TestObjects makes sure that the object statistic of the index accounts for
 // every key. It belongs to the object statistic of the ART behind
 // multimap.Ordered (docs/redesign), which reports per benchmark case how the
-// objects fill cache lines; an object kind the statistic does not know would
-// silently drop keys from its figures. The test fills maps of every leaf kind
+// objects fill cache lines; an object type the statistic does not know would
+// silently drop keys from its figures. The test fills maps of every leaf type
 // with the corpora of the other tests and expects the keys of the objects to
 // add up to the keys of the map, every object to have a label and a size, and
 // an empty map to have no objects. Every leaf must also report how many values
@@ -219,8 +219,8 @@ func TestObjects(t *testing.T) {
 			if o.Label == "" || o.Size < 16 || o.Size%8 != 0 {
 				t.Errorf("%s: object %+v is not an object of the tree", name, o)
 			}
-			if leaf := strings.HasSuffix(o.Label, "leaf") || o.Label == "single-key page"; leaf != (o.Values > 0) || !leaf && o.Remainder != 0 {
-				t.Errorf("%s: object %+v: only a leaf has values and a remainder", name, o)
+			if single := strings.HasSuffix(o.Label, "leaf") || o.Label == "single-key page" || o.Label == "value overflow"; single != (o.Values > 0) || !single && o.Remainder != 0 {
+				t.Errorf("%s: object %+v: only a single-key page has values and a remainder", name, o)
 			}
 		})
 		if total != length() {
