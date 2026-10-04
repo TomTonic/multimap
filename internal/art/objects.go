@@ -85,6 +85,9 @@ func (m *Map[T]) leafObject(l *leafHead) Object {
 
 // leafValues returns the number of values of leaf l.
 func (m *Map[T]) leafValues(l *leafHead) int {
+	if l.kind == kSet && m.flat == 3 {
+		return int((*strSetOf(l)).Size())
+	}
 	if l.kind == kSet {
 		return vals[T](l).Len()
 	}
@@ -102,6 +105,9 @@ func (m *Map[T]) leafKind(l *leafHead) Object {
 		return Object{Label: "single-key page", Size: asSK(l).Size(), Keys: 1}
 	case l.cls() > 0 && m.flat == 2:
 		return Object{Label: "typed leaf", Size: int(typedOff(int(l.klen))) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), Pointers: true, Keys: 1}
+	}
+	if m.flat == 3 {
+		return Object{Label: "set leaf", Size: int(setLeaf3Size(l.klen)), Pointers: true, Keys: 1}
 	}
 	var size uintptr
 	switch k := l.klen; {

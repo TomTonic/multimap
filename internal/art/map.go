@@ -74,8 +74,9 @@ var (
 	setOffStr = unsafe.Offsetof(leaf[struct{}, string]{}.vals)
 )
 
-// vals returns the value set of a set leaf, created by newSetLeaf[T].
-func vals[T comparable](l *leafHead) *vset.Set[T] {
+// valsOff returns the offset of the value set in set leaf l: it depends on the
+// size class of the key area only.
+func valsOff(l *leafHead) uintptr {
 	off := setOffStr
 	switch k := l.klen; {
 	case k <= 16:
@@ -95,7 +96,12 @@ func vals[T comparable](l *leafHead) *vset.Set[T] {
 	case k <= maxInline:
 		off = setOff256
 	}
-	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), off))
+	return off
+}
+
+// vals returns the value set of a set leaf, created by newSetLeaf[T].
+func vals[T comparable](l *leafHead) *vset.Set[T] {
+	return (*vset.Set[T])(unsafe.Add(unsafe.Pointer(l), valsOff(l)))
 }
 
 // rekey returns a leaf with l's values that holds its key from pathLen on (see
@@ -240,6 +246,8 @@ func (m *Map[T]) Add(key []byte, v T) {
 // addToLeaf adds v to the values of leaf l of key, which sits in slot loc.
 func (m *Map[T]) addToLeaf(loc **header, l *leafHead, key []byte, v T) {
 	switch {
+	case l.kind == kSet && m.flat == 3:
+		strSetAdd(l, *(*string)(unsafe.Pointer(&v)))
 	case l.kind == kSet:
 		vals[T](l).Add(v)
 	case m.flat == 3:
@@ -293,6 +301,10 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		}
 		return
 	}
+	if m.flat == 3 {
+		m.removeFromSet3(l, key, *(*string)(unsafe.Pointer(&v)), rk)
+		return
+	}
 	s := vals[T](l)
 	switch {
 	case !s.Remove(v):
@@ -306,7 +318,18 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		if c := unspillTypedClass[T](l); c != 0 {
 			*m.t.findSlot(key) = leafHdr(unspillTyped[T](l, c))
 		}
-	case m.flat == 3:
+	}
+}
+
+// removeFromSet3 removes v from the set leaf l of key in a map of strings, and
+// moves the key into a page once its values fit one.
+func (m *Map[T]) removeFromSet3(l *leafHead, key []byte, v string, rk rekeyFunc) {
+	s := *strSetOf(l)
+	switch {
+	case !s.Remove(v):
+	case s.Size() == 0:
+		m.t.remove(key, rk)
+	default:
 		if p := unspillSK(l); p != nil {
 			*m.t.findSlot(key) = leafHdr(skLeaf(p))
 		}
@@ -361,11 +384,15 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 // eachValue calls yield for every value of leaf l and reports whether it ran
 // to completion.
 func eachValue[T comparable](l *leafHead, flat int8, yield func(T) bool) bool {
+	if flat == 3 { // T is string
+		y := *(*func(string) bool)(unsafe.Pointer(&yield))
+		if l.kind == kSet {
+			return strSetEach(l, y)
+		}
+		return asSK(l).Strings(y)
+	}
 	if l.kind == kSet {
 		return vals[T](l).Each(yield)
-	}
-	if flat == 3 { // T is string
-		return asSK(l).Strings(*(*func(string) bool)(unsafe.Pointer(&yield)))
 	}
 	for _, v := range flatVals[T](l) {
 		if !yield(v) {
