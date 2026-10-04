@@ -1,5 +1,15 @@
 # Status
 
+## 2026-10-04 afternoon: step 3.3 measured, step 3.4 design note written
+
+- **3.3 measured** ([step3-skmv-results.md](step3-skmv-results.md), `bench/results-layout/step3-skmv/`): the natural mix holds credo 1 against `btree-sets`
+  in every cell; against `node-layout` the single-key page tree is slower (lookups 0.66 to 0.90, ranges 0.43 to 0.70, `churn` and `build` 0.84 to
+  0.92), memory fair -23 % and -25 %, GC work about half. One value per key: credo 1 and 2 not met (ranges 0.30 to 0.48 of `btree-map`). Gate 3 not met in
+  the single-value profile; read at the end of step 3. The scan gap is in PLAN.md under "To check later" (the user: leave it, go for 0.8).
+- **3.4 design note** ([step3-overflow-design.md](step3-overflow-design.md)) is waiting for the user's approval: a hash set of 512-byte pointer-free blocks for
+  the keys whose values do not fit a page; prediction `street` natural about 96 B/key (measured 113), `dirs` about 162.
+- Next: after the approval, `internal/strset` standalone, then in the tree, then measure.
+
 ## 2026-10-04 midday: single-key page for strings is in the tree, measurement running
 
 - **Decisions of the day** (user): the plan order SKMV, MKSV, MKMV; size classes of the single-key page
