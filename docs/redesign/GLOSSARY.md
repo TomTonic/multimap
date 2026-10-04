@@ -68,9 +68,10 @@ Every object that stores entries stores only the end of their keys. The tree spe
 
 - **leaf** (the abstract word): what a descent ends in, the key with its values. It is a concept of the model, **not an object**: whatever it is in
   memory is a **page**. So "leaf" does not name a type in new code, and "leaf or page" is not a distinction (the user, 2026-10-04: "leaf is the
-  computation-independent model, everything is mapped to pages"). The code of `internal/art` still has the old object under that word: `leafHead`,
-  `isLeaf`, `kSet`, "flat leaf", "typed leaf", "set leaf" are single-key pages in older forms, and `isPage`/`asPage` are the **multi-key** page (layout A).
-  That is the half-finished state of the vocabulary; see step 3.5 in [PLAN.md](PLAN.md).
+  computation-independent model, everything is mapped to pages"). The code of `internal/art` still has the old object under that word: the flat leaf and the typed leaf
+  (`leaf[T,K]`, `findLeaf` ... ) are single-key pages in older forms and keep those names until step 3.5 replaces them. **Renamed 2026-10-04** (commit 622d634):
+  `leafHead` -> `singleKeyHead`, `isLeaf`/`isPage` -> `isSingleKey`/`isMultiKey`, `kSet` -> `kValueOverflow`, `kind` -> `objType` (the type byte, byte 0 of
+  every object), the set leaf -> value overflow.
 - **page**: an object of 128, 256, 384 or 512 bytes that stores entries (384 since the user's
   sketch; the code of step 2 has 128, 256 and 512). A **single-key page** may also be 32 or 64 bytes
   (decided 2026-10-04, [step3-skmv-sizes.md](step3-skmv-sizes.md)): most keys hold 20 to 60 bytes. It has no pointer in it unless its values need

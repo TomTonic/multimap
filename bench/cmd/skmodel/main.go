@@ -32,6 +32,8 @@ var headerBytes = 3
 // grid is the size classes of the plan; goClasses are Go's size classes up to 512.
 var (
 	grid      = []int{128, 256, 384, 512}
+	pageGrid  = []int{32, 64, 128, 256, 384, 512}              // the classes of the single-key page
+	flatGrid  = []int{32, 48, 64, 96, 128, 192, 256, 384, 512} // the classes of the flat leaf of today
 	goClasses = []int{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512}
 )
 
@@ -39,14 +41,16 @@ var overflowF = flag.Bool("overflow", false, "also describe the keys whose conte
 var nodesF = flag.Bool("nodes", false, "also build the model of the byte nodes and print the whole tree")
 var header = flag.Int("header", 3, "bytes of the header of a page")
 var sets = flag.Bool("sets", false, "also compare sets of size classes")
+var valuesF = flag.String("values", "string", "the values: string (bytes with a length byte), words (fixed 8 bytes, no length byte), words-len (8 bytes with a length byte), pointers (fixed 8 bytes, the remainder padded to whole words)")
+var ovBytesF = flag.Float64("ovbytes", 0, "bytes a value takes in the value set of the value overflow (0: the estimate for strings, 24 up to 64 values and 40 beyond; measured with cmd/ovbench: Set3 of uint64 16.3, of pointers 18)")
 var detail = flag.Bool("detail", false, "also print the distribution of the page contents and examples")
 
 func main() {
 	flag.Parse()
 	headerBytes = *header
 	w := os.Stdout
-	fmt.Fprintln(w, "| data | values | keys | rem. B | values a key | value B | content B | page B (grid 128..512) | page B (Go classes) | keys over 512 B | keys up to 64 B content |")
-	fmt.Fprintln(w, "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+	fmt.Fprintln(w, "| data | values | keys | rem. B | values a key | value B | content B | page B (grid 128..512) | page B (Go classes) | keys over 512 B | keys up to 64 B content | page B (grid 32..512) |")
+	fmt.Fprintln(w, "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
 	for _, kind := range []keys.Kind{keys.Street, keys.Dirs} {
 		for _, singleValue := range []bool{false, true} {
 			row(kind, keys.Capacity(kind), singleValue)
@@ -77,7 +81,9 @@ func row(kind keys.Kind, n int, singleValue bool) {
 		es[i] = entry{k, vs}
 	}
 	sort.Slice(es, func(i, j int) bool { return bytes.Compare(es[i].key, es[j].key) < 0 })
-	var rem, nv, vb, content, gridB, goB, over, small float64
+	var rem, nv, vb, content, gridB, goB, over, small, pageB float64
+	longRem, multi := 0, 0
+	var multiGrid, multiFlat float64
 	sizes := make([]int, n)
 	rems := make([]int, n)
 	for i, e := range es {
@@ -90,13 +96,25 @@ func row(kind keys.Kind, n int, singleValue bool) {
 		}
 		r := max(len(e.key)-l-1, 0) // the byte the page hangs at is consumed by its node
 		size := headerBytes + r
+		if *valuesF == "pointers" {
+			size = (size + 7) &^ 7 // the values start at a word
+		}
 		vbytes := 0
 		for _, v := range e.vals {
-			s := valueLen(c, v)
-			size += 1 + s
+			s, lenByte := valueLen(c, v), 1
+			switch *valuesF {
+			case "words", "pointers":
+				s, lenByte = 8, 0
+			case "words-len":
+				s = 8
+			}
+			size += lenByte + s
 			vbytes += s
 		}
 		sizes[i], rems[i] = size, r
+		if r > 58 {
+			longRem++
+		}
 		rem += float64(r)
 		nv += float64(len(e.vals))
 		vb += float64(vbytes)
@@ -108,9 +126,17 @@ func row(kind keys.Kind, n int, singleValue bool) {
 		if size <= 64 {
 			small++
 		}
+		pageB += float64(classFor(pageGrid, size))
+		if len(e.vals) > 1 {
+			multi++
+			multiGrid += float64(classFor(pageGrid, size))
+			multiFlat += float64(classFor(flatGrid, size))
+		}
 		gridB += float64(classFor(grid, size))
 		goB += float64(classFor(goClasses, size))
 	}
+	fmt.Fprintf(os.Stderr, "skmodel: %s: %d keys (%.3f %%) have a remainder above 58 bytes (the longest that a typed page of 8 words holds)\n", kind, longRem, 100*float64(longRem)/float64(n))
+	fmt.Fprintf(os.Stderr, "skmodel: %s: %d keys (%.1f %%) have several values: a page of the grid 32..512 takes %.1f B on average, a flat leaf of today's classes %.1f B\n", kind, multi, 100*float64(multi)/float64(n), multiGrid/float64(max(multi, 1)), multiFlat/float64(max(multi, 1)))
 	f := float64(n)
 	name := "natural"
 	if singleValue {
@@ -129,7 +155,7 @@ func row(kind keys.Kind, n int, singleValue bool) {
 		histogram(kind, singleValue, sizes)
 		examples(c, es2(es), sizes, rems)
 	}
-	fmt.Printf("| %s | %s | %d | %.1f | %.2f | %.1f | %.1f | %.1f | %.1f | %.2f %% | %.0f %% |\n", kind, name, n, rem/f, nv/f, vb/f, content/f, gridB/f, goB/f, 100*over/f, 100*small/f)
+	fmt.Printf("| %s | %s | %d | %.1f | %.2f | %.1f | %.1f | %.1f | %.1f | %.2f %% | %.0f %% | %.1f |\n", kind, name, n, rem/f, nv/f, vb/f, content/f, gridB/f, goB/f, 100*over/f, 100*small/f, pageB/f)
 }
 
 // valueLen returns the length of the string value number v: the name where the
@@ -283,18 +309,31 @@ func wholeTree(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 	t := &trie{keys: ks, nodes: map[int]int{}}
 	t.pages = func(i, rem int) {
 		size := headerBytes + rem
+		if *valuesF == "pointers" {
+			size = (size + 7) &^ 7
+		}
 		for _, v := range es[i].vals {
-			size += 1 + valueLen(c, v)
+			switch *valuesF {
+			case "words", "pointers":
+				size += 8
+			case "words-len":
+				size += 9
+			default:
+				size += 1 + valueLen(c, v)
+			}
 		}
 		contentB += min(size, 512)
-		if size > 512 { // a value overflow of 128 bytes and a value set of Go strings
+		if size > 512 { // a value overflow of 64 bytes (key area of up to 50 bytes) and a value set
 			n := len(es[i].vals)
 			ovKeys++
 			ovVals += n
-			pageB += 128 - classFor(classes, 512) // the value overflow replaces the page
-			if n <= 64 {
+			pageB += 64 - classFor(classes, 512) // the value overflow replaces the page
+			switch {
+			case *ovBytesF > 0:
+				ovBytes += int(*ovBytesF * float64(n))
+			case n <= 64:
 				ovBytes += 24 * n // an array of string headers, grown by halves
-			} else {
+			default:
 				ovBytes += 40 * n // a hash set of string headers
 			}
 		}
