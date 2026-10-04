@@ -269,6 +269,24 @@ the promote and the fall back go. Design note with prediction first.
 - Update `bench/README.md` and the published numbers.
 - The user decides about merging into `main`.
 
+## To check later (notes to pick up when the time comes)
+
+- **Range and prefix scans of string maps are slower than `node-layout`** (measured 2026-10-04, commit `06244b4`,
+  `street`, natural mix, PC, `ordered` as many times as fast as `baseline`; the full table is in the report of 3.3):
+  `valuesBetween` 0.46, 0.51, 0.70 and `prefix` 0.49, 0.47, 0.60 at 4,096, 16,384 and 212,449 keys, point lookups
+  0.66, 0.72, 0.85, `churn` 0.84 to 0.89, `build` 0.89 to 0.90. Against `btree-sets` the credo holds (1.2 to 2.0).
+  *Cause (concluded, not yet measured):* the copy-out of the values, one allocation of about 28 bytes for every key a scan
+  visits (`skpage.Page.Strings`); `node-layout` hands out the string headers it holds, and in the bench the bytes
+  behind them lie in a small buffer (a few thousand different locality names) that stays in the cache. About 20 to 25 ns
+  an allocation against about 8 ns for a leaf in the cache fits the shape: worst at 4K keys, better as the misses
+  take over. *Decision of the user, 2026-10-04:* leave it as it is and go for version 0.8. *Options for later:* (1) take
+  the buffers of a scan, and perhaps of a lookup, from a chunk of 512 bytes to 4 KB shared by several keys (fewer
+  allocations; a string that is kept holds its chunk); (2) a scan that gives out views of the page, with a
+  string that is kept holding its page (the user excluded zero-copy as the default); (3) the bench with the strings
+  scattered over the heap, as an application would have them, to see how much of the gap is the bench. *How to check:* a
+  profile of `valuesBetween` (allocation and GC share), the same run with chunked buffers as an experiment, and the
+  corpus of the inverted index (many values per key, so that the copy is amortized or not).
+
 ## Version 0.8 and what follows (decided 2026-10-04)
 
 The goal of the current work is a **complete implementation, called version 0.8**, on the benchmarks that exist
