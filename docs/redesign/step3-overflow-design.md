@@ -82,6 +82,48 @@ page long before that for most keys (at 256 bytes of content).
 - **Sorted values:** scans would come out sorted, but every insertion moves bytes in a long structure. Not needed
   (the order of the values of a key is unspecified).
 
+## 3a. All the options, looked at together (added after the user's question, 2026-10-04)
+
+The first version of this note compared the block set only with an arena and a table, with chunks and with
+sorted values. It did not look at keeping `vset`, tuning it, or using `Set3` on its own. Here is everything, with the
+numbers that exist. **What changed with the single-key page:** a key with up to about 40 values of 10 bytes (`street`)
+or 8 values of 55 bytes (`dirs`) now lives in a page, so the inline stage (3 values) and the array stage (up to
+64 values) of `vset` are mostly unused: a key reaches the value set with a few dozen values or more. Of the keys that overflow, 31 % of
+`street` and 69 % of `dirs` still have up to 64 values, but they hold only 3 % and 11 % of the values; the weight is in the
+hash stage.
+
+**Measured** with `bench/cmd/ovbench` (the real overflow keys, about 1,090 and 1,380 keys; the strings allocated one by one, as an
+application would; the working set is 3 to 8 MB, so a hit is a hop in L2 or L3, not a trip to the memory; a diagnosis of the containers, not of
+the tree), median of 5 rounds:
+
+| data | container | heap B/value, string bytes included | contains, hit | contains, miss | add + remove | read a value |
+|---|---|--:|--:|--:|--:|--:|
+| `street` | `vset` as it is | 48.6 | 65 ns | 31 ns | 63 ns | 3.9 ns |
+| `street` | `Set3` on its own | 50.4 | 55 ns | 17 ns | 38 ns | 3.9 ns |
+| `dirs` | `vset` as it is | 60.9 | 58 ns | 35 ns | 55 ns | 3.6 ns |
+| `dirs` | `Set3` on its own | 64.1 | 46 ns | 17 ns | 37 ns | 4.0 ns |
+
+| | option | misses after the leaf for a hit | bytes a value (`street` / `dirs`) | pointer-free | effort | verdict |
+|---|---|---|---|---|---|---|
+| A | keep `vset` and tune it (drop the inline stage for strings, lower the array stage) | leaf, `Set3` header, control bytes, slot group, string: 4 | about 48 / 60, a little less | no | days | gains a few percent; the structure stays what it is |
+| B | `Set3` on its own, `vset` gone (the user's idea), embedded in the leaf or behind one pointer | control bytes, slot group, string: 3 (one less than A: the hop to the header is gone) | **50 / 64** (measured) | no | one or two days | **15 to 30 % faster, no smaller**: a hit 55 against 65 ns, a miss 17 against 31, add + remove 38 against 63; the memory a little larger; the pointers stay |
+| C | blocks of 512 bytes with a hash by extendible hashing (this note) | directory (can sit in the leaf for a few blocks), block: 2, in one block, no pointer to a string | **17 / 40** (prediction) | **yes** | three or four days | memory -65 % / -35 % against A and B; speed to be measured |
+| D | one arena of values and an open-addressing table of 32-bit positions | table slot, record: 2 | about 22 / 38 (11 bytes of index a value) | **yes** | about three days | as C in memory; a removal leaves holes, a rebuild fills them; no `memmove` in a block |
+| E | sorted values in blocks | like C | like C | yes | more | scans would be sorted; nothing asks for it; an insertion moves bytes in a long structure |
+| F | a different set for `Hashed` and for `Ordered` | | | | | **yes, as a consequence**: `Hashed` stays on `vset` (`map[string]*vset.Set`, there is no cache-line premise for it, only the credo as the competitor); `Ordered` gets its own for each value type |
+| H | a **dictionary of values**: each different value is stored once and the keys hold numbers (4 bytes) | key: number array in a page or blocks; a dictionary lookup on add | **about 4 / 4 plus the dictionary** if the values repeat a lot (`street`: a few thousand different localities among 579,000 values), **worse** if they do not (`dirs` file names) | yes for the keys | weeks (a reference count to free values, a dictionary that is itself a map) | the biggest possible saving for repeating values, a different data structure; for the profile after version 0.8, with the corpus of the inverted index in front of us |
+
+What decides between B and C: **B is a replacement of a container, C is a new data structure.** B is cheap and fast to try and
+makes the structure a little faster, but does nothing for what the redesign is about (a pointer to every string; the garbage collector scans 16
+bytes a value; the strings stay where the caller allocated them, so a string that is a piece of a big buffer keeps the whole buffer alive, which a copy
+into a block does not). C is the cache-line shaped answer and the only one that removes a third of the heap of the natural mix
+(`street` 113 to about 96 B/key). A and B cannot get there.
+
+A way to decide with data and not with opinions, before the tree is touched: build the standalone `internal/strset`
+(C) first, put it into `ovbench` next to A and B, and take C if it holds **at most 60 % of the bytes of B** and its hit and its add + remove cost
+**at most 20 % more than B's** (55 and 38 ns on `street`). If it does not, B is the fall back and C goes to the list of what comes after
+version 0.8. D can go through the same bench cheaply and is the second candidate if C's blocks are too slow on a hit.
+
 ## 4. What it costs and what it saves (prediction)
 
 Memory a value: the bytes and one length byte, divided by the fill of the blocks, which is about 69 % for hashed
