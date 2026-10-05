@@ -252,6 +252,14 @@ func TestFixedLimits(t *testing.T) {
 	if NewFixed(long[:498], 600, uint64(1)) == nil {
 		t.Error("a remainder of 498 bytes fits")
 	}
+	if EmptyFixed[string](nil, 1) != nil || EmptyFixed[uint64](long, 600) != nil {
+		t.Error("an empty page for a string or for a remainder of 499 bytes")
+	}
+	if e := EmptyFixed[uint64](long[:498], 600); e == nil || e.Len() != 0 || e.Size() != 512 {
+		t.Errorf("an empty page for a remainder of 498 bytes: %v", e)
+	} else if f, res := e.Add(uint64(5)); res != Added || f != e || !f.Has(uint64(5)) {
+		t.Error("the first value of an empty page")
+	}
 	if BuildFixed(nil, 3, []uint64(nil)) != nil {
 		t.Error("a page without values")
 	}

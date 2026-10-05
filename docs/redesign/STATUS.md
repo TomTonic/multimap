@@ -1,5 +1,12 @@
 # Status
 
+## 2026-10-05: step 3.5.3 done, the tree for pointer-free values (`uint64`) holds `skpage.Fixed` pages
+
+- `Map.flat == 1` is now `Fixed` pages with `Set3[T]` as the value overflow (`internal/art/fixedkey.go`: `newFixedLeaf`, `addFixed`, `removeFixed`, `removeFromFixedOverflow`, `rekeyFixed`, `fixedFromOverflow`); **`flat.go` and the flat leaf are gone**.
+  The tests of the flat leaf were ported to the page (`fixedkey_test.go`: `TestFixedKeys`, `TestFixedKeyMovesUp`, `TestFixedRekey`; the value types test and the old overflow's rekey test are in `values_test.go`). Gates: race, 100 % without `-race`, fuzz, lint.
+- **Memory as predicted** (`objstat`, object bytes per key, value sets of the value overflow not counted): `street` one value per key **66.6** (model: 66.6), `street` real **74.1** + about 15 for the `Set3` of the value overflow = 89 (model 88.9),
+  `dirs` real 92.1 (+ about 15 = 107; model 104). Next: 3.5.4 the pointer pages (`*T`: 166 typed objects) replace the typed leaf.
+
 ## 2026-10-05: step 3.5.2 done, the value overflow is generic in `T`
 
 - `valueOverflow[K, T]`, `newValueOverflow[T]`, `overflowSetOf[T]`, `overflowAdd[T]`, `overflowEach[T]` (`internal/art/singlekey.go`): the object, its size and the offset of the pointer do not depend on `T`; strings call it with `T = string`

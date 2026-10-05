@@ -43,6 +43,25 @@ const (
 	maxTypedValue = 64
 )
 
+func pointerFree(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
+		return true
+	case reflect.Array:
+		return t.Len() == 0 || pointerFree(t.Elem())
+	case reflect.Struct:
+		for i := range t.NumField() {
+			if !pointerFree(t.Field(i).Type) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // typedType reports whether T takes typed leaves: pointer-holding, so that it
 // cannot take flat ones, small enough to leave room for several per leaf, and
 // aligned to a word, which the leaf's layout assumes.

@@ -157,6 +157,19 @@ func NewFixed[T comparable](rest []byte, keyLen int, v T) *Fixed {
 	return p
 }
 
+// EmptyFixed returns a page without values for the key of keyLen bytes whose end is
+// rest, or nil if T has no page or rest is longer than MaxRemainderFixed. The tree
+// makes it when a key arrives and adds the first value at once with Add; a page
+// without values is not a state a key stays in.
+func EmptyFixed[T comparable](rest []byte, keyLen int) *Fixed {
+	if kindOf[T]() == fixedNone || len(rest) > MaxRemainderFixed[T]() {
+		return nil
+	}
+	p := allocFixed[T](classHolding[T](1, len(rest)), len(rest), keyLen)
+	copy(p.mem()[Header:], rest)
+	return p
+}
+
 // BuildFixed returns a page for the key of keyLen bytes whose end is rest, with
 // the values vals (all different, at least one), or nil if T has no page or
 // they do not fit the largest class. The tree calls it when the value set of a

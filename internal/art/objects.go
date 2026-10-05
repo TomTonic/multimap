@@ -84,8 +84,8 @@ func (m *Map[T]) leafObject(l *singleKeyHead) Object {
 
 // leafValues returns the number of values of leaf l.
 func (m *Map[T]) leafValues(l *singleKeyHead) int {
-	if l.isValueOverflow() && m.flat == 3 {
-		return int((*overflowSetOf[string](l)).Size())
+	if l.isValueOverflow() && (m.flat == 3 || m.flat == 1) {
+		return int((*overflowSetOf[T](l)).Size())
 	}
 	if l.isValueOverflow() {
 		return vals[T](l).Len()
@@ -98,14 +98,12 @@ func (m *Map[T]) leafValues(l *singleKeyHead) int {
 func (m *Map[T]) leafKind(l *singleKeyHead) Object {
 	var z T
 	switch {
-	case l.cls() > 0 && m.flat == 1:
-		return Object{Label: "flat leaf", Size: int(flatSizes[l.cls()]), Keys: 1}
-	case l.cls() > 0 && m.flat == 3:
+	case l.cls() > 0 && (m.flat == 1 || m.flat == 3):
 		return Object{Label: "single-key page", Size: asSK(l).Size(), Keys: 1}
 	case l.cls() > 0 && m.flat == 2:
 		return Object{Label: "typed leaf", Size: int(typedOff(l.rem())) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), Pointers: true, Keys: 1}
 	}
-	if m.flat == 3 {
+	if m.flat == 3 || m.flat == 1 {
 		return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
 	}
 	var size uintptr

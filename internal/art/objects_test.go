@@ -156,11 +156,6 @@ func TestObjectSizes(t *testing.T) {
 			}
 		}
 	})
-	t.Run("flat leaves of every class", func(t *testing.T) {
-		for cls := 1; cls < len(flatSizes); cls++ {
-			check(t, &flat, func() unsafe.Pointer { return unsafe.Pointer(allocFlat(uint8(cls))) })
-		}
-	})
 	t.Run("typed leaves of every class and key area", func(t *testing.T) {
 		for c := 1; c < len(typedCaps); c++ {
 			for _, klen := range []int{0, 2, 3, 10, 11, 18, 19, 26, 27, 34, 35, 42, 43, 50, 51, 58} {

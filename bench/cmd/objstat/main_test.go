@@ -32,11 +32,11 @@ func TestRun(t *testing.T) {
 	if len(rows) != 4 {
 		t.Errorf("%d rows, want 4:\n%s", len(rows), out.String())
 	}
-	if r := rows["u64 single-value 4K"]; !strings.Contains(r[6], "flat leaf") {
-		t.Errorf("integer keys with one value should live in flat leaves (the multi-key pages are out of the tree): %v", r)
+	if r := rows["u64 single-value 4K"]; !strings.Contains(r[6], "single-key page") {
+		t.Errorf("integer keys with one value should live in single-key pages: %v", r)
 	}
-	if r := rows["u64 natural 4K"]; r[3] == "0.0 %" || !strings.Contains(r[6], "flat leaf") {
-		t.Errorf("integer keys with several values should live in leaves, which are not all multiples of 64 bytes: %v", r)
+	if r := rows["u64 natural 4K"]; !strings.Contains(r[6], "single-key page") {
+		t.Errorf("integer keys with several values should live in single-key pages: %v", r)
 	}
 	if r := rows["u64 natural-str 4K"]; !strings.Contains(r[6], "single-key page") {
 		t.Errorf("keys with several string values should live in single-key pages: %v", r)

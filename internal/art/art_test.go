@@ -524,8 +524,8 @@ func TestLeafLayout(t *testing.T) {
 	if tail := (&Map[string]{flat: -1}).leafTail(); tail >= str[0].size {
 		t.Errorf("leafTail = %d lies outside the smallest value overflow for string (%d B)", tail, str[0].size)
 	}
-	if tail := (&Map[uint64]{flat: 1}).leafTail(); tail >= flatSizes[1] {
-		t.Errorf("leafTail = %d lies outside the smallest flat leaf (%d B)", tail, flatSizes[1])
+	if tail := (&Map[uint64]{flat: 1}).leafTail(); tail >= 32 {
+		t.Errorf("leafTail = %d lies outside the smallest page (32 B)", tail)
 	}
 
 	for _, tc := range []struct {
