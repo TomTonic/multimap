@@ -62,21 +62,6 @@ func removeFixed[T comparable](t *Tree, l *singleKeyHead, key []byte, v T, rk re
 	}
 }
 
-// removeFromFixedOverflow removes v from the value overflow l of key in a map of
-// fixed-size values, and moves the entry into a page once its values fit one.
-func removeFromFixedOverflow[T comparable](t *Tree, l *singleKeyHead, key []byte, v T, rk rekeyFunc) {
-	s := *overflowSetOf[T](l)
-	switch {
-	case !s.Remove(v):
-	case s.Size() == 0:
-		t.remove(key, rk)
-	default:
-		if p := fixedFromOverflow[T](l); p != nil {
-			*t.findSlot(key) = singleKeyHdr(fixedHead(p))
-		}
-	}
-}
-
 // fixedFromOverflow returns the page for the value overflow l, whose values have
 // shrunk to what skpage.BackFits allows, or nil if they have not.
 func fixedFromOverflow[T comparable](l *singleKeyHead) *skpage.Fixed {
@@ -97,10 +82,7 @@ func fixedFromOverflow[T comparable](l *singleKeyHead) *skpage.Fixed {
 // is copied.
 func rekeyFixed[T comparable](l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
 	if l.isValueOverflow() {
-		if setPrepend(l, pre, b, pathLen, overflowKeyCap) {
-			return l
-		}
-		return newValueOverflow(wholeKey(l, pre, b), pathLen, *overflowSetOf[T](l))
+		return rekeyOverflow[T](l, pre, b, pathLen)
 	}
 	front := make([]byte, l.base()-pathLen)
 	fillHead(front, pre, b, pathLen)

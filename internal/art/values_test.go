@@ -90,14 +90,13 @@ func roundTrip[T comparable](mk func(int) T) func(t *testing.T) int8 {
 	}
 }
 
-// TestRekeyOfOldOverflow makes sure that a value overflow of the maps that still
-// hold their values in a vset.Set (values that hold a pointer, and every other
-// type) keeps every value when the node above it goes away and it has to hold
-// more of its key, and that it stays where it is as long as the longer key
-// fits its key area: no new leaf for a delete that merges a node into its only
-// leaf.
-func TestRekeyOfOldOverflow(t *testing.T) {
-	key := bytes.Repeat([]byte("abcdefghij"), 30) // 300 bytes
+// TestRekeyOfOverflow makes sure that a value overflow keeps every value when
+// the node above it goes away and it has to hold more of its key, and that it
+// stays where it is as long as the longer key fits its key area: no new
+// object for a delete that merges a node into its only entry. It covers the
+// value overflow of the types that have no page, whose every entry is one.
+func TestRekeyOfOverflow(t *testing.T) {
+	key := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
 	for _, tc := range []struct {
 		name         string
 		keyLen, base int
@@ -105,27 +104,26 @@ func TestRekeyOfOldOverflow(t *testing.T) {
 		wantInPlace  bool
 	}{
 		{"room in its key area", 20, 17, 6, true},
-		{"beyond its key area", 20, 17, 2, false},
-		{"in the largest key area", 230, 30, 1, true},
-		{"up to the longest inline remainder", 300, 100, 46, true},
-		{"beyond the longest inline remainder", 300, 100, 45, false},
+		{"beyond its key area", 20, 17, 1, false},
+		{"in the largest key area", 600, 120, 102, true},
+		{"beyond the longest inline remainder", 600, 120, 101, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k := key[:tc.keyLen]
-			l := newSetLeaf[string](k, tc.base)
+			l := newOverflowLeaf[string](k, tc.base)
 			want := []string{"1", "2"}
 			for _, v := range want {
-				vals[string](l).Add(v)
+				overflowAdd(l, v)
 			}
-			nl := rekey[string](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
+			nl := rekeyOverflow[string](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
 			var got []string
-			vals[string](nl).Each(func(v string) bool { got = append(got, v); return true })
+			overflowEach(nl, func(v string) bool { got = append(got, v); return true })
 			slices.Sort(got)
 			if !slices.Equal(got, want) {
 				t.Errorf("values %v, want %v", got, want)
 			}
 			if nl.keyLen() != tc.keyLen || !bytes.Equal(nl.from(tc.to), k[tc.to:]) || (nl == l) != tc.wantInPlace {
-				t.Errorf("leaf holds %q from %d of a key of %d bytes, in place: %v, want the key from %d on, in place: %v", nl.stored(), nl.base(), nl.keyLen(), nl == l, tc.to, tc.wantInPlace)
+				t.Errorf("object holds %q from %d of a key of %d bytes, in place: %v, want the key from %d on, in place: %v", nl.stored(), nl.base(), nl.keyLen(), nl == l, tc.to, tc.wantInPlace)
 			}
 		})
 	}

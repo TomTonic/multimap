@@ -1,10 +1,6 @@
 package art
 
-import (
-	"unsafe"
-
-	"github.com/TomTonic/multimap/internal/skpage"
-)
+import "github.com/TomTonic/multimap/internal/skpage"
 
 // This file measures the objects of a tree against the cache-line rules of
 // docs/redesign/STRATEGY.md: how many objects there are, how big each is, and
@@ -68,7 +64,7 @@ func Block(size int, pointers bool) (block, offset int) {
 
 // Objects calls fn for every object of the tree, in key order of the paths to
 // them, nodes before their children. It does not count what a value set of
-// a value overflow allocates for itself (see vset).
+// a value overflow allocates for the Set3 of its values.
 func (m *Map[T]) Objects(fn func(Object)) {
 	if m.t.root != nil {
 		m.objects(m.t.root, fn)
@@ -88,11 +84,8 @@ func (m *Map[T]) leafObject(l *singleKeyHead) Object {
 
 // leafValues returns the number of values of leaf l.
 func (m *Map[T]) leafValues(l *singleKeyHead) int {
-	if l.isValueOverflow() && (m.flat == 3 || m.flat == 1) {
-		return int((*overflowSetOf[T](l)).Size())
-	}
 	if l.isValueOverflow() {
-		return vals[T](l).Len()
+		return int((*overflowSetOf[T](l)).Size())
 	}
 	return int(l.n)
 }
@@ -103,31 +96,7 @@ func (m *Map[T]) leafKind(l *singleKeyHead) Object {
 	if l.cls() > 0 {
 		return Object{Label: "single-key page", Size: asSK(l).Size(), Pointers: m.flat == 1 && skpage.HoldsPointers[T](), Keys: 1}
 	}
-	if m.flat == 3 || m.flat == 1 {
-		return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
-	}
-	var size uintptr
-	switch k := l.rem(); {
-	case k <= 16:
-		size = unsafe.Sizeof(leaf[T, [16]byte]{})
-	case k <= 32:
-		size = unsafe.Sizeof(leaf[T, [32]byte]{})
-	case k <= 48:
-		size = unsafe.Sizeof(leaf[T, [48]byte]{})
-	case k <= 64:
-		size = unsafe.Sizeof(leaf[T, [64]byte]{})
-	case k <= 96:
-		size = unsafe.Sizeof(leaf[T, [96]byte]{})
-	case k <= 128:
-		size = unsafe.Sizeof(leaf[T, [128]byte]{})
-	case k <= 192:
-		size = unsafe.Sizeof(leaf[T, [192]byte]{})
-	case k <= maxInline:
-		size = unsafe.Sizeof(leaf[T, [256]byte]{})
-	default:
-		size = unsafe.Sizeof(leaf[T, string]{})
-	}
-	return Object{Label: "value overflow", Size: int(size), Pointers: true, Keys: 1}
+	return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
 }
 
 // object describes the object n, a leaf, page or node, without what is below

@@ -166,16 +166,16 @@ func TestObjectSizes(t *testing.T) {
 		}
 	})
 	t.Run("value overflows of every key area, and with the key as a string", func(t *testing.T) {
-		for _, n := range []int{0, 16, 17, 32, 33, 48, 49, 64, 65, 96, 97, 128, 129, 192, 193, maxInline} {
+		for _, n := range []int{0, 18, 19, 50, 51, 114, 115, 242, 243, 370, 371, 498} {
 			key := make([]byte, n)
-			check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newSetLeafOf[uint64](key, n)) })
+			check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newOverflowLeaf[uint64](key, 0)) })
 		}
-		// the key of such a leaf is a string of its own; the leaf is the object whose address the test takes
-		long := make([]byte, 300)
-		check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newSetLeaf[uint64](long, 0)) })
+		// the key of such an object is a string of its own; the object is what the test takes the address of
+		long := make([]byte, 600)
+		check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newOverflowLeaf[uint64](long, 0)) })
 		var strs Map[string]
 		strs.flat = -1
-		check(t, &strs, func() unsafe.Pointer { return unsafe.Pointer(newSetLeaf[string](long, 0)) })
+		check(t, &strs, func() unsafe.Pointer { return unsafe.Pointer(newOverflowLeaf[string](long, 0)) })
 	})
 }
 

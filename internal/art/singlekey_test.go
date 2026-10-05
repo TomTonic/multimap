@@ -49,8 +49,8 @@ func TestStringMapUsesPages(t *testing.T) {
 	if pages != 300 {
 		t.Errorf("the statistic counts %d single-key pages, want 300", pages)
 	}
-	if tail := m.leafTail(); tail != 31 {
-		t.Errorf("leafTail = %d, want 31 (the smallest page)", tail)
+	if leafTail != 31 {
+		t.Errorf("leafTail = %d, want 31 (the smallest page)", leafTail)
 	}
 }
 

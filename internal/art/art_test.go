@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	set3 "github.com/TomTonic/Set3"
 	"maps"
 	"math/rand/v2"
 	"slices"
@@ -471,112 +472,20 @@ func TestEmptyMap(t *testing.T) {
 	}
 }
 
-// leafLayout returns the size of a leaf[T, K] and the offsets of its key and
-// its values, as the compiler lays them out.
-func leafLayout[T comparable, K keyArea]() (size, kOff, vOff uintptr) {
-	var l leaf[T, K]
-	return unsafe.Sizeof(l), unsafe.Offsetof(l.k), unsafe.Offsetof(l.vals)
-}
-
-// TestLeafLayout makes sure that every key of multimap.Ordered keeps its bytes
-// and its values, whatever its length and whatever the value type. It covers
-// the value overflows of the ART behind Ordered, which hold a key's remainder
-// inline in the smallest of eight size classes, or the whole key as a string
-// beyond 254 bytes, and which the untyped tree code reads through fixed
-// offsets. For each class boundary it checks that the leaf holds an
-// independent copy of its key and the key's length, that its values lie
-// where the compiler put them, and that the byte the range scan touches
-// ahead lies inside even the smallest leaf.
-func TestLeafLayout(t *testing.T) {
-	type class struct{ size, kOff, vOff uintptr }
-	layouts := func(get ...func() (uintptr, uintptr, uintptr)) (out []class) {
-		for _, f := range get {
-			var c class
-			c.size, c.kOff, c.vOff = f()
-			out = append(out, c)
+// TestSmallestObject makes sure that the byte the range scan touches ahead lies
+// inside the smallest object of every map: a single-key page or a value overflow
+// is at least 32 bytes, whatever the type of the values, and a value overflow
+// holds its key remainder where the untyped tree code reads it (keyOff) or, beyond
+// the longest inline remainder, the whole key as a string (strOff).
+func TestSmallestObject(t *testing.T) {
+	if leafTail >= 32 || leafTail >= valueOverflowSize(0) {
+		t.Errorf("leafTail = %d lies outside the smallest object (%d B)", leafTail, valueOverflowSize(0))
+	}
+	for _, n := range []int{0, 18, 50, 114, 242, 370, 498, 499} {
+		l := newValueOverflow(bytes.Repeat([]byte("k"), n), 0, set3.Empty[uint64]())
+		if n > maxInlineOverflow != (l.rem() == longKey) || l.keyLen() != n {
+			t.Errorf("key of %d bytes: remainder %d", n, l.rem())
 		}
-		return out
-	}
-	u64 := layouts(leafLayout[uint64, [16]byte], leafLayout[uint64, [32]byte], leafLayout[uint64, [48]byte],
-		leafLayout[uint64, [64]byte], leafLayout[uint64, [96]byte], leafLayout[uint64, [128]byte],
-		leafLayout[uint64, [192]byte], leafLayout[uint64, [256]byte], leafLayout[uint64, string])
-	str := layouts(leafLayout[string, [16]byte], leafLayout[string, [32]byte], leafLayout[string, [48]byte],
-		leafLayout[string, [64]byte], leafLayout[string, [96]byte], leafLayout[string, [128]byte],
-		leafLayout[string, [192]byte], leafLayout[string, [256]byte], leafLayout[string, string])
-
-	if u64[0].size != 64 || u64[len(u64)-1].size != 64 {
-		t.Errorf("smallest leaves for uint64 values are %d and %d bytes, want one cache line", u64[0].size, u64[len(u64)-1].size)
-	}
-	for _, cs := range [][]class{u64, str} {
-		for i, c := range cs {
-			want := keyOff
-			if i == len(cs)-1 {
-				want = strOff
-			}
-			if c.kOff != want {
-				t.Errorf("class %d: key at offset %d, want %d", i, c.kOff, want)
-			}
-		}
-	}
-	if tail := (&Map[uint64]{flat: -1}).leafTail(); tail >= u64[0].size {
-		t.Errorf("leafTail = %d lies outside the smallest value overflow for uint64 (%d B)", tail, u64[0].size)
-	}
-	if tail := (&Map[string]{flat: -1}).leafTail(); tail >= str[0].size {
-		t.Errorf("leafTail = %d lies outside the smallest value overflow for string (%d B)", tail, str[0].size)
-	}
-	if tail := (&Map[uint64]{flat: 1}).leafTail(); tail >= 32 {
-		t.Errorf("leafTail = %d lies outside the smallest page (32 B)", tail)
-	}
-
-	for _, tc := range []struct {
-		name  string
-		n     int
-		class int
-	}{
-		{"empty key is inline", 0, 0},
-		{"16 bytes are inline in 16", 16, 0},
-		{"17 bytes are inline in 32", 17, 1},
-		{"33 bytes are inline in 48", 33, 2},
-		{"49 bytes are inline in 64", 49, 3},
-		{"65 bytes are inline in 96", 65, 4},
-		{"97 bytes are inline in 128", 97, 5},
-		{"129 bytes are inline in 192", 129, 6},
-		{"193 bytes are inline in 256", 193, 7},
-		{"254 bytes are inline in 256", maxInline, 7},
-		{"255 bytes are a string", maxInline + 1, 8},
-		{"300 bytes are a string", 300, 8},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			key := make([]byte, tc.n)
-			for i := range key {
-				key[i] = byte(i*7 + 1)
-			}
-			want := bytes.Clone(key)
-
-			l := newSetLeaf[uint64](key, 0)
-			ls := newSetLeaf[string](key, 0)
-			clear(key) // the leaves must hold copies
-			wantLen := tc.n
-			if tc.n > maxInline {
-				wantLen = longKey
-			}
-			for _, x := range []*singleKeyHead{l, ls} {
-				if !x.isValueOverflow() || x.rem() != wantLen || x.keyLen() != tc.n || x.base() != 0 || !bytes.Equal(x.stored(), want) {
-					t.Fatalf("leaf holds type %d, klen %d, key %v; want a value overflow of %d bytes %v", x.objType, x.rem(), x.stored(), tc.n, want)
-				}
-			}
-			gotU := uintptr(unsafe.Pointer(vals[uint64](l))) - uintptr(unsafe.Pointer(l))
-			gotS := uintptr(unsafe.Pointer(vals[string](ls))) - uintptr(unsafe.Pointer(ls))
-			if gotU != u64[tc.class].vOff || gotS != str[tc.class].vOff {
-				t.Fatalf("values at offsets %d and %d, want %d and %d (size class %d)",
-					gotU, gotS, u64[tc.class].vOff, str[tc.class].vOff, tc.class)
-			}
-			vals[uint64](l).Add(42)
-			vals[string](ls).Add("v")
-			if !vals[uint64](l).Contains(42) || !vals[string](ls).Contains("v") || !bytes.Equal(l.stored(), want) {
-				t.Fatalf("adding values changed the key or lost the values")
-			}
-		})
 	}
 }
 

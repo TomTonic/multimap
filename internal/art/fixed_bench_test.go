@@ -142,8 +142,8 @@ func both(fs ...func(entry) bool) func(entry) bool {
 }
 
 // BenchmarkFixedPages times the operations of a key's object on the real entries of two
-// data sets, for the flat leaf and the page with values of 8 bytes without a pointer,
-// and for the typed leaf and the page with pointers: hit (adding a value that is
+// data sets, for the page with pointers (the page with values of 8 bytes without a
+// pointer was measured against the flat leaf, see above): hit (adding a value that is
 // there, which is a scan and the check of a set), churn (adding and removing a
 // fresh value, which moves the object at the border of a class), read (summing the
 // values) and build (all values of every entry, per entry), on the first 4,096
@@ -220,7 +220,7 @@ func benchPages[T comparable](b *testing.B, data []entry, cands []pages[T], val 
 var sinkSum uint64
 
 // TestFixedMemory prints, for the entries both candidates hold, the bytes Go
-// allocates for the objects of a key: the flat leaf and the typed leaf against the
+// allocates for the objects of an entry: the page against the
 // page, which the design note predicts (docs/redesign/step3-fixed-design.md). It
 // checks only that the numbers are there; run it with -v.
 func TestFixedMemory(t *testing.T) {

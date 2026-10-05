@@ -46,7 +46,6 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/swar"
-	"github.com/TomTonic/multimap/internal/vset"
 )
 
 // type tells the type of a node or page, and a page's size class: an object
@@ -93,13 +92,6 @@ const (
 	shrink58  = 22
 	shrink256 = 48
 )
-
-// maxInline is the longest key remainder an old-style value overflow (leaf[T, K],
-// for the types that have no page) holds inline: in an array of 16 to 256
-// bytes, whichever is the smallest that fits. A longer one makes it hold its
-// whole key as a string, which costs a separate allocation and a pointer
-// chase on every comparison.
-const maxInline = 254
 
 // maxKeyLen is the longest key a leaf holds a remainder of; singleKeyHead.kl must
 // hold its length. A longer key is held whole, as a string.
@@ -162,20 +154,6 @@ const (
 	keyOff = unsafe.Sizeof(singleKeyHead{})
 	strOff = 8
 )
-
-// keyArea is the storage of a value overflow's key: an inline array of one of the
-// size classes for the remainder, or a string for the whole key.
-type keyArea interface {
-	[16]byte | [32]byte | [48]byte | [64]byte | [96]byte | [128]byte | [192]byte | [256]byte | string
-}
-
-// leaf is a value overflow: a singleKeyHead followed by its key and the values of its
-// key. For T = uint64 it is 64 B with a remainder of up to 16 bytes.
-type leaf[T comparable, K keyArea] struct {
-	singleKeyHead
-	k    K
-	vals vset.Set[T]
-}
 
 // newLeafFunc creates a leaf for key with base base (see singleKeyHead) and returns
 // its head. Map[T] supplies it so that the tree code does not need to know T.

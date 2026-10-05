@@ -107,10 +107,7 @@ func fromValueOverflow(l *singleKeyHead) *skpage.Page {
 // value overflow takes them in its key area if they fit, else it is copied.
 func rekeySK(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
 	if l.isValueOverflow() {
-		if setPrepend(l, pre, b, pathLen, overflowKeyCap) {
-			return l
-		}
-		return newValueOverflow(wholeKey(l, pre, b), pathLen, *overflowSetOf[string](l))
+		return rekeyOverflow[string](l, pre, b, pathLen)
 	}
 	front := make([]byte, l.base()-pathLen)
 	fillHead(front, pre, b, pathLen)
@@ -270,4 +267,22 @@ func overflowEach[T comparable](l *singleKeyHead, yield func(T) bool) bool {
 		}
 	}
 	return true
+}
+
+// newOverflowLeaf allocates an empty value overflow that holds key from base on:
+// the leaf of an entry in a map whose type of value has no page, and for every
+// type the home of an entry whose remainder is too long for one. It is a
+// newLeafFunc.
+func newOverflowLeaf[T comparable](key []byte, base int) *singleKeyHead {
+	return newValueOverflow(key, base, set3.Empty[T]())
+}
+
+// rekeyOverflow is the map's rekeyFunc for a value overflow (see rekeyFunc): it
+// takes the bytes in front of its remainder in its key area if they fit, else
+// it is copied around the same set.
+func rekeyOverflow[T comparable](l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
+	if setPrepend(l, pre, b, pathLen) {
+		return l
+	}
+	return newValueOverflow(wholeKey(l, pre, b), pathLen, *overflowSetOf[T](l))
 }

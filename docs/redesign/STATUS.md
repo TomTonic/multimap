@@ -1,5 +1,12 @@
 # Status
 
+## 2026-10-05: step 3.5.5 done, step 3.5 complete: no flat leaf, typed leaf or `vset` left in `internal/art`
+
+- Every map holds an entry in a single-key page (`skpage.Page` for strings, `skpage.Fixed` for `uint64`-like and one-pointer values) or in a value overflow with a `Set3[T]`; the types without a page (an interface, a struct with a string, more than 16 bytes)
+  have a value overflow for every entry (`newOverflowLeaf`, `rekeyOverflow`). Gone: `leaf[T, K]`, `newSetLeaf*`, `vals`, `setKeyCap`, the keyArea types, `rekey[T]`. `vset` is used by `Hashed` only. `leafTail` is a constant (31).
+  Gates: race, fuzz, lint, **100 % of `internal/art` also under `-race`**.
+- Gate 3 of the plan ("flat, typed and set leaves are gone from the code") is met. Next (PLAN 3.5 last step): measure the three cases (`street`, `dirs`, `u64` keys with `*T`) on the PC and as M1 jobs, report against the predictions.
+
 ## 2026-10-05: step 3.5.4 done, `*T` maps hold their entries in pointer pages; the typed leaf is gone
 
 - `Map.flat == 1` covers every `T` that `skpage.Supported` takes: small and pointer-free, or one word that is a pointer (the 166 typed objects). Every other `T` (an interface, a struct with a string, more than 16 bytes) is mode -1: each entry a value overflow.
