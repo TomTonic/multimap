@@ -377,3 +377,38 @@ func TestMultiKeyPageOfWordsCannotMoveUp(t *testing.T) {
 		}
 	}
 }
+
+// TestMultiKeyPageMergeWaitsForNearlyEmptyPage makes sure that removing values from a
+// map with multi-key pages does not try to merge pages while they are still well filled.
+//
+// A user who deletes entries from a large index of single-value entries should not pay for
+// a merge attempt at every deletion: with pages that hold some ten entries, nearly every
+// attempt fails (docs/redesign/step4-probe.md). The tree comes together again once a page
+// is nearly empty.
+//
+// Expected: two sibling pages of six entries each, whose entries together would fit one
+// page after four removals, stay two pages while the page the removals come from has
+// more than mergeBelow entries left, and become one page with the removal that leaves it
+// mergeBelow entries.
+func TestMultiKeyPageMergeWaitsForNearlyEmptyPage(t *testing.T) {
+	var m Map[uint64]
+	key := func(side byte, i int) []byte { return fmt.Appendf(nil, "%c%02d%s", side, i, strings.Repeat("x", 40)) }
+	for i := range 6 {
+		m.Add(key('a', i), uint64(i))
+		m.Add(key('b', i), uint64(100+i))
+	}
+	if pages, keys := pageCount(&m); pages != 2 || keys != 12 {
+		t.Fatalf("setup: %d pages hold %d keys, want 2 pages with 12", pages, keys)
+	}
+	for i := range 6 - mergeBelow - 1 { // the page keeps mergeBelow+1 entries
+		m.Remove(key('a', i), uint64(i))
+	}
+	if pages, _ := pageCount(&m); pages != 2 {
+		t.Fatalf("%d pages with %d entries left in one of them, want 2 (no merge yet)", pages, mergeBelow+1)
+	}
+	m.Remove(key('a', 6-mergeBelow-1), uint64(6-mergeBelow-1))
+	if pages, keys := pageCount(&m); pages != 1 || keys != 6+mergeBelow {
+		t.Fatalf("after the removal that leaves %d entries: %d pages with %d keys, want 1 page with %d", mergeBelow, pages, keys, 6+mergeBelow)
+	}
+	checkInvariants(t, &m.t)
+}

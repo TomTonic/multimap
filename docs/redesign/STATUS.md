@@ -1,5 +1,12 @@
 # Status
 
+## 2026-10-05 night: probe of the benchmark's streams ([step4-probe.md](step4-probe.md)); option A chosen by the user, with "profiling or statistics to learn for step 5"
+
+- The step-4.2 hypothesis was wrong for `single-value` (no promote there): the cost was the merge tried after every removal of a key (28 % of the time, 4 % success). Now tried only when the page is nearly empty (`mergeBelow = 2`): a third off the time of `churn`, 3.5 % more memory after a mass removal.
+- With several values per key the pages decay: 58 to 73 bytes per key (+25 %) after one cycle, 16 % of the keys in pages instead of 42 %; demoting them again works (63) but costs 37 % of the time. For step 5: entries with several values stay in their page.
+- Random `uint64` keys: memory depends on the size, 51 bytes per key at 16,384 against 45 of `btree-map` (24 at 262,144): the one case below credo 1 in memory, and an argument for the question of step 6.
+- Counters (build tag `mkstats`) and the probe (`TestProbe`, `MKPROBE=1`) are in the tree; no cost without the tag.
+
 ## 2026-10-05 evening: step 4.2 built and measured on the PC ([results](step4-tree-results.md)); gate 4 not met
 
 - Multi-key pages in the tree for strings and `uint64` (`internal/art/mkkey.go`, `internal/mkpage`): 100 %, race, fuzz, lint. **Memory as predicted** (27, 40, 31, 51, 24 B an entry with one value against 55, 95, 66, 107, 45 of `btree-map`; the real mix -19 % and -11 %).

@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/TomTonic/multimap/bench/keys"
@@ -146,8 +148,11 @@ func (m *mkModel) single(i, rem int) {
 func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 	var grid []int
 	for _, f := range strings.Split(*mkGridF, ",") {
-		var v int
-		fmt.Sscan(f, &v)
+		v, err := strconv.Atoi(strings.TrimSpace(f))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "skmodel: -mkgrid:", err)
+			os.Exit(1)
+		}
 		grid = append(grid, v)
 	}
 	sort.Ints(grid)

@@ -108,24 +108,24 @@ func (m *Map[T]) addToLeaf(loc **header, l *singleKeyHead, key []byte, v T) {
 // the leaf has to move into a smaller one.
 func (m *Map[T]) Remove(key []byte, v T) {
 	before := m.t.size
-	m.removeValue(key, v)
-	if m.mk && m.t.size != before {
+	left := m.removeValue(key, v)
+	if m.mk && m.t.size != before && left <= mergeBelow {
 		m.mergeUp(&m.t.root, key, 0)
 	}
 }
 
-// removeValue is Remove without the merge of the nodes above a removed key.
-func (m *Map[T]) removeValue(key []byte, v T) {
+// removeValue is Remove without the merge of the nodes above a removed key. It returns the
+// number of entries left in the multi-key page that held the entry, and 0 if it did not.
+func (m *Map[T]) removeValue(key []byte, v T) int {
 	// Chosen here, as in Add: a function value that does not escape stays on
 	// the stack.
 	rk := m.rekey
 	n, pathLen := m.t.find(key)
 	if n == nil {
-		return
+		return 0
 	}
 	if isMultiKey(n.objType) {
-		m.pageRemove(n, pathLen, key, v, false)
-		return
+		return m.pageRemove(n, pathLen, key, v, false)
 	}
 	l := asSingleKey(n)
 	if !l.isValueOverflow() {
@@ -134,7 +134,7 @@ func (m *Map[T]) removeValue(key []byte, v T) {
 		} else {
 			m.t.removeSK(l, key, *(*string)(unsafe.Pointer(&v)), rk)
 		}
-		return
+		return 0
 	}
 	s := *overflowSetOf[T](l)
 	switch {
@@ -150,21 +150,23 @@ func (m *Map[T]) removeValue(key []byte, v T) {
 			*m.t.findSlot(key) = singleKeyHdr(skHead(p))
 		}
 	}
+	return 0
 }
 
 // RemoveKey removes key and all its values. An absent key is ignored.
 func (m *Map[T]) RemoveKey(key []byte) {
 	n, pathLen := m.t.find(key)
+	left := 0
 	switch {
 	case n == nil:
 		return
 	case isMultiKey(n.objType):
 		var zero T
-		m.pageRemove(n, pathLen, key, zero, true)
+		left = m.pageRemove(n, pathLen, key, zero, true)
 	default:
 		m.t.remove(key, m.rekey)
 	}
-	if m.mk {
+	if m.mk && left <= mergeBelow {
 		m.mergeUp(&m.t.root, key, 0)
 	}
 }

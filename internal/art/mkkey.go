@@ -174,11 +174,14 @@ func strOfIf[T comparable](str bool, v T) string {
 func (m *Map[T]) build(items []item[T], pathLen int) *header {
 	n := len(items)
 	if n == 1 {
+		ev(evBuildSingleKey, 1)
 		return singleKeyHdr(m.leafFor(&items[0], pathLen))
 	}
 	if h := m.pageOf(items); h != nil {
+		ev(evBuildPage, n)
 		return h
 	}
+	ev(evBuildNode, n)
 	first, last := items[0].rest, items[n-1].rest
 	end := swar.Lcp(first, last)
 	nn := newNode(kN5, end)
@@ -238,6 +241,7 @@ func (m *Map[T]) pageItems(n *header) []item[T] {
 // pathLen; if both fit one page, the page is returned.
 func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 	if !m.mk || l.isValueOverflow() || l.n != 1 {
+		ev(evPairNo, 1)
 		return nil
 	}
 	rests := [][]byte{l.from(pathLen), key[pathLen:]}
@@ -253,8 +257,10 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 			vals[0], vals[1] = vals[1], vals[0]
 		}
 		if p := mkpage.BuildStrings(rests, vals); p != nil {
+			ev(evPair, 2)
 			return mkStrHdr(p)
 		}
+		ev(evPairNo, 1)
 		return nil
 	}
 	vals := []T{asFixed(l).Values[T]()[0], m.cur}
@@ -262,8 +268,10 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 		vals[0], vals[1] = vals[1], vals[0]
 	}
 	if p := mkpage.BuildFixedOf(rests, vals); p != nil {
+		ev(evPair, 2)
 		return mkFixHdr(p)
 	}
+	ev(evPairNo, 1)
 	return nil
 }
 
@@ -289,10 +297,12 @@ func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **heade
 	}
 	switch res {
 	case mkpage.Added:
+		ev(evAdded, 1)
 		*loc = q
 		m.t.size++
 	case mkpage.Differs: // the entry gets a second value
 		items := m.pageItems(n)
+		ev(evPromote, len(items))
 		for i := range items {
 			if bytes.Equal(items[i].rest, rest) {
 				items[i].multi = []T{items[i].val, m.cur}
@@ -300,7 +310,9 @@ func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **heade
 		}
 		*loc = m.build(items, pathLen)
 	case mkpage.Full: // the page bursts
-		*loc = m.build(m.itemsWithNew(n, rest), pathLen)
+		items := m.itemsWithNew(n, rest)
+		ev(evBurst, len(items)-1)
+		*loc = m.build(items, pathLen)
 		m.t.size++
 	}
 	return nil
@@ -339,6 +351,7 @@ func (m *Map[T]) outside(loc **header, n *header, key []byte, pathLen, mis int) 
 	if q == nil {
 		return m.abovePage(loc, n, key, pathLen, mis)
 	}
+	ev(evWiden, 1)
 	*loc = q
 	m.t.size++
 	return nil
@@ -350,6 +363,7 @@ func (m *Map[T]) outside(loc **header, n *header, key []byte, pathLen, mis int) 
 func (m *Map[T]) abovePage(loc **header, n *header, key []byte, pathLen, mis int) **header {
 	rest := key[pathLen:]
 	var b byte
+	ev(evAbove, 1)
 	if m.flat == 3 {
 		p := asMKStr(n)
 		b = p.CP()[mis]
@@ -393,10 +407,10 @@ func (m *Map[T]) pageEach(n *header, pathLen int, key []byte, yield func(T) bool
 }
 
 // pageRemove removes the entry of key from multi-key page n, whose keys begin at
-// pathLen, if it has the value v (any value if all is set). It reports whether it
-// removed the entry. A page left with one entry becomes a single-key page, and a page that
-// shrinks takes a smaller object.
-func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) bool {
+// pathLen, if it has the value v (any value if all is set). It returns the number of entries
+// the page has left, or 0 if it removed nothing. A page left with one entry becomes a
+// single-key page, and a page that shrinks takes a smaller object.
+func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) int {
 	rest := key[pathLen:]
 	var q *header
 	var left int
@@ -406,13 +420,13 @@ func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) b
 		if all {
 			got, ok := p.Get(rest)
 			if !ok {
-				return false
+				return 0
 			}
 			val = got
 		}
 		r, ok := p.Remove(rest, val)
 		if !ok {
-			return false
+			return 0
 		}
 		q, left = mkStrHdr(r), r.Len()
 	} else {
@@ -420,24 +434,27 @@ func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) b
 		if all {
 			got, ok := p.Get[T](rest)
 			if !ok {
-				return false
+				return 0
 			}
 			v = got
 		}
 		r, ok := p.Remove(rest, v)
 		if !ok {
-			return false
+			return 0
 		}
 		q, left = mkFixHdr(r), r.Len()
 	}
 	m.t.size--
+	ev(evPageRemove, left)
 	switch {
 	case left == 1:
+		ev(evToSingleKey, 1)
 		*m.t.findSlot(key) = singleKeyHdr(m.leafFor(&m.pageItems(q)[0], pathLen))
 	case q != n:
+		ev(evShrink, left)
 		*m.t.findSlot(key) = q
 	}
-	return true
+	return left
 }
 
 // rekeyPage is rekeySK and rekeyFixed for multi-key page l, which moves up to
@@ -450,11 +467,13 @@ func (m *Map[T]) rekeyPage(l *singleKeyHead, pre []byte, b, pathLen int) *single
 		if q := asMKStr(h).Prepend(front); q != nil {
 			return asSingleKey(mkStrHdr(q))
 		}
+		ev(evPrependNo, 1)
 		return nil
 	}
 	if q := asMKFix(h).Prepend[T](front); q != nil {
 		return asSingleKey(mkFixHdr(q))
 	}
+	ev(evPrependNo, 1)
 	return nil
 }
 
@@ -522,6 +541,14 @@ const (
 	mergeLimit    = 64
 	mergeChildren = 12
 )
+
+// mergeBelow is how few entries a page may have left after the removal of one of its entries
+// for the merge of the nodes above it to be tried. Pages in use hold some ten entries and
+// their siblings as many, so that nearly every try fails (96 % in the benchmark's churn of
+// street names, docs/redesign/step4-probe.md); the page that is nearly empty is where
+// a merge can succeed. In the churn, trying only then took a third off the time per
+// operation, and a tree that had half of its keys removed value by value took 3 % more memory.
+const mergeBelow = 2
 
 // mergeFits reports whether the children of byte node n, which has prefix pre, are all pages
 // that hold single-value entries and whose entries fit one page together, without building
@@ -591,6 +618,7 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	}
 	var buf [prefixBuf]byte
 	pre := appendPrefix(buf[:0], n)
+	ev(evMergeTry, int(n.count))
 	if !m.mergeFits(n, pre) {
 		return false
 	}
@@ -626,6 +654,7 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	if h == nil { // the sizes said it fits; the page's own limits (a remainder or a value too long) say no
 		return false
 	}
+	ev(evMergeOK, len(items))
 	*loc = h
 	return true
 }
