@@ -223,6 +223,8 @@ the comments and test names of the string map. Names to the user first, then one
 `string -> {uint64}`, `string -> {*T}`, `uint64 -> {*T}`, each measured as in 3.3 (`u64` keys at 4K,
 16K, 256K and a 1M spot check on the PC).
 
+**3.5 measured 2026-10-05 on the PC** ([step3-tree-results.md](step3-tree-results.md)): predictions hold; gate 3 not met for memory of `*T` with one value per key and for credo 1 with one value per key (both known causes, step 4); M1 not available.
+
 ### Gate 3 (decided 2026-10-04: credo 1 hard, the rest reported)
 
 - **Hard:** credo 1 for the four cases, multi and unique, every size measured: `Ordered` beats

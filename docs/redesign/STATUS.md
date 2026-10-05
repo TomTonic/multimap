@@ -1,5 +1,11 @@
 # Status
 
+## 2026-10-05: step 3.5 measured on the PC ([results](step3-tree-results.md)); gate 3 not met in two places
+
+- 18 runs (10:17 to 12:04): `node-layout` and the tree before 3.5 as references. Memory as predicted (`uint64` real 90 and 108 B per entry, one value 67; `*T` real 90 and 108). Real maps: credo 1 met in every cell against `btree-sets` (churn 1.26 at the lowest), speed 0.85 to 0.99 of `node-layout`, no cell below 0.70, 0.93 to 1.06 of the tree before 3.5.
+- **Not met:** memory above `node-layout` (equal for `uint64` street; +1 to +5 % for `dirs` and real `*T`, **+13 to +18 % for `*T` with one value per key**, the 32-byte class) and credo 1 for one value per key (ranges 0.19 to 0.57 of `btree-map`). Against the tree before 3.5 the `uint64` single-value maps lose their multi-key pages (memory 67 against 40, scans 0.15 to 0.48): that is step 4.
+- Open: the 1 to 4 bytes and 3 to 17 % against `node-layout` are not traced; `hashed` was not in the runs; no M1 data.
+
 ## 2026-10-05: step 3.5.5 done, step 3.5 complete: no flat leaf, typed leaf or `vset` left in `internal/art`
 
 - Every map holds an entry in a single-key page (`skpage.Page` for strings, `skpage.Fixed` for `uint64`-like and one-pointer values) or in a value overflow with a `Set3[T]`; the types without a page (an interface, a struct with a string, more than 16 bytes)
