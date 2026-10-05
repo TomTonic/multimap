@@ -34,6 +34,24 @@ Words as in [GLOSSARY.md](GLOSSARY.md). Code: `internal/mkpage` (`page.go`: `Pag
    the page is not in the cache) per lookup that now finds its page together with its neighbours. The weak spot stays small maps and absent keys in full pages, as in step3-layout.md; the pages of 20 entries and up are where the linear walk
    shows (45 ns). Whether a first-byte filter (a byte per entry in the head) pays is a question for the tree measurement, not for this step.
 
+## The likely numbers of entries (the user's question after 4.1)
+
+The 255 (really 170) entries are a bound of the head byte that no data comes near: in the model of `street` with one value 90 % of the pages hold 16 entries or fewer, the average is 6.5 (7.1 with `uint64`), the largest 29.
+What would a limit that fits the likely numbers cost? `skmodel -multi -mkmaxn N` (a page with more entries bursts) and `-mkgrid` (the largest class), bytes an entry, one value per entry, model:
+
+| limit | `street`, strings | `street`, `uint64` | `dirs`, strings | `dirs`, `uint64` |
+|---|--:|--:|--:|--:|
+| none (512 bytes) | 30.9 | 26.9 | 50.3 | 39.5 |
+| at most 24 entries | 31.2 (+1 %) | 27.8 (+3 %) | 50.3 | 39.6 |
+| at most 16 entries | 33.4 (+8 %) | 29.9 (+11 %) | 50.7 | 40.5 |
+| at most 12 entries | 35.1 (+14 %) | 31.7 (+18 %) | 51.9 | 42.0 |
+| largest class 384 | 32.5 (+5 %) | 28.3 (+5 %) | 52.0 | 40.7 |
+| largest class 256 | 34.8 (+13 %) | 30.4 (+13 %) | 55.1 | 42.6 |
+
+So the cost of the walk and of the shift (about 2 ns an entry for a lookup, a memmove of at most 512 bytes for an insert) can be bounded at 24 entries for 1 to 3 % of memory on `street` and nothing on `dirs`, but not much lower: at 16 the pages burst into more, smaller ones
+and the nodes above them grow (`street`: 3.7 to 5.0 bytes an entry). Nothing in the layout depends on 255, and a head of two bytes (n and cpl in one) would save one byte a page, 0.15 bytes an entry. **No change now**; the cap of 24 is a free
+option for 4.2 if the tree measurement shows the walk in the profile.
+
 ## Not done / next
 
 - The pointer page (`*T`) is step 4.3. `Skip` and `Prepend` have no allocation-free path for a class change; `Prepend` copies once.

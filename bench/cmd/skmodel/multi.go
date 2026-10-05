@@ -21,6 +21,7 @@ import (
 // single-key page, and the subtree above it cannot be a multi-key page.
 
 var multiF = flag.Bool("multi", false, "model the multi-key page: the tree with multi-key pages against the tree with single-key pages only")
+var mkMaxN = flag.Int("mkmaxn", 255, "most entries of a multi-key page (the model bursts a page that has more)")
 var mkGridF = flag.String("mkgrid", "128,256,384,512", "size classes of the multi-key page")
 
 type mkModel struct {
@@ -93,7 +94,7 @@ func (m *mkModel) build(lo, hi, d int) {
 		m.single(lo, len(m.es[lo].key)-d)
 		return
 	}
-	if m.usePages && m.allSingle(lo, hi) {
+	if m.usePages && hi-lo <= *mkMaxN && m.allSingle(lo, hi) {
 		if size, _ := m.mkSize(lo, hi, d); size <= m.mkClasses[len(m.mkClasses)-1] {
 			class := classFor(m.mkClasses, size)
 			m.mkPages++
