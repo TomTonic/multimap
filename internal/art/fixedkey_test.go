@@ -42,10 +42,10 @@ func TestFixedKeys(t *testing.T) {
 				if !slices.Equal(got, want) {
 					t.Fatalf("key holds %v, want %v", got, want)
 				}
-				if len(want) == 0 {
+				if len(want) < 2 { // an entry with one value may be in a multi-key page
 					return
 				}
-				switch l := m.t.find(key); {
+				switch l := m.t.findLeaf(key); {
 				case l.isValueOverflow() && pageable && !removing && len(want) <= capLargest:
 					t.Fatalf("a value overflow with %d values, which a page holds", len(want))
 				case l.isValueOverflow() && pageable && removing && skpage.BackFits(rem, 8*len(want)):
@@ -87,20 +87,22 @@ func TestFixedKeyMovesUp(t *testing.T) {
 		t.Run(fmt.Sprintf("%d values", n), func(t *testing.T) {
 			var m Map[uint64]
 			k1, k2, k3 := append(slices.Clip(common), '1'), append(slices.Clip(common), '2'), append(slices.Clip(common), '3')
-			m.Add(k2, 7) // k2 and k3 make the node holding the common part
-			m.Add(k3, 7)
+			for _, k := range [][]byte{k2, k3} { // k2 and k3 make the node holding the common part; with two values they are single-key pages
+				m.Add(k, 7)
+				m.Add(k, 8)
+			}
 			var want []uint64
 			for v := range uint64(n) {
 				m.Add(k1, v)
 				want = append(want, v)
 			}
-			if l := m.t.find(k1); len(l.stored()) != 0 {
+			if l := m.t.findLeaf(k1); len(l.stored()) != 0 {
 				t.Fatalf("leaf below the common part holds %q, want nothing", l.stored())
 			}
 			m.RemoveKey(k2)
 			m.RemoveKey(k3)
 			checkInvariants(t, &m.t)
-			l := m.t.find(k1)
+			l := m.t.findLeaf(k1)
 			got := valuesOf(&m, k1)
 			slices.Sort(got)
 			if !slices.Equal(got, want) || l.base() != 0 || !bytes.Equal(l.stored(), k1) {

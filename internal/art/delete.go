@@ -24,8 +24,10 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc) bool {
 	if n == nil {
 		return false
 	}
-	if isSingleKey(n.objType) {
-		if !asSingleKey(n).matches(key) {
+	if isPage(n.objType) {
+		// A multi-key page holds no entry that this removes: the typed map removes
+		// the entries of a page itself (mkkey.go).
+		if !isSingleKey(n.objType) || !asSingleKey(n).matches(key) {
 			return false
 		}
 		*loc = nil
@@ -62,7 +64,8 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc) bool {
 // collapse replaces a byte node n at pathLen, whose common prefix ends at d,
 // that no longer branches: without children it becomes its end page, and with
 // a single child and no end page it merges into that child, whose common prefix
-// grows by n's common prefix plus the child's byte. key is the key just deleted
+// grows by n's common prefix plus the child's byte; a multi-key page that cannot take
+// those bytes stays below n, which then has one child. key is the key just deleted
 // below n, which agrees with every key below n up to d. It returns what should
 // stand in n's place.
 func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
@@ -75,8 +78,14 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 		return n
 	}
 	b, c := onlyChild(n)
-	if isSingleKey(c.objType) {
+	if isPage(c.objType) {
 		l := asSingleKey(c)
+		if !isSingleKey(c.objType) { // a multi-key page takes the bytes in front of its common prefix, if they fit
+			if q := rk(l, key[:d], b, pathLen); q != nil {
+				return singleKeyHdr(q)
+			}
+			return n
+		}
 		if l.base() <= pathLen {
 			return c
 		}

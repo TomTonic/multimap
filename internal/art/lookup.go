@@ -19,29 +19,32 @@ func (t *Tree) Len() int { return t.size }
 // Clear removes all keys.
 func (t *Tree) Clear() { t.root, t.size = nil, 0 }
 
-// find returns the leaf of key, or nil.
+// find returns where the descent for key ends: a single-key page whose key is key; a
+// multi-key page, which holds the key if it holds it at all (pathLen is where the
+// keys of that page begin: the typed map asks the page); or nil if key is not in the
+// tree.
 //
 // This is the hot path of every point operation. It is one loop over the
 // levels with every node search written out, so that the search helpers are
 // inlined and no call is made per level; that is why it is longer than the
 // project's usual function size.
-func (t *Tree) find(key []byte) *singleKeyHead {
+func (t *Tree) find(key []byte) (*header, int) {
 	n := t.root
 	pathLen := 0
 	for n != nil {
-		if isSingleKey(n.objType) {
-			// The nodes have checked the key up to pathLen; the leaf holds the
-			// rest.
-			if l := asSingleKey(n); l.matches(key) {
-				return l
+		if isPage(n.objType) {
+			// The nodes have checked the key up to pathLen; a single-key page holds
+			// the rest.
+			if !isSingleKey(n.objType) || asSingleKey(n).matches(key) {
+				return n, pathLen
 			}
-			return nil
+			return nil, 0
 		}
 		if n.plen != 0 {
 			pl := int(n.plen)
 			if !swar.Match8(&n.prefix, pl, key, pathLen) {
 				if pl = longMatch(n, key, pathLen); pl < 0 {
-					return nil
+					return nil, 0
 				}
 			}
 			pathLen += pl
@@ -49,7 +52,7 @@ func (t *Tree) find(key []byte) *singleKeyHead {
 		if pathLen == len(key) {
 			t := endPageOf(n)
 			if t == nil {
-				return nil
+				return nil, 0
 			}
 			n = singleKeyHdr(t)
 			continue
@@ -61,7 +64,7 @@ func (t *Tree) find(key []byte) *singleKeyHead {
 			x := asN5(n)
 			i := swar.Index8(swar.Word(x.keys[:]), b)
 			if i >= int(x.count) {
-				return nil
+				return nil, 0
 			}
 			n = childAt(&x.child[0], i) // i < count <= 5
 		case kN12:
@@ -71,35 +74,44 @@ func (t *Tree) find(key []byte) *singleKeyHead {
 				i = 8 + swar.Index8(swar.Word(x.keys[8:16]), b)
 			}
 			if i >= int(x.count) {
-				return nil
+				return nil, 0
 			}
 			n = childAt(&x.child[0], i) // i < count <= 12
 		case kN26:
 			x := asN26(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
 		case kN58:
 			x := asN58(n)
 			if !swar.Has(&x.bitmap, b) {
-				return nil
+				return nil, 0
 			}
 			n = x.child[swar.Rank(&x.bitmap, b)]
 		default:
 			n = asN256(n).child[b]
 		}
 	}
+	return nil, 0
+}
+
+// findLeaf returns the single-key page of key, or nil if the key has none (the tree
+// does not hold it, or a multi-key page holds it).
+func (t *Tree) findLeaf(key []byte) *singleKeyHead {
+	if n, _ := t.find(key); n != nil && isSingleKey(n.objType) {
+		return asSingleKey(n)
+	}
 	return nil
 }
 
-// findSlot returns the slot that holds the leaf of key, which must be in the
-// tree and have a leaf. Writers use it to replace a leaf they have found.
+// findSlot returns the slot that holds the page of key, which must be in the
+// tree and have a page. Writers use it to replace a leaf they have found.
 // Since the key is present, its common prefixes need no checking: the descent only
 // follows them.
 func (t *Tree) findSlot(key []byte) **header {
 	loc, pathLen := &t.root, 0
-	for !isSingleKey((*loc).objType) {
+	for !isPage((*loc).objType) {
 		n := *loc
 		pathLen += n.prefixLen()
 		if pathLen == len(key) {

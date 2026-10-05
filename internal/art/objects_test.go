@@ -206,7 +206,11 @@ func TestObjects(t *testing.T) {
 			if o.Label == "" || o.Size < 16 || o.Size%8 != 0 {
 				t.Errorf("%s: object %+v is not an object of the tree", name, o)
 			}
-			if single := strings.HasSuffix(o.Label, "leaf") || o.Label == "single-key page" || o.Label == "value overflow"; single != (o.Values > 0) || !single && o.Remainder != 0 {
+			if o.Label == "multi-key page" { // many keys with one value each, and a common prefix
+				if o.Keys < 2 || o.Values != o.Keys {
+					t.Errorf("%s: object %+v: a multi-key page holds two keys at least, with one value each", name, o)
+				}
+			} else if single := strings.HasSuffix(o.Label, "leaf") || o.Label == "single-key page" || o.Label == "value overflow"; single != (o.Values > 0) || !single && o.Remainder != 0 {
 				t.Errorf("%s: object %+v: only a single-key page has values and a remainder", name, o)
 			}
 		})
@@ -222,6 +226,8 @@ func TestObjects(t *testing.T) {
 		fill(t, name+"/flat", keys, true, func(k []byte, v uint64) { flat.Add(k, v) }, flat.Objects, flat.Len)
 		fill(t, name+"/pointers", keys, true, func(k []byte, v uint64) { ptrMap.Add(k, &rec{id: v}) }, ptrMap.Objects, ptrMap.Len)
 		fill(t, name+"/sets", keys, true, func(k []byte, v uint64) { sets.Add(k, v) }, sets.Objects, sets.Len)
+		var multiU Map[uint64]
+		fill(t, name+"/multi-key pages", keys, false, func(k []byte, v uint64) { multiU.Add(k, v) }, multiU.Objects, multiU.Len)
 		var strPages Map[string]
 		fill(t, name+"/single-key pages", keys, true, func(k []byte, v uint64) { strPages.Add(k, str(v)) }, strPages.Objects, strPages.Len)
 	}

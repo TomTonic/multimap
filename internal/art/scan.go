@@ -20,9 +20,14 @@ type Bounds struct {
 // returns false. leafTail is the offset of the last byte of a leaf, which
 // the scan touches ahead (see touchChildren). If kb is not nil, kb.key holds
 // the key of the leaf fn is called for.
-func (t *Tree) scan(b *Bounds, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool) {
-	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, kb, fn)
+func (t *Tree) scan(b *Bounds, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool, pg pageFunc) {
+	scanRange(t.root, b, 0, b.HasFrom, b.HasTo, leafTail, kb, fn, pg)
 }
+
+// pageFunc is called by a scan for a multi-key page whose keys begin at pathLen; lo and
+// hi say whether the page lies on the path of the lower and the upper bound. It reports
+// false once the scan is over.
+type pageFunc func(p *header, pathLen int, lo, hi bool) bool
 
 // keyBuf assembles the keys of a scan that reports them: a leaf holds only
 // the end of its key, the rest is the path to it.
@@ -43,12 +48,15 @@ func (kb *keyBuf) reach(l *singleKeyHead) {
 // are checked structurally: a node's path and child bytes are compared with a
 // bound only while on its path, so a subtree strictly inside the range is
 // visited without reading a single key.
-func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool) bool {
+func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool, pg pageFunc) bool {
 	if n == nil {
 		return true
 	}
-	if isSingleKey(n.objType) {
-		return scanLeaf(asSingleKey(n), b, pathLen, lo, hi, kb, fn)
+	if isPage(n.objType) {
+		if isSingleKey(n.objType) {
+			return scanLeaf(asSingleKey(n), b, pathLen, lo, hi, kb, fn)
+		}
+		return pg(n, pathLen, lo, hi)
 	}
 	pl := n.prefixLen()
 	if (lo || hi) && pl > 0 {
@@ -102,7 +110,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 		hiB = b.To[pathLen]
 	}
 	touchChildren(n, loB, hiB, leafTail)
-	if !scanChildren(n, b, pathLen, lo, hi, loB, hiB, leafTail, kb, fn) {
+	if !scanChildren(n, b, pathLen, lo, hi, loB, hiB, leafTail, kb, fn, pg) {
 		return false
 	}
 	return !hi // on To's path, everything after the child for hiB is above To
@@ -130,12 +138,12 @@ func scanLeaf(l *singleKeyHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf,
 
 // scanChildren visits the children with byte in [loB, hiB] in order. Only the
 // child for loB stays on From's path, only the one for hiB on To's.
-func scanChildren(n *header, b *Bounds, pathLen int, lo, hi bool, loB, hiB byte, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool) bool {
+func scanChildren(n *header, b *Bounds, pathLen int, lo, hi bool, loB, hiB byte, leafTail uintptr, kb *keyBuf, fn func(*singleKeyHead) bool, pg pageFunc) bool {
 	visit := func(c *header, k byte) bool {
 		if kb != nil {
 			kb.path = append(kb.path[:pathLen], k)
 		}
-		return scanRange(c, b, pathLen+1, lo && k == loB, hi && k == hiB, leafTail, kb, fn)
+		return scanRange(c, b, pathLen+1, lo && k == loB, hi && k == hiB, leafTail, kb, fn, pg)
 	}
 	switch n.objType {
 	case kN26, kN58:
@@ -202,7 +210,7 @@ func touchChildren(n *header, loB, hiB byte, leafTail uintptr) {
 	var acc uint8
 	touch := func(c *header) {
 		acc += uint8(c.objType)
-		if isSingleKey(c.objType) {
+		if isPage(c.objType) {
 			acc += *(*uint8)(unsafe.Add(unsafe.Pointer(c), leafTail))
 		}
 	}

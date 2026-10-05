@@ -3,6 +3,7 @@ package art
 import (
 	"unsafe"
 
+	"github.com/TomTonic/multimap/internal/mkpage"
 	"github.com/TomTonic/multimap/internal/skpage"
 )
 
@@ -15,6 +16,8 @@ import (
 type Map[T comparable] struct {
 	t    Tree
 	flat int8 // 1: single-key pages of fixed-size values (skpage.Fixed), 3: single-key pages of strings (skpage.Page), -1: value overflows only, 0: not decided yet
+	mk   bool // entries with one value share multi-key pages (mkkey.go): strings and pointer-free fixed-size values
+	cur  T    // the value of the Add in progress, for the pager methods of mkkey.go
 }
 
 // setPrepend makes value overflow l hold its key from pathLen on in place when the
@@ -46,6 +49,7 @@ func (m *Map[T]) decide() {
 	default:
 		m.flat = -1
 	}
+	m.mk = m.flat == 3 || (m.flat == 1 && mkpage.Supported[T]())
 }
 
 // Len returns the number of keys.
@@ -69,8 +73,17 @@ func (m *Map[T]) Add(key []byte, v T) {
 	case 3:
 		nl = newSK
 	}
-	loc := m.t.upsert(key, nl)
-	m.addToLeaf(loc, asSingleKey(*loc), key, v)
+	if m.mk {
+		m.cur = v
+	}
+	loc := m.t.upsert(key, nl, m)
+	if m.mk {
+		var zero T
+		m.cur = zero
+	}
+	if loc != nil {
+		m.addToLeaf(loc, asSingleKey(*loc), key, v)
+	}
 }
 
 // addToLeaf adds v to the values of leaf l of key, which sits in slot loc.
@@ -91,13 +104,27 @@ func (m *Map[T]) addToLeaf(loc **header, l *singleKeyHead, key []byte, v T) {
 // It finds the leaf as a lookup does and looks for the leaf's slot only when
 // the leaf has to move into a smaller one.
 func (m *Map[T]) Remove(key []byte, v T) {
+	before := m.t.size
+	m.removeValue(key, v)
+	if m.mk && m.t.size != before {
+		m.mergeUp(&m.t.root, key, 0)
+	}
+}
+
+// removeValue is Remove without the merge of the nodes above a removed key.
+func (m *Map[T]) removeValue(key []byte, v T) {
 	// Chosen here, as in Add: a function value that does not escape stays on
 	// the stack.
-	rk := m.rekeyFunc()
-	l := m.t.find(key)
-	if l == nil {
+	rk := m.rekey
+	n, pathLen := m.t.find(key)
+	if n == nil {
 		return
 	}
+	if isMultiKey(n.objType) {
+		m.pageRemove(n, pathLen, key, v, false)
+		return
+	}
+	l := asSingleKey(n)
 	if !l.isValueOverflow() {
 		if m.flat == 1 {
 			removeFixed(&m.t, l, key, v, rk)
@@ -124,30 +151,54 @@ func (m *Map[T]) Remove(key []byte, v T) {
 
 // RemoveKey removes key and all its values. An absent key is ignored.
 func (m *Map[T]) RemoveKey(key []byte) {
-	m.t.remove(key, m.rekeyFunc())
+	n, pathLen := m.t.find(key)
+	switch {
+	case n == nil:
+		return
+	case isMultiKey(n.objType):
+		var zero T
+		m.pageRemove(n, pathLen, key, zero, true)
+	default:
+		m.t.remove(key, m.rekey)
+	}
+	if m.mk {
+		m.mergeUp(&m.t.root, key, 0)
+	}
 }
 
-// rekeyFunc returns the map's rekeyFunc: the one for its type of leaf.
-func (m *Map[T]) rekeyFunc() rekeyFunc {
-	switch m.flat {
-	case 1:
-		return rekeyFixed[T]
-	case 3:
-		return rekeySK
+// rekey is the map's rekeyFunc: the one for its type of leaf, which also moves a
+// multi-key page up.
+func (m *Map[T]) rekey(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
+	switch {
+	case isMultiKey(l.objType):
+		return m.rekeyPage(l, pre, b, pathLen)
+	case m.flat == 1:
+		return rekeyFixed[T](l, pre, b, pathLen)
+	case m.flat == 3:
+		return rekeySK(l, pre, b, pathLen)
 	}
-	return rekeyOverflow[T]
+	return rekeyOverflow[T](l, pre, b, pathLen)
 }
 
 // Has reports whether key holds any values.
 func (m *Map[T]) Has(key []byte) bool {
-	return m.t.find(key) != nil
+	n, pathLen := m.t.find(key)
+	if n != nil && isMultiKey(n.objType) {
+		return m.pageHas(n, pathLen, key)
+	}
+	return n != nil
 }
 
 // Each calls yield for every value of key, in unspecified order, until it
 // returns false. yield must not modify the map.
 func (m *Map[T]) Each(key []byte, yield func(T) bool) {
-	if l := m.t.find(key); l != nil {
-		eachValue(l, m.flat, yield)
+	n, pathLen := m.t.find(key)
+	switch {
+	case n == nil:
+	case isMultiKey(n.objType):
+		m.pageEach(n, pathLen, key, yield)
+	default:
+		eachValue(asSingleKey(n), m.flat, yield)
 	}
 }
 
@@ -175,11 +226,15 @@ const leafTail = 32 - 1
 // modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
 	var kb keyBuf
-	m.t.scan(b, leafTail, &kb, func(*singleKeyHead) bool { return fn(kb.key) })
+	m.t.scan(b, leafTail, &kb, func(*singleKeyHead) bool { return fn(kb.key) },
+		func(p *header, pathLen int, lo, hi bool) bool { return m.scanPage(p, pathLen, b, lo, hi, &kb, fn, nil) })
 }
 
 // RangeValues calls yield for every value of every key within b, key by key
 // in ascending key order, until yield returns false.
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
-	m.t.scan(b, leafTail, nil, func(l *singleKeyHead) bool { return eachValue(l, m.flat, yield) })
+	m.t.scan(b, leafTail, nil, func(l *singleKeyHead) bool { return eachValue(l, m.flat, yield) },
+		func(p *header, pathLen int, lo, hi bool) bool {
+			return m.scanPage(p, pathLen, b, lo, hi, nil, nil, yield)
+		})
 }

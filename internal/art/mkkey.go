@@ -1,0 +1,577 @@
+package art
+
+import (
+	"bytes"
+	"slices"
+	"unsafe"
+
+	set3 "github.com/TomTonic/Set3"
+	"github.com/TomTonic/multimap/internal/mkpage"
+	"github.com/TomTonic/multimap/internal/skpage"
+	"github.com/TomTonic/multimap/internal/swar"
+)
+
+// In a map of strings or of pointer-free fixed-size values (Map.mk), entries with one
+// value share a multi-key page (internal/mkpage, docs/redesign/step4-mksv-design.md):
+// the entries of a subtree whose keys all have one value each and whose content fits
+// 512 bytes, in key order, with the bytes their keys share stored once. A page hangs
+// below a byte node like a single-key page and holds its keys from the path length
+// of its place on; when a node is put above it or goes away, it loses or gains the
+// front bytes of its common prefix (Skip, Prepend), so that its keys always begin
+// at its path length.
+//
+// The tree builds a page where two single-value entries meet (pair), adds entries
+// to it (reach), and builds the subtree again when a page is full (burst) or an
+// entry in it gets a second value (promote): build, from the entries in key order,
+// makes a page of the entries that fit one, else a byte node on the next byte in
+// which they differ and a subtree for each byte. An entry with several values is a
+// single-key page, so no page ever holds one.
+
+func init() { mkpage.TypeBase = uint8(kMultiKey) }
+
+func asMKStr(h *header) *mkpage.Page   { return (*mkpage.Page)(unsafe.Pointer(h)) }
+func asMKFix(h *header) *mkpage.Fixed  { return (*mkpage.Fixed)(unsafe.Pointer(h)) }
+func mkStrHdr(p *mkpage.Page) *header  { return (*header)(unsafe.Pointer(p)) }
+func mkFixHdr(p *mkpage.Fixed) *header { return (*header)(unsafe.Pointer(p)) }
+func strOf[T comparable](v T) string   { return *(*string)(unsafe.Pointer(&v)) }
+func fromStr[T comparable](s string) T { return *(*T)(unsafe.Pointer(&s)) }
+func asStrSlice[T comparable](v []T) [][]byte {
+	out := make([][]byte, len(v))
+	for i := range v {
+		out[i] = view(strOf(v[i]))
+	}
+	return out
+}
+
+// item is an entry of a subtree that build turns into pages and nodes: its key from
+// the path length of the subtree on, its value, or all its values if it has
+// several.
+type item[T comparable] struct {
+	rest  []byte
+	val   T
+	multi []T // the values if there are several, else nil
+}
+
+// values returns the values of the entry.
+func (it *item[T]) values() []T {
+	if it.multi != nil {
+		return it.multi
+	}
+	return []T{it.val}
+}
+
+// newLeaf allocates an empty single-key page, or a value overflow, that holds key
+// from base on; the first value is added by addToLeaf. Only a map with multi-key
+// pages needs it, which holds strings or fixed-size values.
+func (m *Map[T]) newLeaf(key []byte, base int) *singleKeyHead {
+	if m.flat == 1 {
+		return newFixedLeaf[T](key, base)
+	}
+	return newSK(key, base)
+}
+
+// leafFor returns the single-key page, or the value overflow, of the entry it, whose
+// key starts at base.
+func (m *Map[T]) leafFor(it *item[T], base int) *singleKeyHead {
+	kl := base + len(it.rest)
+	if it.multi == nil {
+		switch m.flat {
+		case 3:
+			if p := skpage.New(it.rest, kl, view(strOf(it.val))); p != nil {
+				return skHead(p)
+			}
+		case 1:
+			if p := skpage.NewFixed(it.rest, kl, it.val); p != nil {
+				return fixedHead(p)
+			}
+		}
+	} else {
+		switch m.flat {
+		case 3:
+			if p := skpage.Build(it.rest, kl, asStrSlice(it.multi)); p != nil {
+				return skHead(p)
+			}
+		case 1:
+			if p := skpage.BuildFixed(it.rest, kl, it.multi); p != nil {
+				return fixedHead(p)
+			}
+		}
+	}
+	key := make([]byte, kl) // the value overflow holds the key from base on only
+	copy(key[base:], it.rest)
+	l := newValueOverflow(key, base, set3.EmptyWithCapacity[T](uint32(2*len(it.values()))))
+	for _, v := range it.values() {
+		overflowAdd(l, v)
+	}
+	return l
+}
+
+// pageOf returns the multi-key page of the entries, or nil if they do not make one: one of them
+// has several values, or they do not fit.
+func (m *Map[T]) pageOf(items []item[T]) *header {
+	n := len(items)
+	for i := range items {
+		if items[i].multi != nil {
+			return nil
+		}
+	}
+	cp := min(swar.Lcp(items[0].rest, items[n-1].rest), mkpage.MaxPrefix)
+	rem, vals := -n*cp, 0
+	for i := range items {
+		rem += len(items[i].rest)
+		vals += len(strOfIf(m.flat == 3, items[i].val))
+	}
+	if m.flat == 3 {
+		if mkpage.NeedStrings(n, cp, rem, vals) > 512 {
+			return nil
+		}
+	} else if mkpage.NeedFixed[T](n, cp, rem) > 512 {
+		return nil
+	}
+	rests := make([][]byte, n)
+	for i := range items {
+		rests[i] = items[i].rest
+	}
+	if m.flat == 3 {
+		vs := make([][]byte, n)
+		for i := range items {
+			vs[i] = view(strOf(items[i].val))
+		}
+		if p := mkpage.BuildStrings(rests, vs); p != nil {
+			return mkStrHdr(p)
+		}
+		return nil
+	}
+	vs := make([]T, n)
+	for i := range items {
+		vs[i] = items[i].val
+	}
+	if p := mkpage.BuildFixed(rests, vs); p != nil {
+		return mkFixHdr(p)
+	}
+	return nil
+}
+
+// strOfIf returns v as a string if str says T is string, else "".
+func strOfIf[T comparable](str bool, v T) string {
+	if str {
+		return strOf(v)
+	}
+	return ""
+}
+
+// build returns the subtree for the entries, which are in key order, all different,
+// and hold their keys from pathLen on: a single-key page for one entry, a multi-key
+// page for entries that fit one, else a byte node on the next byte in which they
+// differ, with a subtree for each byte (the entry whose key ends there is the
+// node's end page). The items' rests are cut as the tree is built.
+func (m *Map[T]) build(items []item[T], pathLen int) *header {
+	n := len(items)
+	if n == 1 {
+		return singleKeyHdr(m.leafFor(&items[0], pathLen))
+	}
+	if h := m.pageOf(items); h != nil {
+		return h
+	}
+	first, last := items[0].rest, items[n-1].rest
+	end := swar.Lcp(first, last)
+	nn := newNode(kN5, end)
+	storePrefix(nn, first[:end])
+	i := 0
+	if len(first) == end { // the first key ends here: the end page of the node
+		items[0].rest = first[end:]
+		nn = setEndPage(nn, m.leafFor(&items[0], pathLen+end))
+		i = 1
+	}
+	for i < n {
+		b := items[i].rest[end]
+		j := i + 1
+		for j < n && items[j].rest[end] == b {
+			j++
+		}
+		for k := i; k < j; k++ {
+			items[k].rest = items[k].rest[end+1:]
+		}
+		nn, _ = addChild(nn, b, m.build(items[i:j], pathLen+end+1))
+		i = j
+	}
+	return nn
+}
+
+// pageItems returns the entries of multi-key page n, with their whole keys from the
+// path length of the page on, in key order, and room for one more.
+func (m *Map[T]) pageItems(n *header) []item[T] {
+	var items []item[T]
+	if m.flat == 3 {
+		p := asMKStr(n)
+		items = make([]item[T], 0, p.Len()+1)
+		cp := p.CP()
+		p.Each(func(rem, val []byte) bool {
+			items = append(items, item[T]{rest: append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), val: fromStr[T](string(val))})
+			return true
+		})
+		return items
+	}
+	p := asMKFix(n)
+	items = make([]item[T], 0, p.Len()+1)
+	cp := p.CP()
+	p.Each(func(rem []byte, v T) bool {
+		items = append(items, item[T]{rest: append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), val: v})
+		return true
+	})
+	return items
+}
+
+// pair implements pager: single-key page l, one value, and a new key meet below
+// pathLen; if both fit one page, the page is returned.
+func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
+	if !m.mk || l.isValueOverflow() || l.n != 1 {
+		return nil
+	}
+	rests := [][]byte{l.from(pathLen), key[pathLen:]}
+	swapped := bytes.Compare(rests[0], rests[1]) > 0
+	if swapped {
+		rests[0], rests[1] = rests[1], rests[0]
+	}
+	if m.flat == 3 {
+		var lv []byte
+		asSK(l).Each(func(val []byte) bool { lv = val; return false })
+		vals := [][]byte{lv, view(strOf(m.cur))}
+		if swapped {
+			vals[0], vals[1] = vals[1], vals[0]
+		}
+		if p := mkpage.BuildStrings(rests, vals); p != nil {
+			return mkStrHdr(p)
+		}
+		return nil
+	}
+	vals := []T{asFixed(l).Values[T]()[0], m.cur}
+	if swapped {
+		vals[0], vals[1] = vals[1], vals[0]
+	}
+	if p := mkpage.BuildFixed(rests, vals); p != nil {
+		return mkFixHdr(p)
+	}
+	return nil
+}
+
+// reach implements pager: the descent for key ended at multi-key page n.
+func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **header {
+	rest := key[pathLen:]
+	var q *header
+	var res mkpage.Result
+	if m.flat == 3 {
+		p := asMKStr(n)
+		if mis := p.Match(rest); mis < p.PrefixLen() {
+			return m.outside(loc, n, key, pathLen, mis)
+		}
+		r, x := p.Insert(rest, view(strOf(m.cur)))
+		q, res = mkStrHdr(r), x
+	} else {
+		p := asMKFix(n)
+		if mis := p.Match(rest); mis < p.PrefixLen() {
+			return m.outside(loc, n, key, pathLen, mis)
+		}
+		r, x := p.Insert(rest, m.cur)
+		q, res = mkFixHdr(r), x
+	}
+	switch res {
+	case mkpage.Added:
+		*loc = q
+		m.t.size++
+	case mkpage.Differs: // the entry gets a second value
+		items := m.pageItems(n)
+		for i := range items {
+			if bytes.Equal(items[i].rest, rest) {
+				items[i].multi = []T{items[i].val, m.cur}
+			}
+		}
+		*loc = m.build(items, pathLen)
+	case mkpage.Full: // the page bursts
+		*loc = m.build(m.itemsWithNew(n, rest), pathLen)
+		m.t.size++
+	}
+	return nil
+}
+
+// itemsWithNew returns the entries of multi-key page n and the new entry rest -> cur, in key
+// order.
+func (m *Map[T]) itemsWithNew(n *header, rest []byte) []item[T] {
+	items := m.pageItems(n)
+	at := len(items)
+	for i := range items {
+		if bytes.Compare(items[i].rest, rest) > 0 {
+			at = i
+			break
+		}
+	}
+	items = append(items, item[T]{})
+	copy(items[at+1:], items[at:])
+	items[at] = item[T]{rest: rest, val: m.cur}
+	return items
+}
+
+// outside handles a new key that leaves the common prefix of multi-key page n after mis
+// bytes: if it fits the page together with the page's entries, the page is built again
+// with a shorter common prefix; if not, a byte node goes above the page (abovePage).
+func (m *Map[T]) outside(loc **header, n *header, key []byte, pathLen, mis int) **header {
+	if h := m.pageOf(m.itemsWithNew(n, key[pathLen:])); h != nil {
+		*loc = h
+		m.t.size++
+		return nil
+	}
+	return m.abovePage(loc, n, key, pathLen, mis)
+}
+
+// abovePage puts a byte node above multi-key page n, whose common prefix key leaves after
+// mis bytes: the node takes those bytes, the page the next one as its byte and loses them,
+// and the new key gets a single-key page below the node. It returns that page's slot.
+func (m *Map[T]) abovePage(loc **header, n *header, key []byte, pathLen, mis int) **header {
+	rest := key[pathLen:]
+	var b byte
+	if m.flat == 3 {
+		p := asMKStr(n)
+		b = p.CP()[mis]
+		p.Skip(mis + 1)
+	} else {
+		p := asMKFix(n)
+		b = p.CP()[mis]
+		p.Skip[T](mis + 1)
+	}
+	nn := newNode(kN5, mis)
+	storePrefix(nn, rest[:mis])
+	h, _ := addChild(nn, b, n)
+	tail := rest[mis:]
+	h, slot := attachAt(h, tail, m.newLeaf(key, pathLen+mis+min(1, len(tail))))
+	*loc = h
+	m.t.size++
+	return slot
+}
+
+// pageHas reports whether multi-key page n holds key, whose keys begin at pathLen.
+func (m *Map[T]) pageHas(n *header, pathLen int, key []byte) bool {
+	if m.flat == 3 {
+		_, ok := asMKStr(n).Get(key[pathLen:])
+		return ok
+	}
+	_, ok := asMKFix(n).Get[T](key[pathLen:])
+	return ok
+}
+
+// pageEach calls yield for the value of key in multi-key page n, if it has one.
+func (m *Map[T]) pageEach(n *header, pathLen int, key []byte, yield func(T) bool) {
+	if m.flat == 3 {
+		if val, ok := asMKStr(n).Get(key[pathLen:]); ok {
+			yield(fromStr[T](string(val)))
+		}
+		return
+	}
+	if v, ok := asMKFix(n).Get[T](key[pathLen:]); ok {
+		yield(v)
+	}
+}
+
+// pageRemove removes the entry of key from multi-key page n, whose keys begin at
+// pathLen, if it has the value v (any value if all is set). It reports whether it
+// removed the entry. A page left with one entry becomes a single-key page, and a page that
+// shrinks takes a smaller object.
+func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) bool {
+	rest := key[pathLen:]
+	var q *header
+	var left int
+	if m.flat == 3 {
+		p := asMKStr(n)
+		val := view(strOf(v))
+		if all {
+			got, ok := p.Get(rest)
+			if !ok {
+				return false
+			}
+			val = got
+		}
+		r, ok := p.Remove(rest, val)
+		if !ok {
+			return false
+		}
+		q, left = mkStrHdr(r), r.Len()
+	} else {
+		p := asMKFix(n)
+		if all {
+			got, ok := p.Get[T](rest)
+			if !ok {
+				return false
+			}
+			v = got
+		}
+		r, ok := p.Remove(rest, v)
+		if !ok {
+			return false
+		}
+		q, left = mkFixHdr(r), r.Len()
+	}
+	m.t.size--
+	switch {
+	case left == 1:
+		*m.t.findSlot(key) = singleKeyHdr(m.leafFor(&m.pageItems(q)[0], pathLen))
+	case q != n:
+		*m.t.findSlot(key) = q
+	}
+	return true
+}
+
+// rekeyPage is rekeySK and rekeyFixed for multi-key page l, which moves up to
+// pathLen: it takes the bytes of pre from there on and b in front of its common
+// prefix. It returns nil if they do not fit.
+func (m *Map[T]) rekeyPage(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
+	front := append(append(make([]byte, 0, len(pre)-pathLen+1), pre[pathLen:]...), byte(b))
+	h := singleKeyHdr(l)
+	if m.flat == 3 {
+		if q := asMKStr(h).Prepend(front); q != nil {
+			return asSingleKey(mkStrHdr(q))
+		}
+		return nil
+	}
+	if q := asMKFix(h).Prepend[T](front); q != nil {
+		return asSingleKey(mkFixHdr(q))
+	}
+	return nil
+}
+
+// cmpParts compares the bytes of a followed by those of b with bound, without joining them.
+func cmpParts(a, b, bound []byte) int {
+	n := min(len(a), len(bound))
+	if c := bytes.Compare(a[:n], bound[:n]); c != 0 {
+		return c
+	}
+	if len(a) > len(bound) {
+		return 1
+	}
+	return bytes.Compare(b, bound[len(a):])
+}
+
+// scanPage visits the entries of multi-key page n, whose keys begin at pathLen, within b:
+// lo and hi say whether the page lies on the path of the lower and the upper bound, as for a
+// leaf. It calls fn with the key (kb must be set) or, if fn is nil, yield with the value, and
+// reports false once the scan is over.
+func (m *Map[T]) scanPage(n *header, pathLen int, b *Bounds, lo, hi bool, kb *keyBuf, fn func(key []byte) bool, yield func(T) bool) bool {
+	over := false
+	visit := func(cp, rem []byte, v T) bool {
+		if lo {
+			if c := cmpParts(cp, rem, b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
+				return true
+			}
+		}
+		if hi {
+			if c := cmpParts(cp, rem, b.To[pathLen:]); c > 0 || (c == 0 && !b.ToIncl) {
+				over = true
+				return false
+			}
+		}
+		if fn != nil {
+			kb.key = append(append(append(kb.key[:0], kb.path[:pathLen]...), cp...), rem...)
+			return fn(kb.key)
+		}
+		return yield(v)
+	}
+	var done bool
+	if m.flat == 3 {
+		p := asMKStr(n)
+		cp := p.CP()
+		done = p.Each(func(rem, val []byte) bool {
+			var v T
+			if fn == nil {
+				v = fromStr[T](string(val))
+			}
+			return visit(cp, rem, v)
+		})
+	} else {
+		p := asMKFix(n)
+		cp := p.CP()
+		done = p.Each(func(rem []byte, v T) bool { return visit(cp, rem, v) })
+	}
+	return done && !over
+}
+
+// mergeLimit is the most entries that tryMerge collects: more cannot fit a page.
+const mergeLimit = 64
+
+// tryMerge replaces the byte node at *loc, whose path begins at pathLen, by one multi-key page
+// if every child is a page that holds single-value entries and the entries together fit one.
+// It reports whether it did. Only a map with multi-key pages calls it.
+func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
+	n := *loc
+	var buf [prefixBuf]byte
+	pre := appendPrefix(buf[:0], n)
+	d := pathLen + len(pre)
+	var items []item[T]
+	ok := true
+	collect := func(b int, c *header) {
+		if !ok || !isPage(c.objType) {
+			ok = false
+			return
+		}
+		front := append(make([]byte, 0, len(pre)+1), pre...)
+		at := d
+		if b >= 0 {
+			front, at = append(front, byte(b)), d+1
+		}
+		if isMultiKey(c.objType) {
+			for _, it := range m.pageItems(c) {
+				it.rest = append(slices.Clone(front), it.rest...)
+				items = append(items, it)
+			}
+		} else {
+			l := asSingleKey(c)
+			if l.isValueOverflow() || l.n != 1 {
+				ok = false
+				return
+			}
+			it := item[T]{rest: append(front, l.from(at)...)}
+			if m.flat == 3 {
+				asSK(l).Each(func(val []byte) bool { it.val = fromStr[T](string(val)); return false })
+			} else {
+				it.val = asFixed(l).Values[T]()[0]
+			}
+			items = append(items, it)
+		}
+		ok = ok && len(items) <= mergeLimit
+	}
+	if e := endPageOf(n); e != nil {
+		collect(-1, singleKeyHdr(e))
+	}
+	eachByteNode(n, func(b byte, c *header) { collect(int(b), c) })
+	if !ok {
+		return false
+	}
+	h := m.pageOf(items)
+	if h == nil {
+		return false
+	}
+	*loc = h
+	return true
+}
+
+// mergeUp tries to merge the nodes on the path of key, from the lowest up, after a removal
+// below them: a node becomes a page when its children are pages that fit one together, and
+// then its parent may do the same. It reports whether *loc is now a page.
+func (m *Map[T]) mergeUp(loc **header, key []byte, pathLen int) bool {
+	n := *loc
+	if n == nil || isPage(n.objType) {
+		return true
+	}
+	pl := n.prefixLen()
+	if pl > 0 && (pathLen+pl > len(key) || !prefixMatches(n, pl, key, pathLen)) {
+		return m.tryMerge(loc, pathLen) // the key's path left this node's: a collapse below it gave it more bytes
+	}
+	d := pathLen + pl
+	var c **header
+	if d == len(key) {
+		c = endPageSlot(n)
+	} else {
+		c = findLoc(n, key[d])
+	}
+	if c != nil && *c != nil && !m.mergeUp(c, key, d+1) {
+		return false
+	}
+	return m.tryMerge(loc, pathLen)
+}

@@ -556,6 +556,13 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		checkLeaf(t, asSingleKey(n), path)
 		return 1
 	}
+	if isPage(n.objType) { // a multi-key page: two entries at least
+		p := asMKStr(n) // the head is that of both kinds of page
+		if p.Len() < 2 {
+			t.Fatalf("multi-key page with %d entries", p.Len())
+		}
+		return p.Len()
+	}
 	limits := map[objType][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
 		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256}}[n.objType]
 	count, endPage := int(n.count), endPageOf(n)
@@ -568,7 +575,7 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	if lo, hi := limits[0], limits[1]; count < lo || count > hi {
 		t.Fatalf("type %d holds %d children, allowed %d..%d", n.objType, count, lo, hi)
 	}
-	if count+b2i(endPage != nil) < 2 {
+	if count+b2i(endPage != nil) < 2 && (count != 1 || !isMultiKey(onlyChildOf(n).objType)) { // a multi-key page that could not move up stays below its node
 		t.Fatalf("node does not branch (type %d, count %d, endPage %v): it should have collapsed", n.objType, count, endPage != nil)
 	}
 	if n.objType != kN256 {
@@ -615,6 +622,17 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	return leaves
 }
 
+// onlyChildOf returns the first child of n.
+func onlyChildOf(n *header) *header {
+	var c *header
+	eachChild(n, func(_ byte, x *header) {
+		if c == nil {
+			c = x
+		}
+	})
+	return c
+}
+
 func eachChild(n *header, fn func(byte, *header)) {
 	switch n.objType {
 	case kN26, kN58:
@@ -650,7 +668,7 @@ func TestShrinkAndCollapse(t *testing.T) {
 		for _, fan := range []int{2, 4, 5, 11, 12, 25, 26, 57, 58, 256} {
 			t.Run(fmt.Sprintf("%q/%d", prefix, fan), func(t *testing.T) {
 				r := rand.New(rand.NewPCG(uint64(fan), 9))
-				var m Map[uint64]
+				m := Map[uint64]{flat: 1}        // single-key pages only, so that the keys make nodes
 				keys := [][]byte{[]byte(prefix)} // the end page of the widest node
 				for b := range fan {
 					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
@@ -770,7 +788,7 @@ func TestLongPaths(t *testing.T) {
 					common[i] = byte(i%251 + 1)
 				}
 				key := func(b int) []byte { return append(append(slices.Clip(common), byte(b)), "tail"...) }
-				var m Map[uint64]
+				m := Map[uint64]{flat: 1} // single-key pages only, so that the keys make nodes
 				ref := reference{}
 				step := func(add bool, k []byte) {
 					if add {

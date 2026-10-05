@@ -269,9 +269,6 @@ func (p *Page) Insert(rest, val []byte) (*Page, Result) {
 	if p.Match(rest) < int(p.cpl) {
 		return p, Outside
 	}
-	if len(val) > MaxValue {
-		return p, Full
-	}
 	r := rest[p.cpl:]
 	pos, off, found := p.locate(r)
 	m := p.mem()
@@ -281,7 +278,7 @@ func (p *Page) Insert(rest, val []byte) (*Page, Result) {
 		}
 		return p, Differs
 	}
-	if len(r) > MaxRemainder {
+	if len(r) > MaxRemainder || len(val) > MaxValue {
 		return p, Full
 	}
 	used := p.usedFrom(pos, off)

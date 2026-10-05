@@ -61,6 +61,7 @@ func run(w io.Writer, args []string) error {
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
 	entriesF := fs.Bool("entries", false, "print the table of entries with several values (the single-key page statistic) after the object table")
+	halfF := fs.Bool("removehalf", false, "remove every second key before counting the objects: the shape of a tree after deletions (the pages that merge or do not)")
 	maxF := fs.Bool("max", true, "for a kind whose corpus holds fewer keys than a size, measure at the largest size the corpus allows (path, street)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -95,7 +96,11 @@ func run(w io.Writer, args []string) error {
 		for _, profile := range profiles {
 			for _, n := range sizesOf(kind, sizes, *maxF) {
 				name := fmt.Sprintf("%s %s %s", kind, profile, human(n))
-				s := measure(kind, profile, n)
+				s := measure(kind, profile, n, *halfF)
+				if *halfF {
+					name += " minus every second key"
+					n -= n / 2
+				}
 				if err := s.verify(name, n); err != nil {
 					return err
 				}
@@ -252,18 +257,18 @@ func (s *stat) row(name string, n int) string {
 }
 
 // measure builds the index of a case, and counts its objects.
-func measure(kind keys.Kind, profile string, n int) *stat {
+func measure(kind keys.Kind, profile string, n int, removeHalf bool) *stat {
 	singleValue := strings.HasPrefix(profile, "single-value")
 	if strings.HasSuffix(profile, "-str") {
-		return build(kind, n, singleValue, func(v uint64) string { return fmt.Sprintf("%016x", v) })
+		return build(kind, n, singleValue, removeHalf, func(v uint64) string { return fmt.Sprintf("%016x", v) })
 	}
-	return build(kind, n, singleValue, func(v uint64) uint64 { return v })
+	return build(kind, n, singleValue, removeHalf, func(v uint64) uint64 { return v })
 }
 
 // build fills an index with the keys of the corpus and the values of the
 // profile, as the benchmark's fixture does (cmd/bench: profileValues), and
 // counts its objects.
-func build[T comparable](kind keys.Kind, n int, singleValue bool, value func(uint64) T) *stat {
+func build[T comparable](kind keys.Kind, n int, singleValue bool, removeHalf bool, value func(uint64) T) *stat {
 	c := keys.Generate(kind, n, 0x5EED)
 	vals, offs := keys.Values(n, 0xFA11)
 	if c.Natural != nil { // street names hold the localities they have
@@ -281,6 +286,11 @@ func build[T comparable](kind keys.Kind, n int, singleValue bool, value func(uin
 		}
 		for _, v := range vs {
 			m.Add(key, value(v))
+		}
+	}
+	if removeHalf {
+		for i := 1; i < len(c.Keys.B); i += 2 {
+			m.RemoveKey(c.Keys.B[i])
 		}
 	}
 	var s stat

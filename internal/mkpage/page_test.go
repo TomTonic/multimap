@@ -81,14 +81,14 @@ func expectInsert(m model, cp string, key, val string) Result {
 		return Outside
 	}
 	r = key[len(cp):]
-	if len(val) > MaxValue {
-		return Full
-	}
 	if i, ok := m.find(key); ok {
 		if m[i].val == val {
 			return Present
 		}
 		return Differs
+	}
+	if len(val) > MaxValue {
+		return Full
 	}
 	rems, vals := len(r), len(val)
 	for _, e := range m {
@@ -267,6 +267,7 @@ func TestPageInsertResults(t *testing.T) {
 		{"refuses a key outside the prefix", "abd1", "x", Outside},
 		{"refuses a key shorter than the prefix", "ab", "x", Outside},
 		{"refuses a value of 255 bytes", "abc4", strings.Repeat("v", 255), Full},
+		{"sees a second value of 255 bytes", "abc1", strings.Repeat("v", 255), Differs},
 		{"refuses a remainder of 256 bytes", "abc" + strings.Repeat("k", 256), "x", Full},
 	}
 	for _, tt := range tests {

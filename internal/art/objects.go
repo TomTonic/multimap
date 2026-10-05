@@ -99,12 +99,25 @@ func (m *Map[T]) leafKind(l *singleKeyHead) Object {
 	return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
 }
 
+// multiKeyObject describes multi-key page n: it holds Len keys with one value each, and
+// Remainder is the common prefix of its keys.
+func (m *Map[T]) multiKeyObject(n *header) Object {
+	if m.flat == 3 {
+		p := asMKStr(n)
+		return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Len(), Values: p.Len(), Remainder: p.PrefixLen()}
+	}
+	p := asMKFix(n)
+	return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Len(), Values: p.Len(), Remainder: p.PrefixLen()}
+}
+
 // object describes the object n, a leaf, page or node, without what is below
 // it.
 func (m *Map[T]) object(n *header) Object {
 	switch {
 	case isSingleKey(n.objType):
 		return m.leafObject(asSingleKey(n))
+	case isMultiKey(n.objType) && isPage(n.objType):
+		return m.multiKeyObject(n)
 	}
 	size, label := int(fixedSize[n.objType&objTypeMask]), objTypeLabels[n.objType]
 	if tc := tailClass(n.prefixLen()); tc != tailNone {
@@ -117,7 +130,7 @@ func (m *Map[T]) object(n *header) Object {
 // objects reports the subtree n.
 func (m *Map[T]) objects(n *header, fn func(Object)) {
 	fn(m.object(n))
-	if isSingleKey(n.objType) {
+	if isPage(n.objType) {
 		return
 	}
 	if t := endPageOf(n); t != nil {

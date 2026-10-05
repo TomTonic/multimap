@@ -34,3 +34,45 @@ func TestRemoveLongKeysOneByOne(t *testing.T) {
 		t.Fatal("the key is gone after adding it again")
 	}
 }
+
+// TestTreeRemoveAbsentKeys shows that the tree's removal of a key that is not in it, however
+// near the tree it gets, changes nothing and says so.
+//
+// The map looks up a key before it removes it, but the tree does not rely on that: a key that
+// is absent, that ends inside a node's common prefix, that leaves it, that has no child under its
+// byte, that is the end page of a node that has none, or that falls into a multi-key page, is
+// not removed.
+//
+// Expected: false for each, the size unchanged, and every key still found.
+func TestTreeRemoveAbsentKeys(t *testing.T) {
+	var empty Tree
+	if empty.remove([]byte("a"), nil) {
+		t.Fatal("removed a key from an empty tree")
+	}
+	m := Map[uint64]{flat: 1} // single-key pages, so that the keys make nodes
+	for _, k := range []string{"common-1", "common-2", "common-3", "other", "x"} {
+		m.Add([]byte(k), 1)
+		m.Add([]byte(k), 2)
+	}
+	rk := m.rekey
+	for _, k := range []string{"", "comm", "common", "common-4", "commonX", "common-1-", "zzz", "otherwise", "w"} {
+		if m.t.remove([]byte(k), rk) {
+			t.Fatalf("removed %q, which is not in the tree", k)
+		}
+	}
+	var p Map[uint64]
+	for _, k := range []string{"page-1", "page-2", "page-3"} {
+		p.Add([]byte(k), 1) // one value each: a multi-key page
+	}
+	if p.t.remove([]byte("page-1"), p.rekey) || p.t.remove([]byte("page-9"), p.rekey) {
+		t.Fatal("the tree removed an entry of a multi-key page")
+	}
+	if m.Len() != 5 || p.Len() != 3 {
+		t.Fatalf("sizes %d and %d", m.Len(), p.Len())
+	}
+	for _, k := range []string{"common-1", "common-2", "common-3", "other", "x"} {
+		if !m.Has([]byte(k)) {
+			t.Fatalf("lost %q", k)
+		}
+	}
+}
