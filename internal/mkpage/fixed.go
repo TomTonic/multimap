@@ -50,8 +50,17 @@ func NeedFixed[T comparable](n, cpl, remBytes int) int {
 // remainder beyond MaxRemainder or content beyond the largest class. The common
 // prefix of the page is the longest one all keys share (up to MaxPrefix).
 func BuildFixed[T comparable](rests [][]byte, vals []T) *Fixed {
+	if !Supported[T]() {
+		return nil
+	}
+	return BuildFixedOf(rests, vals)
+}
+
+// BuildFixedOf is BuildFixed for a T that is known to be Supported: the check is a reflection
+// of the type, too slow for a tree that builds a page for every burst.
+func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 	n := len(rests)
-	if !Supported[T]() || n == 0 || n > MaxEntries || len(vals) != n {
+	if n == 0 || n > MaxEntries || len(vals) != n {
 		return nil
 	}
 	cp := prefixOf(rests)
@@ -178,6 +187,60 @@ func (p *Fixed) Insert[T comparable](rest []byte, v T) (*Fixed, Result) {
 	*valueAt[T](m, nvs, pos) = v
 	q.n++
 	return q, Added
+}
+
+// Widen is Page.Widen for values of one size: it adds the entry rest -> v, a key that leaves
+// the common prefix after mis = Match(rest) < PrefixLen() bytes, and shortens the prefix to those
+// bytes. It returns the new page, or nil if the entry does not go in.
+func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
+	mis := p.Match(rest)
+	d := int(p.cpl) - mis
+	n := int(p.n)
+	newRem := rest[mis:]
+	if len(newRem) > MaxRemainder {
+		return nil
+	}
+	w, _ := sizeAlign[T]()
+	m := p.mem()
+	keyEnd := p.Used()
+	vs := valuesAt[T](keyEnd)
+	nk := keyEnd + 1 - d + n*d + len(newRem)
+	nvs := valuesAt[T](nk)
+	c := classFor(nvs + (n+1)*w)
+	if c < 0 {
+		return nil
+	}
+	first := len(newRem) == 0 || newRem[0] < p.CP()[mis]
+	at := 0
+	if !first {
+		at = n
+	}
+	q := (*Fixed)(allocRaw(c))
+	q.objType, q.n, q.cpl = TypeBase+uint8(c)<<1, p.n+1, uint8(mis)
+	out := q.mem()
+	for i := range n { // an old remainder cannot exceed 255 bytes: the content would exceed 512
+		out[Header+i+b2i(i >= at)] = m[Header+i] + uint8(d)
+	}
+	out[Header+at] = uint8(len(newRem))
+	off := Header + n + 1
+	off += copy(out[off:], p.CP()[:mis])
+	src := Header + n + int(p.cpl)
+	extra := p.CP()[mis:]
+	if first {
+		off += copy(out[off:], newRem)
+	}
+	for i := range n {
+		rl := int(m[Header+i])
+		off += copy(out[off:], extra)
+		off += copy(out[off:], m[src:src+rl])
+		src += rl
+	}
+	if !first {
+		copy(out[off:], newRem)
+	}
+	copy(out[nvs+b2i(first)*w:nvs+b2i(first)*w+n*w], m[vs:vs+n*w])
+	*valueAt[T](out, nvs, at) = v
+	return q
 }
 
 // Remove removes the entry rest -> v and reports whether it was there. It returns the

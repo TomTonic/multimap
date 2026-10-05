@@ -254,6 +254,18 @@ func TestMultiKeyPageRefusals(t *testing.T) {
 			}
 		}
 	})
+	t.Run("a merge whose remainder is too long for a page", func(t *testing.T) {
+		var m Map[string]
+		longKey := "a" + strings.Repeat("y", 300)
+		m.Add([]byte(longKey), "1") // a single-key page: no page holds a remainder of 300 bytes
+		m.Add([]byte("b"), "2")
+		m.Add([]byte("c"), "3")
+		m.RemoveKey([]byte("c")) // the node's children are single-value pages that fit one page, but not this key
+		checkInvariants(t, &m.t)
+		if got := valuesOf(&m, []byte(longKey)); !slices.Equal(got, []string{"1"}) || m.Len() != 2 {
+			t.Fatalf("long key holds %v, Len %d", got, m.Len())
+		}
+	})
 	t.Run("two values of 300 bytes make a value overflow", func(t *testing.T) {
 		var m Map[string]
 		m.Add([]byte("a"), "1")

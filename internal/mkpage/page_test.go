@@ -2,6 +2,7 @@ package mkpage
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"sort"
@@ -522,4 +523,122 @@ func FuzzPage(f *testing.F) {
 			checkPage(t, p, m, "")
 		}
 	})
+}
+
+// TestPageWiden adds keys that leave the common prefix of a page and checks that the page
+// takes them in, with a shorter prefix, exactly where a model puts them.
+//
+// The tree does this where it would otherwise make a byte node and a single-key page: a key that
+// differs early from its neighbours joins their page if they fit. The page must keep every
+// entry, put the new one in order (below all or above all, since it leaves the prefix), and
+// refuse what does not fit.
+//
+// Expected: for pages with prefixes of 0 to 4 bytes and new keys that differ at every position, below
+// and above, including one that ends inside the prefix, the widened page equals the model; a page
+// that is full, a remainder that would exceed 255 bytes and a value of 255 bytes give nil.
+func TestPageWiden(t *testing.T) {
+	for _, cpl := range []int{1, 2, 4} {
+		for mis := range cpl {
+			for _, kind := range []string{"below", "above", "ends"} {
+				t.Run(fmt.Sprint(cpl, "/", mis, "/", kind), func(t *testing.T) {
+					cp := strings.Repeat("m", cpl)
+					m := model{{cp + "a", "1"}, {cp + "bb", "2"}, {cp + "c", "3"}}
+					rests, vals := make([][]byte, 3), make([][]byte, 3)
+					for i, e := range m {
+						rests[i], vals[i] = []byte(e.key), []byte(e.val)
+					}
+					p := BuildStrings(rests, vals)
+					if p.PrefixLen() != cpl {
+						t.Fatalf("prefix %d", p.PrefixLen())
+					}
+					key := cp[:mis]
+					switch kind {
+					case "below":
+						key += "a" // 'a' < 'm'
+					case "above":
+						key += "z"
+					}
+					q := p.Widen([]byte(key), []byte("new"))
+					if q == nil {
+						t.Fatal("Widen refused")
+					}
+					i, _ := m.find(key)
+					m = slices.Insert(m, i, kv{key, "new"})
+					if q.PrefixLen() != mis {
+						t.Errorf("prefix %d, want %d", q.PrefixLen(), mis)
+					}
+					checkPage(t, q, m, "")
+				})
+			}
+		}
+	}
+	long := strings.Repeat("v", 200)
+	full := BuildStrings([][]byte{[]byte("ma"), []byte("mb")}, [][]byte{[]byte(long), []byte(long)})
+	tests := []struct {
+		name string
+		p    *Page
+		key  string
+		val  string
+	}{
+		{"a page that is full", full, "z", long},
+		{"a value of 255 bytes", full, "z", strings.Repeat("v", 255)},
+		{"a new remainder of 256 bytes", full, "z" + strings.Repeat("k", 255), "v"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.p.Widen([]byte(tt.key), []byte(tt.val)) != nil {
+				t.Error("Widen took the entry")
+			}
+		})
+	}
+}
+
+// TestFixedWiden is TestPageWiden for a page of uint64 values.
+//
+// Expected: the widened page equals the model for every position and side; a full page and a
+// remainder of more than 255 bytes give nil.
+func TestFixedWiden(t *testing.T) {
+	for _, cpl := range []int{1, 2, 4} {
+		for mis := range cpl {
+			for _, kind := range []string{"below", "above", "ends"} {
+				t.Run(fmt.Sprint(cpl, "/", mis, "/", kind), func(t *testing.T) {
+					cp := strings.Repeat("m", cpl)
+					m := fixedModel[uint64]{{cp + "a", 1}, {cp + "bb", 2}, {cp + "c", 3}}
+					p := BuildFixed([][]byte{[]byte(cp + "a"), []byte(cp + "bb"), []byte(cp + "c")}, []uint64{1, 2, 3})
+					key := cp[:mis]
+					switch kind {
+					case "below":
+						key += "a"
+					case "above":
+						key += "z"
+					}
+					q := p.Widen([]byte(key), uint64(9))
+					if q == nil {
+						t.Fatal("Widen refused")
+					}
+					i, _ := m.find(key)
+					m = slices.Insert(m, i, struct {
+						key string
+						val uint64
+					}{key, 9})
+					if q.PrefixLen() != mis {
+						t.Errorf("prefix %d, want %d", q.PrefixLen(), mis)
+					}
+					checkFixed(t, q, m)
+				})
+			}
+		}
+	}
+	rests := make([][]byte, 50)
+	vals := make([]uint64, 50)
+	for i := range rests {
+		rests[i] = []byte{'m', byte('A' + i)}
+	}
+	full := BuildFixed(rests, vals)
+	if full == nil || full.PrefixLen() != 1 || full.Widen([]byte("z"), 1) != nil {
+		t.Error("Widen took an entry into a full page")
+	}
+	if full.Widen([]byte("z"+strings.Repeat("k", 256)), 1) != nil {
+		t.Error("Widen took a remainder of 256 bytes")
+	}
 }

@@ -240,7 +240,7 @@ the comments and test names of the string map. Names to the user first, then one
 
 ## Step 4: the multi-key page (MKSV) as the special case
 
-**Design approved 2026-10-05** ([step4-mksv-design.md](step4-mksv-design.md): burst under byte nodes, no range nodes now; layout B with a 3-byte head and one grid; one `build` function for burst and promote, no fall back). **4.1 done 2026-10-05** ([step4-mkpage-results.md](step4-mkpage-results.md)): `internal/mkpage`, memory equal to the model to the byte. Next: 4.2, the tree for `string -> {string}` and `string -> {uint64}`.
+**Design approved 2026-10-05** ([step4-mksv-design.md](step4-mksv-design.md): burst under byte nodes, no range nodes now; layout B with a 3-byte head and one grid; one `build` function for burst and promote, no fall back). **4.1 done 2026-10-05** ([step4-mkpage-results.md](step4-mkpage-results.md)): `internal/mkpage`, memory equal to the model to the byte. **4.2 built and measured 2026-10-05** ([step4-tree-results.md](step4-tree-results.md)): memory as predicted, speed of changes and ranges below credo 1 and 2; options for the user in the report.
 
 Many keys with one value each in one page, the object of steps 1 and 2. It comes back on top of
 the single-key page of step 3.

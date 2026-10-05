@@ -305,6 +305,77 @@ func (p *Page) Insert(rest, val []byte) (*Page, Result) {
 	return q, Added
 }
 
+// Widen adds the entry rest -> val, a key that leaves the common prefix of the page after
+// mis = Match(rest) < PrefixLen() bytes, and shortens the common prefix to those mis bytes: the
+// page is built again, with the rest of the old prefix in front of every remainder. It returns
+// the new page, or nil if the entry does not go in (the content would exceed the largest class, or
+// a remainder or the value is too long); p is then unchanged. The tree calls it where it would
+// otherwise put a byte node above the page, so that a key that differs early joins its
+// neighbours when they fit one page.
+func (p *Page) Widen(rest, val []byte) *Page {
+	mis := p.Match(rest)
+	d := int(p.cpl) - mis
+	n := int(p.n)
+	newRem := rest[mis:]
+	if len(val) > MaxValue || len(newRem) > MaxRemainder {
+		return nil
+	}
+	m := p.mem()
+	used := p.Used()
+	need := used + 1 - d + n*d + len(newRem) + 1 + len(val)
+	c := classFor(need)
+	if c < 0 {
+		return nil
+	}
+	// the key differs from the prefix at mis: it is below every entry or above every one
+	first := len(newRem) == 0 || newRem[0] < p.CP()[mis]
+	q := (*Page)(allocRaw(c))
+	q.objType, q.n, q.cpl = TypeBase+uint8(c)<<1, p.n+1, uint8(mis)
+	w := q.mem()
+	at := 0 // where the new entry goes
+	if !first {
+		at = n
+	}
+	for i := range n { // an old remainder cannot exceed 255 bytes: the content would exceed 512
+		w[Header+i+b2i(i >= at)] = m[Header+i] + uint8(d)
+	}
+	w[Header+at] = uint8(len(newRem))
+	off := Header + n + 1
+	off += copy(w[off:], p.CP()[:mis])
+	src := Header + n + int(p.cpl)
+	extra := p.CP()[mis:]
+	put := func() {
+		off += copy(w[off:], newRem)
+		w[off] = uint8(len(val))
+		off += 1 + copy(w[off+1:], val)
+	}
+	if first {
+		put()
+	}
+	for i := range n {
+		rl := int(m[Header+i])
+		off += copy(w[off:], extra)
+		copy(w[off:], m[src:src+rl])
+		off += rl
+		src += rl
+		vl := int(m[src])
+		copy(w[off:], m[src:src+1+vl])
+		off += 1 + vl
+		src += 1 + vl
+	}
+	if !first {
+		put()
+	}
+	return q
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // Remove removes the entry rest -> val and reports whether it was there. It returns
 // the page that holds the rest: p itself, a page of a smaller class once the
 // content fills at most half of it, or nil if the entry was the only one (the

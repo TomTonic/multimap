@@ -128,25 +128,31 @@ func (m *Map[T]) pageOf(items []item[T]) *header {
 	} else if mkpage.NeedFixed[T](n, cp, rem) > 512 {
 		return nil
 	}
-	rests := make([][]byte, n)
+	rests := m.scrRests[:0]
 	for i := range items {
-		rests[i] = items[i].rest
+		rests = append(rests, items[i].rest)
 	}
+	m.scrRests = rests
+	defer clear(rests) // the scratch must not keep the keys alive
 	if m.flat == 3 {
-		vs := make([][]byte, n)
+		vs := m.scrVals[:0]
 		for i := range items {
-			vs[i] = view(strOf(items[i].val))
+			vs = append(vs, view(strOf(items[i].val)))
 		}
+		m.scrVals = vs
+		defer clear(vs)
 		if p := mkpage.BuildStrings(rests, vs); p != nil {
 			return mkStrHdr(p)
 		}
 		return nil
 	}
-	vs := make([]T, n)
+	vs := m.scrT[:0]
 	for i := range items {
-		vs[i] = items[i].val
+		vs = append(vs, items[i].val)
 	}
-	if p := mkpage.BuildFixed(rests, vs); p != nil {
+	m.scrT = vs
+	defer clear(vs)
+	if p := mkpage.BuildFixedOf(rests, vs); p != nil {
 		return mkFixHdr(p)
 	}
 	return nil
@@ -206,8 +212,11 @@ func (m *Map[T]) pageItems(n *header) []item[T] {
 		p := asMKStr(n)
 		items = make([]item[T], 0, p.Len()+1)
 		cp := p.CP()
+		buf := make([]byte, 0, p.Len()*len(cp)+p.Used()) // room for every key: the keys are not longer than the page
 		p.Each(func(rem, val []byte) bool {
-			items = append(items, item[T]{rest: append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), val: fromStr[T](string(val))})
+			at := len(buf)
+			buf = append(append(buf, cp...), rem...)
+			items = append(items, item[T]{rest: buf[at:len(buf):len(buf)], val: fromStr[T](string(val))})
 			return true
 		})
 		return items
@@ -215,8 +224,11 @@ func (m *Map[T]) pageItems(n *header) []item[T] {
 	p := asMKFix(n)
 	items = make([]item[T], 0, p.Len()+1)
 	cp := p.CP()
+	buf := make([]byte, 0, p.Len()*len(cp)+p.Used())
 	p.Each(func(rem []byte, v T) bool {
-		items = append(items, item[T]{rest: append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), val: v})
+		at := len(buf)
+		buf = append(append(buf, cp...), rem...)
+		items = append(items, item[T]{rest: buf[at:len(buf):len(buf)], val: v})
 		return true
 	})
 	return items
@@ -249,7 +261,7 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 	if swapped {
 		vals[0], vals[1] = vals[1], vals[0]
 	}
-	if p := mkpage.BuildFixed(rests, vals); p != nil {
+	if p := mkpage.BuildFixedOf(rests, vals); p != nil {
 		return mkFixHdr(p)
 	}
 	return nil
@@ -312,15 +324,24 @@ func (m *Map[T]) itemsWithNew(n *header, rest []byte) []item[T] {
 }
 
 // outside handles a new key that leaves the common prefix of multi-key page n after mis
-// bytes: if it fits the page together with the page's entries, the page is built again
-// with a shorter common prefix; if not, a byte node goes above the page (abovePage).
+// bytes: if it fits the page together with the page's entries, the page is built again with
+// a shorter common prefix (Widen); if not, a byte node goes above the page (abovePage).
 func (m *Map[T]) outside(loc **header, n *header, key []byte, pathLen, mis int) **header {
-	if h := m.pageOf(m.itemsWithNew(n, key[pathLen:])); h != nil {
-		*loc = h
-		m.t.size++
-		return nil
+	rest := key[pathLen:]
+	var q *header
+	if m.flat == 3 {
+		if p := asMKStr(n).Widen(rest, view(strOf(m.cur))); p != nil {
+			q = mkStrHdr(p)
+		}
+	} else if p := asMKFix(n).Widen(rest, m.cur); p != nil {
+		q = mkFixHdr(p)
 	}
-	return m.abovePage(loc, n, key, pathLen, mis)
+	if q == nil {
+		return m.abovePage(loc, n, key, pathLen, mis)
+	}
+	*loc = q
+	m.t.size++
+	return nil
 }
 
 // abovePage puts a byte node above multi-key page n, whose common prefix key leaves after
@@ -492,24 +513,90 @@ func (m *Map[T]) scanPage(n *header, pathLen int, b *Bounds, lo, hi bool, kb *ke
 	return done && !over
 }
 
-// mergeLimit is the most entries that tryMerge collects: more cannot fit a page.
-const mergeLimit = 64
+// mergeLimit is the most entries that mergeFits adds up before it gives up: a page of 512
+// bytes holds that many only if its entries are a few bytes each. mergeChildren is the most
+// byte children a node may have for tryMerge to look at it, the capacity of a 12-way node:
+// every child holds an entry at least, and more than twelve of them rarely fit one page, while
+// looking at every child of a wide node on every removal costs more than the merge saves.
+const (
+	mergeLimit    = 64
+	mergeChildren = 12
+)
+
+// mergeFits reports whether the children of byte node n, which has prefix pre, are all pages
+// that hold single-value entries and whose entries fit one page together, without building
+// anything: it adds up the sizes the merged page would take. The node branches, so the
+// common prefix of the merged page is pre, exactly.
+func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
+	count, sumRest, sumVal, ok := 0, 0, 0, true
+	collect := func(extra int, c *header) {
+		if !ok || !isPage(c.objType) {
+			ok = false
+			return
+		}
+		if isMultiKey(c.objType) {
+			if m.flat == 3 {
+				p := asMKStr(c)
+				cp := p.PrefixLen()
+				p.Each(func(rem, val []byte) bool {
+					sumRest += len(pre) + extra + cp + len(rem)
+					sumVal += len(val)
+					return true
+				})
+				count += p.Len()
+			} else {
+				p := asMKFix(c)
+				cp := p.PrefixLen()
+				p.Each(func(rem []byte, _ T) bool {
+					sumRest += len(pre) + extra + cp + len(rem)
+					return true
+				})
+				count += p.Len()
+			}
+		} else {
+			l := asSingleKey(c)
+			if l.isValueOverflow() || l.n != 1 {
+				ok = false
+				return
+			}
+			sumRest += len(pre) + extra + len(l.from(0+l.base()))
+			if m.flat == 3 {
+				asSK(l).Each(func(val []byte) bool { sumVal += len(val); return false })
+			}
+			count++
+		}
+		ok = ok && count <= mergeLimit
+	}
+	if e := endPageOf(n); e != nil {
+		collect(0, singleKeyHdr(e))
+	}
+	eachByteNode(n, func(_ byte, c *header) { collect(1, c) })
+	if !ok || count < 2 {
+		return false
+	}
+	cp := min(len(pre), mkpage.MaxPrefix)
+	if m.flat == 3 {
+		return mkpage.NeedStrings(count, cp, sumRest-count*cp, sumVal) <= 512
+	}
+	return mkpage.NeedFixed[T](count, cp, sumRest-count*cp) <= 512
+}
 
 // tryMerge replaces the byte node at *loc, whose path begins at pathLen, by one multi-key page
 // if every child is a page that holds single-value entries and the entries together fit one.
 // It reports whether it did. Only a map with multi-key pages calls it.
 func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	n := *loc
+	if n.count > mergeChildren {
+		return false
+	}
 	var buf [prefixBuf]byte
 	pre := appendPrefix(buf[:0], n)
+	if !m.mergeFits(n, pre) {
+		return false
+	}
 	d := pathLen + len(pre)
 	var items []item[T]
-	ok := true
 	collect := func(b int, c *header) {
-		if !ok || !isPage(c.objType) {
-			ok = false
-			return
-		}
 		front := append(make([]byte, 0, len(pre)+1), pre...)
 		at := d
 		if b >= 0 {
@@ -520,31 +607,23 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 				it.rest = append(slices.Clone(front), it.rest...)
 				items = append(items, it)
 			}
-		} else {
-			l := asSingleKey(c)
-			if l.isValueOverflow() || l.n != 1 {
-				ok = false
-				return
-			}
-			it := item[T]{rest: append(front, l.from(at)...)}
-			if m.flat == 3 {
-				asSK(l).Each(func(val []byte) bool { it.val = fromStr[T](string(val)); return false })
-			} else {
-				it.val = asFixed(l).Values[T]()[0]
-			}
-			items = append(items, it)
+			return
 		}
-		ok = ok && len(items) <= mergeLimit
+		l := asSingleKey(c)
+		it := item[T]{rest: append(front, l.from(at)...)}
+		if m.flat == 3 {
+			asSK(l).Each(func(val []byte) bool { it.val = fromStr[T](string(val)); return false })
+		} else {
+			it.val = asFixed(l).Values[T]()[0]
+		}
+		items = append(items, it)
 	}
 	if e := endPageOf(n); e != nil {
 		collect(-1, singleKeyHdr(e))
 	}
 	eachByteNode(n, func(b byte, c *header) { collect(int(b), c) })
-	if !ok {
-		return false
-	}
 	h := m.pageOf(items)
-	if h == nil {
+	if h == nil { // the sizes said it fits; the page's own limits (a remainder or a value too long) say no
 		return false
 	}
 	*loc = h

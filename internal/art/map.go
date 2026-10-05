@@ -18,6 +18,9 @@ type Map[T comparable] struct {
 	flat int8 // 1: single-key pages of fixed-size values (skpage.Fixed), 3: single-key pages of strings (skpage.Page), -1: value overflows only, 0: not decided yet
 	mk   bool // entries with one value share multi-key pages (mkkey.go): strings and pointer-free fixed-size values
 	cur  T    // the value of the Add in progress, for the pager methods of mkkey.go
+
+	scrRests, scrVals [][]byte // scratch of pageOf, reused so that a burst allocates only its pages
+	scrT              []T
 }
 
 // setPrepend makes value overflow l hold its key from pathLen on in place when the

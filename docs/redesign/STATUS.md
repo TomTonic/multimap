@@ -1,5 +1,12 @@
 # Status
 
+## 2026-10-05 evening: step 4.2 built and measured on the PC ([results](step4-tree-results.md)); gate 4 not met
+
+- Multi-key pages in the tree for strings and `uint64` (`internal/art/mkkey.go`, `internal/mkpage`): 100 %, race, fuzz, lint. **Memory as predicted** (27, 40, 31, 51, 24 B an entry with one value against 55, 95, 66, 107, 45 of `btree-map`; the real mix -19 % and -11 %).
+- **Speed not as predicted:** range scans 1.1 to 2.9 times step 3.5 but 0.3 to 0.7 of `btree-map`; `churn` and `build` with one value per entry 0.03 to 0.28 of step 3.5 (measured on `a166cad`).
+  Cause 1 found and fixed after the measurement (merge on every removal, rebuild for a key outside a page's prefix): churn 0.08 to 0.50, build 0.09 to 0.55 on a quick WSL check; the PC has not measured it. Cause 2 (transient values promote pages, which never come back) is the design rule meeting the benchmark's streams: options A to D in the report, for the user.
+- Gates after the changes: green (`internal/art` 100 % also under `-race`, fuzz 60 s, lint 0).
+
 ## 2026-10-05: step 4 approved (D1 burst, no range nodes; D3 one `build`), 4.1 done: `internal/mkpage` ([results](step4-mkpage-results.md))
 
 - The user approved the design note: bursting under byte nodes (range nodes: question of step 6), `build` for burst and promote, no fall back, order strings, `uint64`, pointers. Glossary updated (burst, promote, merge changed; fall back, split retired; range node out of the tree).
