@@ -249,7 +249,7 @@ func TestStringValueOverflowLayout(t *testing.T) {
 	}{{5, 32}, {18, 32}, {19, 64}, {50, 64}, {51, 128}, {114, 128}, {115, 256}, {242, 256}, {243, 384}, {370, 384}, {371, 512}, {498, 512}, {499, 32}, {600, 32}} {
 		key := bytes.Repeat([]byte("k"), tc.n)
 		l := newValueOverflow(key, 0, set3.EmptyWithCapacity[string](4))
-		if off := int(uintptr(unsafe.Pointer(overflowSetOf(l))) - uintptr(unsafe.Pointer(l))); tc.n <= maxInlineOverflow && off != tc.size-8 {
+		if off := int(uintptr(unsafe.Pointer(overflowSetOf[string](l))) - uintptr(unsafe.Pointer(l))); tc.n <= maxInlineOverflow && off != tc.size-8 {
 			t.Errorf("key of %d bytes: set at %d, want the last word of %d", tc.n, off, tc.size)
 		}
 		overflowAdd(l, "v")
@@ -293,4 +293,53 @@ func TestStringBackWithLongRemainder(t *testing.T) {
 	if got := valuesOf(&m, key); !slices.Equal(got, []string{val(0)}) {
 		t.Fatalf("got %q", got)
 	}
+}
+
+// TestValueOverflowOfOtherValues covers that the value overflow, the object
+// that holds the values of a key outside its page, is the same object for every type of value: its size
+// and the place of the pointer to the set depend on the key only, and the set
+// holds what it is given, whether the values are strings, words or pointers
+// (step 3.5: the maps of uint64 and *T use it). Every key area of the grid and a
+// key held as a string are made for each type, filled and read back.
+func TestValueOverflowOfOtherValues(t *testing.T) {
+	type rec struct{ id int }
+	recs := make([]*rec, 100)
+	for i := range recs {
+		recs[i] = &rec{i}
+	}
+	check := func(t *testing.T, name string, n int, make func(key []byte) (l *singleKeyHead, add func(i int), read func() int)) {
+		for _, klen := range []int{0, 18, 19, 50, 114, 242, 370, 498, 499} {
+			key := bytes.Repeat([]byte("k"), klen)
+			l, add, read := make(key)
+			for i := range n {
+				add(i)
+				add(i) // a set: the second time changes nothing
+			}
+			if got := read(); got != n {
+				t.Errorf("%s, key of %d bytes: %d values, want %d", name, klen, got, n)
+			}
+			if !l.isValueOverflow() || len(l.stored()) != klen || l.keyLen() != klen {
+				t.Errorf("%s, key of %d bytes: the key is not what was given", name, klen)
+			}
+			if want := int(valueOverflowSize(l.rem())); want != 32 && want != 64 && want != 128 && want != 256 && want != 384 && want != 512 {
+				t.Errorf("%s, key of %d bytes: an object of %d bytes is off the grid", name, klen, want)
+			}
+		}
+	}
+	check(t, "uint64", 100, func(key []byte) (*singleKeyHead, func(int), func() int) {
+		l := newValueOverflow(key, 0, set3.EmptyWithCapacity[uint64](4))
+		return l, func(i int) { overflowAdd(l, uint64(i)) }, func() int {
+			n := 0
+			overflowEach(l, func(uint64) bool { n++; return true })
+			return n
+		}
+	})
+	check(t, "*rec", 100, func(key []byte) (*singleKeyHead, func(int), func() int) {
+		l := newValueOverflow(key, 0, set3.EmptyWithCapacity[*rec](4))
+		return l, func(i int) { overflowAdd(l, recs[i]) }, func() int {
+			n := 0
+			overflowEach(l, func(r *rec) bool { n += min(r.id, 0) + 1; return true })
+			return n
+		}
+	})
 }

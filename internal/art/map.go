@@ -271,7 +271,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 // removeFromOverflowSet removes v from the value overflow l of key in a map of strings, and
 // moves the key into a page once its values fit one.
 func (m *Map[T]) removeFromOverflowSet(l *singleKeyHead, key []byte, v string, rk rekeyFunc) {
-	s := *overflowSetOf(l)
+	s := *overflowSetOf[string](l)
 	switch {
 	case !s.Remove(v):
 	case s.Size() == 0:

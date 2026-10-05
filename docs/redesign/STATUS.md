@@ -1,5 +1,11 @@
 # Status
 
+## 2026-10-05: step 3.5.2 done, the value overflow is generic in `T`
+
+- `valueOverflow[K, T]`, `newValueOverflow[T]`, `overflowSetOf[T]`, `overflowAdd[T]`, `overflowEach[T]` (`internal/art/singlekey.go`): the object, its size and the offset of the pointer do not depend on `T`; strings call it with `T = string`
+  and nothing changed for them (all string tests unchanged, race, fuzz, lint green). New test `TestValueOverflowOfOtherValues`: every key area of the grid and a key held as a string, for `uint64` and `*rec`.
+- Next: 3.5.3 the tree for `uint64` with `Fixed` pages (the flat leaf and the old set leaf with `vset` go for these maps).
+
 ## 2026-10-04 late night: step 3.5.1 done, `skpage.Fixed` standalone ([results](step3-fixed-results.md))
 
 - `Fixed` with 166 generated pointer types, GC test for all of them, fuzz, 100 %; `BackFits` (the way back from the value overflow, also for strings). Against flat and typed leaf on the real entries: hit and read equal, churn +2 to 6 % (`uint64`) and

@@ -85,7 +85,7 @@ func (m *Map[T]) leafObject(l *singleKeyHead) Object {
 // leafValues returns the number of values of leaf l.
 func (m *Map[T]) leafValues(l *singleKeyHead) int {
 	if l.isValueOverflow() && m.flat == 3 {
-		return int((*overflowSetOf(l)).Size())
+		return int((*overflowSetOf[string](l)).Size())
 	}
 	if l.isValueOverflow() {
 		return vals[T](l).Len()

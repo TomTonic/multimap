@@ -82,7 +82,7 @@ func fromValueOverflow(l *singleKeyHead) *skpage.Page {
 	if l.rem() == longKey {
 		return nil
 	}
-	s := *overflowSetOf(l)
+	s := *overflowSetOf[string](l)
 	if 2*int(s.Size()) > skpage.Room(l.rem()) { // every value takes a byte at least, and they may take half the room
 		return nil
 	}
@@ -109,7 +109,7 @@ func rekeySK(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
 		if setPrepend(l, pre, b, pathLen, overflowKeyCap) {
 			return l
 		}
-		return newValueOverflow(wholeKey(l, pre, b), pathLen, *overflowSetOf(l))
+		return newValueOverflow(wholeKey(l, pre, b), pathLen, *overflowSetOf[string](l))
 	}
 	front := make([]byte, l.base()-pathLen)
 	fillHead(front, pre, b, pathLen)
@@ -122,45 +122,47 @@ func rekeySK(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
 	return nl
 }
 
-// The value overflow of a map of strings (Map.flat == 3) is not the leaf of
-// vset.Set: behind the head and the key area it holds one pointer to a Set3
-// (github.com/TomTonic/Set3), a hash set that takes any string. The page is the
-// small stage, so the inline stage and the array stage of vset, which a key
-// with a few values would use, are not needed.
+// The value overflow of a key whose values do not fit its page, in the maps
+// that have single-key pages: behind the head and the key area it holds one
+// pointer to a Set3 (github.com/TomTonic/Set3), a hash set that takes any T. The
+// page is the small stage, so the inline stage and the array stage of vset, which
+// a key with a few values would use, are not needed. The type of the values
+// is a parameter of the code and of the pointer only: the object, its size and the
+// offset of the pointer are the same for every T.
 //
 // It is an object of the grid of the pages, 32, 64, 128, 256, 384 or 512 bytes:
 // the head takes 6 bytes, the pointer the last 8, and the key area what is left,
 // 18, 50, 114, 242, 370 or 498 bytes, so the bytes the 64-byte vset.Set took go
 // to the key and not to padding. A remainder of more than 498 bytes is held as
 // a string.
-type valueOverflow[K overflowKeyArea] struct {
+type valueOverflow[K overflowKeyArea, T comparable] struct {
 	singleKeyHead
 	k   K
-	set *set3.Set3[string]
+	set *set3.Set3[T]
 }
 
-// overflowKeyArea is the storage of the key of the value overflow of a string map: the key
+// overflowKeyArea is the storage of the key of a value overflow: the key
 // areas of the grid, or a string.
 type overflowKeyArea interface {
 	[18]byte | [50]byte | [114]byte | [242]byte | [370]byte | [498]byte | string
 }
 
-// maxInlineOverflow is the longest remainder the value overflow of a string map holds inline.
+// maxInlineOverflow is the longest remainder a value overflow holds inline.
 const maxInlineOverflow = 498
 
-// Offsets of the pointer in the value overflow of a string map: they follow from the
-// key areas of the grid.
+// Offsets of the pointer in the value overflow: they follow from the key areas
+// of the grid and do not depend on the type of the values (T = int here).
 var (
-	overflowSetOff18  = unsafe.Offsetof(valueOverflow[[18]byte]{}.set)
-	overflowSetOff50  = unsafe.Offsetof(valueOverflow[[50]byte]{}.set)
-	overflowSetOff114 = unsafe.Offsetof(valueOverflow[[114]byte]{}.set)
-	overflowSetOff242 = unsafe.Offsetof(valueOverflow[[242]byte]{}.set)
-	overflowSetOff370 = unsafe.Offsetof(valueOverflow[[370]byte]{}.set)
-	overflowSetOff498 = unsafe.Offsetof(valueOverflow[[498]byte]{}.set)
-	overflowSetOffStr = unsafe.Offsetof(valueOverflow[string]{}.set)
+	overflowSetOff18  = unsafe.Offsetof(valueOverflow[[18]byte, int]{}.set)
+	overflowSetOff50  = unsafe.Offsetof(valueOverflow[[50]byte, int]{}.set)
+	overflowSetOff114 = unsafe.Offsetof(valueOverflow[[114]byte, int]{}.set)
+	overflowSetOff242 = unsafe.Offsetof(valueOverflow[[242]byte, int]{}.set)
+	overflowSetOff370 = unsafe.Offsetof(valueOverflow[[370]byte, int]{}.set)
+	overflowSetOff498 = unsafe.Offsetof(valueOverflow[[498]byte, int]{}.set)
+	overflowSetOffStr = unsafe.Offsetof(valueOverflow[string, int]{}.set)
 )
 
-// overflowKeyCap returns the size of the key area of a value overflow of a string map
+// overflowKeyCap returns the size of the key area of a value overflow
 // whose key remainder is klen bytes long, at most maxInlineOverflow (see setPrepend).
 func overflowKeyCap(klen int) int {
 	for _, c := range [...]int{18, 50, 114, 242, 370} {
@@ -171,9 +173,9 @@ func overflowKeyCap(klen int) int {
 	return 498
 }
 
-// overflowSetOf returns the slot that holds the value set of value overflow l of a string
-// map.
-func overflowSetOf(l *singleKeyHead) **set3.Set3[string] {
+// overflowSetOf returns the slot that holds the value set of value overflow l,
+// whose values are of type T.
+func overflowSetOf[T comparable](l *singleKeyHead) **set3.Set3[T] {
 	off := overflowSetOffStr
 	switch k := l.rem(); {
 	case k <= 18:
@@ -189,16 +191,16 @@ func overflowSetOf(l *singleKeyHead) **set3.Set3[string] {
 	case k <= maxInlineOverflow:
 		off = overflowSetOff498
 	}
-	return (**set3.Set3[string])(unsafe.Add(unsafe.Pointer(l), off))
+	return (**set3.Set3[T])(unsafe.Add(unsafe.Pointer(l), off))
 }
 
-// newValueOverflow allocates a value overflow of a string map that holds key from base on,
+// newValueOverflow allocates a value overflow that holds key from base on,
 // or the whole key as a string when the rest is too long to hold inline, and
 // holds set as its value set.
-func newValueOverflow(key []byte, base int, set *set3.Set3[string]) *singleKeyHead {
+func newValueOverflow[T comparable](key []byte, base int, set *set3.Set3[T]) *singleKeyHead {
 	var l *singleKeyHead
 	if len(key) > maxKeyLen || len(key)-base > maxInlineOverflow {
-		sl := &valueOverflow[string]{k: string(key)}
+		sl := &valueOverflow[string, T]{k: string(key)}
 		sl.objType = kValueOverflow
 		sl.setRem(longKey)
 		l = &sl.singleKeyHead
@@ -206,27 +208,27 @@ func newValueOverflow(key []byte, base int, set *set3.Set3[string]) *singleKeyHe
 		s, kl := key[base:], len(key)
 		switch k := len(s); {
 		case k <= 18:
-			l = newInlineOverflow[[18]byte](s, kl)
+			l = newInlineOverflow[[18]byte, T](s, kl)
 		case k <= 50:
-			l = newInlineOverflow[[50]byte](s, kl)
+			l = newInlineOverflow[[50]byte, T](s, kl)
 		case k <= 114:
-			l = newInlineOverflow[[114]byte](s, kl)
+			l = newInlineOverflow[[114]byte, T](s, kl)
 		case k <= 242:
-			l = newInlineOverflow[[242]byte](s, kl)
+			l = newInlineOverflow[[242]byte, T](s, kl)
 		case k <= 370:
-			l = newInlineOverflow[[370]byte](s, kl)
+			l = newInlineOverflow[[370]byte, T](s, kl)
 		default:
-			l = newInlineOverflow[[498]byte](s, kl)
+			l = newInlineOverflow[[498]byte, T](s, kl)
 		}
 	}
-	*overflowSetOf(l) = set
+	*overflowSetOf[T](l) = set
 	return l
 }
 
-// newInlineOverflow allocates a value overflow of a string map that holds the remainder s
+// newInlineOverflow allocates a value overflow that holds the remainder s
 // of a key of kl bytes inline in an array of type K.
-func newInlineOverflow[K [18]byte | [50]byte | [114]byte | [242]byte | [370]byte | [498]byte](s []byte, kl int) *singleKeyHead {
-	l := &valueOverflow[K]{}
+func newInlineOverflow[K [18]byte | [50]byte | [114]byte | [242]byte | [370]byte | [498]byte, T comparable](s []byte, kl int) *singleKeyHead {
+	l := &valueOverflow[K, T]{}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(&l.k)), unsafe.Sizeof(l.k)), s)
 	l.objType = kValueOverflow
 	l.setRem(len(s))
@@ -234,33 +236,34 @@ func newInlineOverflow[K [18]byte | [50]byte | [114]byte | [242]byte | [370]byte
 	return &l.singleKeyHead
 }
 
-// valueOverflowSize returns the size of the value overflow of a string map with a key
-// remainder of klen bytes (longKey: a key held as a string).
+// valueOverflowSize returns the size of the value overflow with a key
+// remainder of klen bytes (longKey: a key held as a string); the same for every
+// type of value.
 func valueOverflowSize(klen int) uintptr {
 	switch k := klen; {
 	case k <= 18:
-		return unsafe.Sizeof(valueOverflow[[18]byte]{})
+		return unsafe.Sizeof(valueOverflow[[18]byte, int]{})
 	case k <= 50:
-		return unsafe.Sizeof(valueOverflow[[50]byte]{})
+		return unsafe.Sizeof(valueOverflow[[50]byte, int]{})
 	case k <= 114:
-		return unsafe.Sizeof(valueOverflow[[114]byte]{})
+		return unsafe.Sizeof(valueOverflow[[114]byte, int]{})
 	case k <= 242:
-		return unsafe.Sizeof(valueOverflow[[242]byte]{})
+		return unsafe.Sizeof(valueOverflow[[242]byte, int]{})
 	case k <= 370:
-		return unsafe.Sizeof(valueOverflow[[370]byte]{})
+		return unsafe.Sizeof(valueOverflow[[370]byte, int]{})
 	case k <= maxInlineOverflow:
-		return unsafe.Sizeof(valueOverflow[[498]byte]{})
+		return unsafe.Sizeof(valueOverflow[[498]byte, int]{})
 	}
-	return unsafe.Sizeof(valueOverflow[string]{})
+	return unsafe.Sizeof(valueOverflow[string, int]{})
 }
 
-// overflowAdd adds v to the set of leaf l.
-func overflowAdd(l *singleKeyHead, v string) { (*overflowSetOf(l)).Add(v) }
+// overflowAdd adds v to the set of value overflow l.
+func overflowAdd[T comparable](l *singleKeyHead, v T) { (*overflowSetOf[T](l)).Add(v) }
 
-// overflowEach calls yield for every value of the set of leaf l and reports whether
-// it ran to completion.
-func overflowEach(l *singleKeyHead, yield func(string) bool) bool {
-	for v := range (*overflowSetOf(l)).MutableRange() {
+// overflowEach calls yield for every value of the set of value overflow l and
+// reports whether it ran to completion.
+func overflowEach[T comparable](l *singleKeyHead, yield func(T) bool) bool {
+	for v := range (*overflowSetOf[T](l)).MutableRange() {
 		if !yield(v) {
 			return false
 		}
