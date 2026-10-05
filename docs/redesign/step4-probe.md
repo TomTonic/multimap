@@ -112,7 +112,22 @@ exactly what range nodes (step 6: a page above a byte node that holds the keys o
 5. **The benchmark's memory phase measures a fresh tree.** For a multimap in use the figure that counts is after a history (58 against 73 for `street` `natural`); the large measurement of 0.8 should report both
    (the probe's `census` of the tree after `workload.Build` and after a cycle does it for a case).
 
-## What is next
+## The PC measurement of the fixed code (option A), 2026-10-06 night
 
-The PC measurement of the fixed code (option A) is the commit that has this change in it, so that the numbers of the report are those of the code that stays. Raw numbers of this note are one run on WSL; they
-are the reason for the questions above, the PC run is the evidence for gate 4.
+Commit `3e1e952` (the merge trigger of Finding 1), the same ten cases as step 4.2 (`run-m43.cmd` in `bench/results-layout/step4-probe/pc-m43/`, 23:07 to 00:29, 6 to 8 processes), against step 3.5 (`fe120f5`) and
+`btree-map` / `btree-sets`. Ratio is `Ordered` speed over the other (below 1 is slower), step 4.2 (`a166cad`) → now.
+
+**`churn` and `build` with one value per entry** (`single-value`), against step 3.5: `churn` 0.03 to 0.28 → **0.69 to 1.21**, `build` 0.04 to 0.19 → **0.66 to 1.03**; against `btree-map` `churn` 0.05 to 0.30 → **0.69 to 2.07**
+(`uint64` keys 1.68 to 2.07), `build` 0.07 to 0.19 → **0.63 to 1.80**. The 4,096-key cases are the lowest (0.63 to 0.88 against `btree-map` for `street`, `dirs`), the large sizes (86,215, 212,449, 262,144) are at 0.93 to 1.24.
+**The real mix** (`natural`) against `btree-sets`: `churn` 0.91 to 1.64 → **1.00 to 2.54**, `build` 0.88 to 1.62 → **0.99 to 2.43**: credo 1 is met in all cells (the lowest are 4,096 `dirs` `build` 0.99 and `churn` 1.00), against step 3.5 0.64 to 0.92 (was 0.54 to 0.86).
+`valuesFor`, `valuesBetween`, `prefix` do not move (0.80 to 1.33, 1.01 to 2.24, 0.95 to 2.86 against step 3.5), as the change does not touch them.
+
+**Memory** is unchanged to the byte per entry (27, 41, 31, 51, 24 with one value; 73, 96, 98, 153, 123 real); after removing every second key +0 to +2 bytes (the 3.5 % of the sweep) and for two cases -2.
+GC per cycle +2 to +6 ms (`single-value`), +8 to +22 ms (real).
+
+**Gate 4 now:** credo 1 for `churn` and `build` is met for the real mix and for the large sizes of `single-value`, **not** for `single-value` at 4,096 and 16,384 keys against `btree-map` (0.63 to 0.89); credo 2 for ranges is met for the real mix
+(1.5 to 3.0 against `btree-sets`) and **not for `single-value` against `btree-map`** (`valuesBetween` 0.30 to 0.68, `prefix` 0.40 to 0.65; `valuesFor` 1.05 to 4.1 is met). The M1 job `m43` (same commit) is queued.
+
+What is left of the gap is, from the probe: the scan of a page (two closures per entry, 8.2 ns a value against `btree-map`'s fewer ns; `valuesBetween` in a page-heavy tree), and at 4,096 and 16,384 keys the remaining cost of
+the removal of a key (a page copy, the merge tries at pages with one or two entries). Neither is a question of the design; they are the options B of the step-4.2 report (scan, allocation-free page change).
+
