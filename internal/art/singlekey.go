@@ -7,14 +7,15 @@ import (
 	"github.com/TomTonic/multimap/internal/skpage"
 )
 
-// In a map of strings (Map.flat == 3) a key lives in a single-key page
+// In a map of strings (Map.flat == 3) an entry lives in a single-key page
 // (internal/skpage, docs/redesign/step3-skmv-design.md): the remainder and all
 // the values as bytes, in one object without pointers of 32 to 512 bytes. The
 // page starts like a leaf (type, remainder length, number of values, length of
 // the whole key), so everything the tree does with the key of a leaf works on it.
-// Its types are kValueOverflow+1 to kValueOverflow+6, the types that flat and typed leaves have in
-// other maps; kValueOverflow is still the value overflow, which takes a key whose values do not
-// fit a page (the value overflow) or whose remainder is longer than a page holds.
+// Its types are kValueOverflow+2 to kValueOverflow+12 in steps of two, those of the
+// pages of fixed-size values (fixedkey.go) too; kValueOverflow is the value
+// overflow, which takes an entry whose values do not fit a page or whose
+// remainder is longer than a page holds.
 
 func init() { skpage.TypeBase = uint8(kValueOverflow) + 2 }
 

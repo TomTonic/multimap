@@ -1,6 +1,10 @@
 package art
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/TomTonic/multimap/internal/skpage"
+)
 
 // This file measures the objects of a tree against the cache-line rules of
 // docs/redesign/STRATEGY.md: how many objects there are, how big each is, and
@@ -96,12 +100,8 @@ func (m *Map[T]) leafValues(l *singleKeyHead) int {
 // leafKind describes the object of leaf l of a map of T, without its values
 // and remainder.
 func (m *Map[T]) leafKind(l *singleKeyHead) Object {
-	var z T
-	switch {
-	case l.cls() > 0 && (m.flat == 1 || m.flat == 3):
-		return Object{Label: "single-key page", Size: asSK(l).Size(), Keys: 1}
-	case l.cls() > 0 && m.flat == 2:
-		return Object{Label: "typed leaf", Size: int(typedOff(l.rem())) + typedCaps[l.cls()]*int(unsafe.Sizeof(z)), Pointers: true, Keys: 1}
+	if l.cls() > 0 {
+		return Object{Label: "single-key page", Size: asSK(l).Size(), Pointers: m.flat == 1 && skpage.HoldsPointers[T](), Keys: 1}
 	}
 	if m.flat == 3 || m.flat == 1 {
 		return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}

@@ -1,28 +1,19 @@
 package art
 
 import (
-	"reflect"
 	"unsafe"
 
 	set3 "github.com/TomTonic/Set3"
 	"github.com/TomTonic/multimap/internal/skpage"
 )
 
-// In a map whose values are small and without pointers (Map.flat == 1, a uint64
-// for instance) a key lives in a skpage.Fixed (docs/redesign/step3-fixed-design.md):
+// In a map whose values are small and without pointers (a uint64) or one word with a
+// pointer (a *T), Map.flat == 1, an entry lives in a skpage.Fixed (docs/redesign/step3-fixed-design.md):
 // the remainder and all the values as an array of T, in one object without pointers
-// of 32 to 512 bytes. Like the page of the strings it starts like a leaf, so
-// everything the tree does with the key works on it, and a key whose values do
-// not fit it becomes a value overflow with a Set3 of its values (Set3[T] is the
+// of 32 to 512 bytes (with pointers: a Go type that marks them). Like the page of
+// the strings it starts like a leaf, so everything the tree does with the key
+// works on it, and an entry whose values do not fit it becomes a value overflow with a Set3 of its values (Set3[T] is the
 // same object for every T).
-
-// fixedType reports whether T takes skpage.Fixed pages without pointers: small,
-// not empty and free of pointers, so that its values may live in memory the
-// garbage collector does not scan.
-func fixedType[T comparable]() bool {
-	var z T
-	return unsafe.Sizeof(z) > 0 && unsafe.Sizeof(z) <= 16 && pointerFree(reflect.TypeFor[T]())
-}
 
 func asFixed(l *singleKeyHead) *skpage.Fixed   { return (*skpage.Fixed)(unsafe.Pointer(l)) }
 func fixedHead(p *skpage.Fixed) *singleKeyHead { return (*singleKeyHead)(unsafe.Pointer(p)) }
@@ -38,7 +29,7 @@ func newFixedLeaf[T comparable](key []byte, base int) *singleKeyHead {
 }
 
 // addFixed adds v to the values of the page l of key, which sits in slot loc. A
-// value that the page cannot hold makes the key a value overflow.
+// value that the page cannot hold makes the entry a value overflow.
 func addFixed[T comparable](loc **header, l *singleKeyHead, key []byte, v T) {
 	p := asFixed(l)
 	switch q, res := p.Add(v); {
@@ -72,7 +63,7 @@ func removeFixed[T comparable](t *Tree, l *singleKeyHead, key []byte, v T, rk re
 }
 
 // removeFromFixedOverflow removes v from the value overflow l of key in a map of
-// fixed-size values, and moves the key into a page once its values fit one.
+// fixed-size values, and moves the entry into a page once its values fit one.
 func removeFromFixedOverflow[T comparable](t *Tree, l *singleKeyHead, key []byte, v T, rk rekeyFunc) {
 	s := *overflowSetOf[T](l)
 	switch {

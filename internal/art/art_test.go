@@ -162,9 +162,9 @@ func (r reference) sortedKeys() []string {
 // multimap.Ordered stores, finds, removes and ranges over keys and values
 // exactly like a trivially correct reference, through phases of growth and
 // of heavy deletion, and that after every phase the tree has the shape its
-// invariants demand (see checkInvariants). It runs every corpus with flat
-// leaves, which small pointer-free values get, with typed leaves, which small
-// values with a pointer get, and with value overflows, which all other values get.
+// invariants demand (see checkInvariants). It runs every corpus with single-key
+// pages of fixed-size values, which small pointer-free values get, with pages of
+// pointers, with pages of strings, and with value overflows, which all other values get.
 func TestAgainstReference(t *testing.T) {
 	str := func(v uint64) string { return fmt.Sprint("value ", v) }
 	// values of 20 to 140 bytes, so that a key with a few of them outgrows a page
@@ -182,7 +182,7 @@ func TestAgainstReference(t *testing.T) {
 				case 1, -1:
 					againstReference(t, keys, &Map[uint64]{flat: mode}, id)
 				case 2:
-					againstReference(t, keys, &Map[string]{flat: 2}, str)
+					againstReference(t, keys, &Map[*rec]{}, ptrValue) // pages of pointers
 				case 3:
 					againstReference(t, keys, &Map[string]{}, str) // single-key pages
 				case 4:
@@ -790,8 +790,8 @@ func FuzzOperations(f *testing.F) {
 	f.Add(bytes.Repeat([]byte{3, 0, 1, 2, 7, 1, 0, 0, 5}, 30))
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		m := Map[uint64]{flat: 1}
-		s := Map[string]{flat: 2} // the same operations on typed leaves
-		var p Map[string]         // and on single-key pages, with values of up to 200 bytes
+		s := Map[*rec]{}  // the same operations on pages of pointers
+		var p Map[string] // and on single-key pages, with values of up to 200 bytes
 		lstr := func(v uint64) string { return fmt.Sprint("value ", v, strings.Repeat("x", int(v%7)*33)) }
 		if len(ops) > 0 && ops[0]&1 == 1 {
 			m.flat = -1
@@ -802,7 +802,7 @@ func FuzzOperations(f *testing.F) {
 		if len(ops) > 0 && ops[0]&2 == 2 {
 			s.flat = -1
 		}
-		str := func(v uint64) string { return fmt.Sprint("value ", v) }
+		str := ptrValue
 		ref := reference{}
 		for len(ops) >= 2 {
 			op, n := ops[0], int(ops[1]%24)
@@ -908,3 +908,16 @@ func b2i(b bool) int {
 	}
 	return 0
 }
+
+// ptrPool holds the records that the pointer values of the tests point to, so
+// that equal numbers are equal pointers.
+var ptrPool = func() []*rec {
+	out := make([]*rec, 1<<12)
+	for i := range out {
+		out[i] = &rec{id: uint64(i), aux: 1}
+	}
+	return out
+}()
+
+// ptrValue returns the pointer value for number v.
+func ptrValue(v uint64) *rec { return ptrPool[v%uint64(len(ptrPool))] }

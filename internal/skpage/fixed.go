@@ -65,6 +65,11 @@ func kindOf[T comparable]() fixedKind {
 // Any other T, an interface or a struct with two words, has no page.
 func Supported[T comparable]() bool { return kindOf[T]() != fixedNone }
 
+// HoldsPointers reports whether the page of T is an object with pointers: T is
+// a word that is a pointer. Such an object is scanned by the garbage
+// collector and, in the tree's statistic, an object with pointers.
+func HoldsPointers[T comparable]() bool { return kindOf[T]() == fixedPtr }
+
 func pointerFree(t reflect.Type) bool {
 	switch t.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,

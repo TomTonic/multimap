@@ -3,16 +3,15 @@ package art
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 	"runtime"
 	"slices"
 	"testing"
 )
 
 // TestValueTypes makes sure that multimap.Ordered keeps values of every
-// type correctly, whether its ART stores them in single-key pages (small values
-// without pointers, of any alignment), in typed leaves (small values with a
-// pointer) or in value overflows (everything else).
+// type correctly, whether its ART stores them in single-key pages of fixed-size
+// values (small values without pointers, of any alignment, or a pointer), in
+// single-key pages of strings, or in value overflows (every other type).
 func TestValueTypes(t *testing.T) {
 	type small struct {
 		a uint32
@@ -25,7 +24,7 @@ func TestValueTypes(t *testing.T) {
 	ptrs := make([]int, 300)
 	for _, tc := range []struct {
 		name string
-		mode int8 // 1: pages of fixed-size values, 2: typed leaves, -1: value overflows only
+		mode int8 // 1: pages of fixed-size values, 3: pages of strings, -1: value overflows only
 		run  func(t *testing.T) int8
 	}{
 		{"uint64", 1, roundTrip(func(i int) uint64 { return uint64(i) * 0x9E3779B97F4A7C15 })},
@@ -37,9 +36,9 @@ func TestValueTypes(t *testing.T) {
 		{"struct of uint32 and uint16", 1, roundTrip(func(i int) small { return small{uint32(i), uint16(i)} })},
 		{"[3]uint64 is too large", -1, roundTrip(func(i int) [3]uint64 { return [3]uint64{uint64(i)} })},
 		{"string takes single-key pages", 3, roundTrip(func(i int) string { return fmt.Sprint(i) })},
-		{"pointer", 2, roundTrip(func(i int) *int { return &ptrs[i%300] })},
-		{"interface", 2, roundTrip(func(i int) any { return i })},
-		{"struct of a string and a number", 2, roundTrip(func(i int) named { return named{fmt.Sprint(i), i} })},
+		{"pointer takes pages", 1, roundTrip(func(i int) *int { return &ptrs[i%300] })},
+		{"interface is two words", -1, roundTrip(func(i int) any { return i })},
+		{"struct of a string and a number", -1, roundTrip(func(i int) named { return named{fmt.Sprint(i), i} })},
 		{"[5]string is too large", -1, roundTrip(func(i int) [5]string { return [5]string{fmt.Sprint(i)} })},
 		{"struct{} is empty", -1, roundTrip(func(int) struct{} { return struct{}{} })},
 	} {
@@ -88,32 +87,6 @@ func roundTrip[T comparable](mk func(int) T) func(t *testing.T) int8 {
 			}
 		}
 		return m.flat
-	}
-}
-
-// TestPointerFree checks the type test that decides whether values may live
-// in memory the garbage collector does not scan: only types that hold no
-// pointer anywhere qualify.
-func TestPointerFree(t *testing.T) {
-	for _, tc := range []struct {
-		typ  reflect.Type
-		want bool
-	}{
-		{reflect.TypeFor[uint64](), true},
-		{reflect.TypeFor[[0]*int](), true},
-		{reflect.TypeFor[[2]int16](), true},
-		{reflect.TypeFor[struct{ a, b uint8 }](), true},
-		{reflect.TypeFor[[2]*int](), false},
-		{reflect.TypeFor[struct {
-			A int
-			P *int
-		}](), false},
-		{reflect.TypeFor[string](), false},
-		{reflect.TypeFor[map[int]int](), false},
-	} {
-		if got := pointerFree(tc.typ); got != tc.want {
-			t.Errorf("pointerFree(%v) = %v, want %v", tc.typ, got, tc.want)
-		}
 	}
 }
 

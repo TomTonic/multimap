@@ -1,5 +1,11 @@
 # Status
 
+## 2026-10-05: step 3.5.4 done, `*T` maps hold their entries in pointer pages; the typed leaf is gone
+
+- `Map.flat == 1` covers every `T` that `skpage.Supported` takes: small and pointer-free, or one word that is a pointer (the 166 typed objects). Every other `T` (an interface, a struct with a string, more than 16 bytes) is mode -1: each entry a value overflow.
+  `typed.go` and its tests are deleted; the reference test, the fuzz test and the object tests run pointer maps. Gates green (race, fuzz, lint, 100 % without `-race`).
+- Left of the old code: `leaf[T, K]`, `newSetLeaf*`, `vals`, `vset` inside `internal/art` for mode -1. Next: 3.5.5, mode -1 on the generic value overflow with `Set3[T]`, and those go.
+
 ## 2026-10-05: step 3.5.3 done, the tree for pointer-free values (`uint64`) holds `skpage.Fixed` pages
 
 - `Map.flat == 1` is now `Fixed` pages with `Set3[T]` as the value overflow (`internal/art/fixedkey.go`: `newFixedLeaf`, `addFixed`, `removeFixed`, `removeFromFixedOverflow`, `rekeyFixed`, `fixedFromOverflow`); **`flat.go` and the flat leaf are gone**.

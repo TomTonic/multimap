@@ -13,10 +13,10 @@ import (
 )
 
 // The benchmarks of step 3.5.1 (docs/redesign/step3-fixed-design.md): the single-key page
-// for fixed-size values, skpage.Fixed, against the typed leaf (*rec) that it
-// replaces, standalone and not as part of the tree. (The flat leaf (uint64) was
-// the other opponent; its results are in bench/results-layout/step3-fixed, the
-// code is that of commit a689e03.) The
+// for fixed-size values, skpage.Fixed (with pointers: *rec), standalone and not as
+// part of the tree. It was measured against the flat leaf and the typed leaf that
+// it replaced; those results are in bench/results-layout/step3-fixed and the code of
+// the two leaves is that of commit a689e03. Kept as the baseline for the profile of the page. The
 // entries are those of the real data sets street and dirs as a tree of byte
 // nodes cuts them (testdata, made by bench/cmd/skmodel -histogram): the
 // length of the key's remainder and the number of its values. Only the entries
@@ -65,42 +65,6 @@ type pages[T comparable] struct {
 	values func(p unsafe.Pointer) []T
 	size   func(p unsafe.Pointer, rem int) int // the bytes Go allocates for it
 	fits   func(e entry) bool                  // whether the entry is held in an object of its own, with room for one more value
-}
-
-func typedPages[T comparable]() pages[T] {
-	key := make([]byte, 600)
-	return pages[T]{
-		name: "typed leaf",
-		make: func(rem int, v T) unsafe.Pointer {
-			l := newTypedLeaf[T](key[:rem], 0)
-			if nl := typedAdd(l, v); nl != nil {
-				l = nl
-			}
-			return unsafe.Pointer(l)
-		},
-		add: func(p unsafe.Pointer, v T) unsafe.Pointer {
-			l := (*singleKeyHead)(p)
-			if nl := typedAdd(l, v); nl != nil {
-				return unsafe.Pointer(nl)
-			}
-			return p
-		},
-		remove: func(p unsafe.Pointer, v T) unsafe.Pointer {
-			l := (*singleKeyHead)(p)
-			if c, _ := typedRemove(l, v); c != 0 {
-				return unsafe.Pointer(resizeTyped[T](l, c))
-			}
-			return p
-		},
-		values: func(p unsafe.Pointer) []T { return typedVals[T]((*singleKeyHead)(p)) },
-		size: func(p unsafe.Pointer, rem int) int {
-			var z T
-			l := (*singleKeyHead)(p)
-			b, _ := Block(int(typedOff(rem))+typedCaps[l.cls()]*int(unsafe.Sizeof(z)), true)
-			return b
-		},
-		fits: func(e entry) bool { return e.rem <= maxTypedKey && e.n+1 <= typedCaps[len(typedCaps)-1] },
-	}
 }
 
 func fixedPages[T comparable]() pages[T] {
@@ -192,7 +156,7 @@ func BenchmarkFixedPages(b *testing.B) {
 	for _, data := range []string{"street", "dirs"} {
 		entries := loadEntries(b, data)
 		b.Run("pointer/"+data, func(b *testing.B) {
-			benchPages(b, entries, []pages[*rec]{typedPages[*rec](), fixedPages[*rec]()},
+			benchPages(b, entries, []pages[*rec]{fixedPages[*rec]()},
 				func(e, k int) *rec { return recs[(e*131+k*17)%len(recs)] }, func(v *rec) uint64 { return v.id ^ v.aux })
 		})
 	}
@@ -275,12 +239,11 @@ func TestFixedMemory(t *testing.T) {
 				}
 			}
 			ptrs := func(c pages[*rec]) (float64, int) {
-				return meanSize(t, c, es, both(typedPages[*rec]().fits, fixedPages[*rec]().fits), func(e, k int) *rec { return recs[(e*131+k*17)%len(recs)] })
+				return meanSize(t, c, es, fixedPages[*rec]().fits, func(e, k int) *rec { return recs[(e*131+k*17)%len(recs)] })
 			}
 			profile := map[bool]string{false: "real", true: "single-value"}[single]
-			a, na := ptrs(typedPages[*rec]())
-			f, _ := ptrs(fixedPages[*rec]())
-			t.Logf("%s %s, *rec:   typed leaf %.1f B, page %.1f B per key (%d of %d keys held by both)", data, profile, a, f, na, len(es))
+			f, na := ptrs(fixedPages[*rec]())
+			t.Logf("%s %s, *rec: page %.1f B per entry (%d of %d entries held by a page)", data, profile, f, na, len(es))
 		}
 	}
 }

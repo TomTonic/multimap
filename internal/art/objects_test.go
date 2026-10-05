@@ -110,8 +110,8 @@ func next(c int) int {
 func TestObjectSizes(t *testing.T) {
 	var flat Map[uint64]
 	flat.flat = 1
-	var typed Map[string]
-	typed.flat = 2
+	var ptrs Map[*rec]
+	ptrs.flat = 1
 	var sets Map[uint64]
 	sets.flat = -1
 	check := func(t *testing.T, m interface{ object(*header) Object }, mk func() unsafe.Pointer) {
@@ -156,15 +156,13 @@ func TestObjectSizes(t *testing.T) {
 			}
 		}
 	})
-	t.Run("typed leaves of every class and key area", func(t *testing.T) {
-		for c := 1; c < len(typedCaps); c++ {
-			for _, klen := range []int{0, 2, 3, 10, 11, 18, 19, 26, 27, 34, 35, 42, 43, 50, 51, 58} {
-				check(t, &typed, func() unsafe.Pointer {
-					l := allocTyped[string](uint8(c), klen)
-					l.setRem(klen)
-					return unsafe.Pointer(l)
-				})
-			}
+	t.Run("single-key pages of pointers of every class", func(t *testing.T) {
+		recs := make([]*rec, 63)
+		for i := range recs {
+			recs[i] = &rec{id: uint64(i)}
+		}
+		for _, n := range []int{1, 3, 4, 7, 8, 15, 16, 31, 32, 47, 48, 62} {
+			check(t, &ptrs, func() unsafe.Pointer { return unsafe.Pointer(skpage.BuildFixed[*rec](nil, 1, recs[:n])) })
 		}
 	})
 	t.Run("value overflows of every key area, and with the key as a string", func(t *testing.T) {
@@ -219,11 +217,10 @@ func TestObjects(t *testing.T) {
 	for name, keys := range keySets() {
 		var flat, flat1, sets Map[uint64]
 		flat.flat, flat1.flat, sets.flat = 1, 1, -1
-		var typed Map[string]
-		typed.flat = 2
+		var ptrMap Map[*rec]
 		fill(t, name+"/flat one value", keys, false, func(k []byte, v uint64) { flat1.Add(k, v) }, flat1.Objects, flat1.Len)
 		fill(t, name+"/flat", keys, true, func(k []byte, v uint64) { flat.Add(k, v) }, flat.Objects, flat.Len)
-		fill(t, name+"/typed", keys, true, func(k []byte, v uint64) { typed.Add(k, str(v)) }, typed.Objects, typed.Len)
+		fill(t, name+"/pointers", keys, true, func(k []byte, v uint64) { ptrMap.Add(k, &rec{id: v}) }, ptrMap.Objects, ptrMap.Len)
 		fill(t, name+"/sets", keys, true, func(k []byte, v uint64) { sets.Add(k, v) }, sets.Objects, sets.Len)
 		var strPages Map[string]
 		fill(t, name+"/single-key pages", keys, true, func(k []byte, v uint64) { strPages.Add(k, str(v)) }, strPages.Objects, strPages.Len)

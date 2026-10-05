@@ -19,14 +19,15 @@
 //     right after a 6-byte head; only a remainder of more than 254 bytes
 //     makes the leaf hold its whole key as a separate string. The shared
 //     parts of the keys are stored once, in the nodes.
-//   - For small pointer-free values (flat.go) the values follow the key in
-//     the same object, which grows through Go size classes from 32 to 512
-//     bytes as values arrive. Such a leaf holds no pointer, so the garbage
-//     collector never scans it. Small values with a pointer, such as strings,
-//     live in typed leaves (typed.go) the same way: the object is allocated
-//     with its real type, one of eight value capacities up to 16 values and
-//     one of eight key areas up to 58 bytes. Beyond that, and for other
-//     values, a leaf holds a vset.Set after its key (value overflows).
+//   - The values of an entry follow its key remainder in the same object, a
+//     single-key page of 32, 64, 128, 256, 384 or 512 bytes (internal/skpage),
+//     which grows through these classes as values arrive: as bytes with a
+//     length each for strings (singlekey.go), as an array of T for small
+//     pointer-free values and for values that are one pointer (fixedkey.go). A
+//     page without pointers is never scanned by the garbage collector; one with
+//     pointers is allocated as a Go type that marks them. An entry whose values
+//     do not fit, and every entry of the other types of value, is a value
+//     overflow: the key remainder and a pointer to a Set3 of the values.
 //   - A key that ends at a byte node (a prefix of other keys) is that
 //     node's end page. It takes the node's last child slot, which the byte
 //     children reach only when there is no end page: few keys are prefixes of
@@ -48,7 +49,7 @@ import (
 	"github.com/TomTonic/multimap/internal/vset"
 )
 
-// type tells the type of a node or page, and a flat leaf's size class: an object
+// type tells the type of a node or page, and a page's size class: an object
 // is a single-key page iff its type is at most maxSingleKeyByte (see isSingleKey). The types step by
 // two: the lowest bit of the type byte of a leaf or page is bit 8 of the length
 // of its key remainder (see singleKeyHead.rem), so the type of such an object is
@@ -56,7 +57,7 @@ import (
 type objType uint8
 
 const (
-	kValueOverflow objType = (iota + 1) << 1 // value overflow; kValueOverflow+2c is a flat leaf of class c (see flatSizes), or in a map of values with a pointer a typed leaf of class c (see typedCaps)
+	kValueOverflow objType = (iota + 1) << 1 // value overflow; kValueOverflow+2c is a single-key page of class c (see skpage)
 	_
 	_
 	_
@@ -65,7 +66,7 @@ const (
 	_
 	_
 	_
-	kLastSingleKey // flat leaf of the largest class
+	kLastSingleKey // single-key page of the largest class
 	kN5
 	kN12
 	kN26
@@ -93,9 +94,9 @@ const (
 	shrink256 = 48
 )
 
-// maxInline is the longest key remainder a leaf holds inline: in a value overflow
-// in an array of 16 to 256 bytes, whichever is the smallest that fits, in a
-// flat leaf right before its values. A longer one makes the leaf hold its
+// maxInline is the longest key remainder an old-style value overflow (leaf[T, K],
+// for the types that have no page) holds inline: in an array of 16 to 256
+// bytes, whichever is the smallest that fits. A longer one makes it hold its
 // whole key as a string, which costs a separate allocation and a pointer
 // chase on every comparison.
 const maxInline = 254
@@ -125,25 +126,22 @@ const longPrefix = 1<<16 - 1
 // bytes from its base, which are then also on its path; it moves up only
 // with a new base (see rekeyFunc).
 type singleKeyHead struct {
-	objType objType // kValueOverflow, or kValueOverflow+2c for a flat or typed leaf of class c; its lowest bit is bit 8 of the remainder length
+	objType objType // kValueOverflow, or kValueOverflow+2c for a single-key page of class c; its lowest bit is bit 8 of the remainder length
 	klen    uint8   // bits 0 to 7 of the length of the inline key remainder, or of longKey for a whole key held as a string
-	n       uint16  // flat and typed leaves: number of values
+	n       uint16  // single-key pages: number of values
 	kl      uint16  // length of the whole key, if the remainder is inline
 }
 
 // isSingleKey reports whether an object of type k is a single-key page (in any of its
-// forms: the flat and typed leaf, the value overflow).
+// forms: the page, the value overflow).
 func isSingleKey(k objType) bool { return k <= maxSingleKeyByte }
 
-// cls returns the size class of a flat leaf (see flatSizes), or 0 for a set
-// leaf.
+// cls returns the size class of a single-key page (1 for 32 bytes), or 0 for a
+// value overflow.
 func (l *singleKeyHead) cls() uint8 { return uint8(l.objType&^1-kValueOverflow) >> 1 }
 
 // isValueOverflow reports whether l is a value overflow (class 0).
 func (l *singleKeyHead) isValueOverflow() bool { return l.objType&^1 == kValueOverflow }
-
-// setClass makes l a leaf of class c, keeping its remainder length.
-func (l *singleKeyHead) setClass(c uint8) { l.objType = kValueOverflow + objType(c)<<1 | l.objType&1 }
 
 // rem returns the length of the inline key remainder, or longKey: nine bits,
 // the lowest bit of the type byte on top of klen.

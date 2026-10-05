@@ -3,17 +3,19 @@ package art
 import (
 	"unsafe"
 
+	"github.com/TomTonic/multimap/internal/skpage"
 	"github.com/TomTonic/multimap/internal/vset"
 )
 
 // Map is a multimap from byte-string keys to sets of T on top of Tree. Every
-// leaf holds its key's values: a flat leaf right after the key remainder
-// (see flat.go), a value overflow in a vset.Set. Reading them costs no pointer chase beyond the
-// leaf until a key holds more values than a flat leaf of 512 bytes. The zero
-// value is an empty map.
+// entry (a key with its values) lives in one single-key page of 32 to 512 bytes,
+// the values right after the remainder of the key (see fixedkey.go, singlekey.go),
+// or in a value overflow when they do not fit. Reading them costs no pointer chase
+// beyond the page until an entry holds more values than a page of 512 bytes. The
+// zero value is an empty map.
 type Map[T comparable] struct {
 	t    Tree
-	flat int8 // 1: single-key pages of fixed-size values (no pointer), 2: typed leaves, 3: single-key pages (string), -1: value overflows only, 0: not decided yet
+	flat int8 // 1: single-key pages of fixed-size values (skpage.Fixed), 3: single-key pages of strings (skpage.Page), -1: value overflows only, 0: not decided yet
 }
 
 // newSetLeaf allocates a value overflow that holds key from base on, in the
@@ -150,17 +152,16 @@ func setPrepend(l *singleKeyHead, pre []byte, b, pathLen int, keyCap func(int) i
 	return true
 }
 
-// decide settles once per map whether T takes single-key pages of fixed-size
-// values (see fixedType), single-key pages of strings, or typed leaves (see
-// typedType).
+// decide settles once per map how it holds the values of an entry: in
+// single-key pages of fixed-size values if T takes them (skpage.Supported: small
+// and without pointers, or one word that is a pointer), in single-key pages of
+// strings if T is string, else in a value overflow for every entry.
 func (m *Map[T]) decide() {
 	switch {
-	case fixedType[T]():
+	case skpage.Supported[T]():
 		m.flat = 1
 	case stringType[T]():
 		m.flat = 3
-	case typedType[T]():
-		m.flat = 2
 	default:
 		m.flat = -1
 	}
@@ -184,8 +185,6 @@ func (m *Map[T]) Add(key []byte, v T) {
 	switch m.flat {
 	case 1:
 		nl = newFixedLeaf[T]
-	case 2:
-		nl = newTypedLeaf[T]
 	case 3:
 		nl = newSK
 	}
@@ -206,10 +205,6 @@ func (m *Map[T]) addToLeaf(loc **header, l *singleKeyHead, key []byte, v T) {
 		addSK(loc, l, key, *(*string)(unsafe.Pointer(&v)))
 	case m.flat == 1:
 		addFixed(loc, l, key, v)
-	default: // typed leaf
-		if nl := typedAdd(l, v); nl != nil {
-			*loc = singleKeyHdr(nl)
-		}
 	}
 }
 
@@ -227,13 +222,10 @@ func (m *Map[T]) Remove(key []byte, v T) {
 		return
 	}
 	if !l.isValueOverflow() {
-		switch m.flat {
-		case 1:
+		if m.flat == 1 {
 			removeFixed(&m.t, l, key, v, rk)
-		case 3:
+		} else {
 			m.t.removeSK(l, key, *(*string)(unsafe.Pointer(&v)), rk)
-		default: // typed leaf
-			m.removeTyped(l, key, v, rk)
 		}
 		return
 	}
@@ -250,10 +242,6 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	case !s.Remove(v):
 	case s.Len() == 0:
 		m.t.remove(key, rk)
-	case m.flat == 2:
-		if c := unspillTypedClass[T](l); c != 0 {
-			*m.t.findSlot(key) = singleKeyHdr(unspillTyped[T](l, c))
-		}
 	}
 }
 
@@ -272,16 +260,6 @@ func (m *Map[T]) removeFromOverflowSet(l *singleKeyHead, key []byte, v string, r
 	}
 }
 
-// removeTyped removes v from the typed leaf l of key; rk is the map's rekeyFunc.
-func (m *Map[T]) removeTyped(l *singleKeyHead, key []byte, v T, rk rekeyFunc) {
-	switch c, empty := typedRemove(l, v); {
-	case empty:
-		m.t.remove(key, rk)
-	case c != 0:
-		*m.t.findSlot(key) = singleKeyHdr(resizeTyped[T](l, c))
-	}
-}
-
 // RemoveKey removes key and all its values. An absent key is ignored.
 func (m *Map[T]) RemoveKey(key []byte) {
 	m.t.remove(key, m.rekeyFunc())
@@ -292,8 +270,6 @@ func (m *Map[T]) rekeyFunc() rekeyFunc {
 	switch m.flat {
 	case 1:
 		return rekeyFixed[T]
-	case 2:
-		return rekeyTyped[T]
 	case 3:
 		return rekeySK
 	}
@@ -316,27 +292,20 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 // eachValue calls yield for every value of leaf l and reports whether it ran
 // to completion.
 func eachValue[T comparable](l *singleKeyHead, flat int8, yield func(T) bool) bool {
-	switch {
-	case flat == 3: // T is string
+	switch flat {
+	case 3: // T is string
 		y := *(*func(string) bool)(unsafe.Pointer(&yield))
 		if l.isValueOverflow() {
 			return overflowEach(l, y)
 		}
 		return asSK(l).Strings(y)
-	case flat == 1:
+	case 1:
 		if l.isValueOverflow() {
 			return overflowEach(l, yield)
 		}
 		return asFixed(l).Each(yield)
-	case l.isValueOverflow():
-		return vals[T](l).Each(yield)
 	}
-	for _, v := range typedVals[T](l) {
-		if !yield(v) {
-			return false
-		}
-	}
-	return true
+	return vals[T](l).Each(yield)
 }
 
 // leafTail is the offset of the last byte of the smallest leaf this map
@@ -344,11 +313,7 @@ func eachValue[T comparable](l *singleKeyHead, flat int8, yield func(T) bool) bo
 // at least that large, and a constant offset keeps the load independent of
 // the leaf's head.
 func (m *Map[T]) leafTail() uintptr {
-	var z T
-	switch m.flat {
-	case 2:
-		return typedOff(0) + unsafe.Sizeof(z) - 1
-	case 1, 3:
+	if m.flat != -1 {
 		return 32 - 1 // the smallest page
 	}
 	return unsafe.Sizeof(leaf[T, [16]byte]{}) - 1

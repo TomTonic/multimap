@@ -220,6 +220,9 @@ func TestFixedSupported(t *testing.T) {
 			t.Errorf("%s: got %v", tc.name, tc.got)
 		}
 	}
+	if HoldsPointers[uint64]() || !HoldsPointers[*rec]() || HoldsPointers[string]() {
+		t.Error("HoldsPointers is right for a pointer only")
+	}
 }
 
 // TestFixedLimits covers what the Fixed page refuses, so that the tree knows to

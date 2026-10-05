@@ -8,7 +8,7 @@ import (
 
 // upsert returns the slot that holds the leaf of key, creating the leaf with
 // nl when it is missing. The caller may replace a leaf in its slot, as a
-// flat leaf does when it grows.
+// page does when it grows.
 //
 // It descends like find, checking common prefixes and searching nodes the
 // same fast way, and keeps the slot it came through. A missing key is then
