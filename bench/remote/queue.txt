@@ -42,3 +42,9 @@ l1 c4dc4b6 - 25 tags=strvals -suite dev -keys street -values unique -sizes 4096,
 l2 c4dc4b6 - 20 tags=strvals -suite dev -keys dirs -values unique -sizes 4096,16384,86215 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3 -vs ordered-lpage,ordered-lpage-zc,btree-map
 l3 c4dc4b6 - 45 tags=strvals -suite dev -keys street -values multi -sizes 4096,16384,212449 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3 -vs ordered-lpage,ordered-lpage-mv,ordered-lpage-mvzc,btree-sets
 l4 c4dc4b6 - 40 tags=strvals -suite dev -keys dirs -values multi -sizes 4096,16384,86215 -minprocs 8 -maxprocs 24 -memn 262144 -memrounds 3 -vs ordered-lpage,ordered-lpage-mv,ordered-lpage-mvzc,btree-sets
+
+# Step 4.2 gate on the M1 (2026-10-05, the night the user left the Mac free): the multi-key pages with the merge
+# trigger of 3e1e952 against step 3.5 (fe120f5), real mix against btree-sets and one value per entry against btree-map.
+# The PC runs the same commit (m43) with the sizes of the dev suite; here 65,536 keys too, where random uint64 keys
+# are the worst case of the memory (docs/redesign/step4-probe.md).
+m43 3e1e952 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
