@@ -1,5 +1,11 @@
 # Status
 
+## 2026-10-05: step 4 approved (D1 burst, no range nodes; D3 one `build`), 4.1 done: `internal/mkpage` ([results](step4-mkpage-results.md))
+
+- The user approved the design note: bursting under byte nodes (range nodes: question of step 6), `build` for burst and promote, no fall back, order strings, `uint64`, pointers. Glossary updated (burst, promote, merge changed; fall back, split retired; range node out of the tree).
+- `internal/mkpage` (`Page` strings, `Fixed` pointer-free `T`): 100 %, race, fuzz, lint. Built into the model, **the pages have exactly the bytes of the model on all 10 data sets**. `Get` 24 ns at 7 entries, 46 ns at 20 (one `compare` loop instead of `bytes.Compare` took 20 to 60 % off).
+- Next: 4.2 (the tree for strings and `uint64`); stop for the user before it.
+
 ## 2026-10-05: step 4 (MKSV) design note written, waiting for the user's approval ([step4-mksv-design.md](step4-mksv-design.md))
 
 - Proposal: no range nodes, multi-key pages below byte nodes that burst when full (model: `street` strings 30.9 B an entry against 30.4 measured with range nodes, `dirs` 50.3 against 54.3; random `uint64` keys 24.0 against 16 with range nodes: the case for step 6); layout B with a 3-byte head, one grid 32 to 512, pointer pages as the existing `ptrObject` with N = n;

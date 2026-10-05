@@ -33,14 +33,14 @@ compare (`objType <= kLastMultiKey`) and `isSingleKey` the one of today.
 
 ```
 strings:  type | n | cpl | rl1 rl2 ... rln | cp ... cp | r1 ... r1 vl1 v1 ... v1 | r2 ... r2 vl2 v2 ... | ...
-fixed T:  type | n | cpl | rl1 rl2 ... rln | cp ... cp | all remainders | padding to a word | v1 v2 ... vn   (the n values at the end of the object)
+fixed T:  type | n | cpl | rl1 rl2 ... rln | cp ... cp | all remainders | padding to a word | v1 v2 ... vn   (the values behind the padding, after the last remainder)
 ```
 
 `n` entries (at most 255), `cpl` the length of the common prefix, `rl_i` the length of the remainder after it (an entry with the empty remainder, the key that ends at the prefix, is allowed: `n` ends the lists, not a zero).
 Entries are in key order. For strings each value follows its remainder (`vl` 1 byte, value up to 255): an insert shifts one block, a lookup that has found the key has its value in the same lines
 (the deviation of the prototype from the sketch, step3-layout.md). For fixed-size `T` the values are one array at the end, which is also what the typed objects of `*T` need: **the pointer page is the existing `ptrObject[T, [J]uint64, [N]T]`
 with N = n** (head, lengths, prefix and remainders in the J words in front); no new Go type. The head is 3 bytes in this page (the single-key page's 6 are history, step 3.5 note).
-*Admissible entry:* one value, remainder after the prefix at most 255 bytes, value at most 255 bytes, common prefix at most 255 bytes. Anything else stays a single-key page (value overflow, long remainder, as today).
+*Admissible entry:* one value, remainder after the prefix at most 255 bytes, value at most 254 bytes (as in the single-key page), common prefix at most 255 bytes. Anything else stays a single-key page (value overflow, long remainder, as today).
 
 **D3. One function builds subtrees: `build(entries, path length)`.** It is the model's recursion: all entries single-value and fitting 512 bytes: a page; one entry: a single-key page; else a byte node on the next differing byte with a
 `build` per child. It is used by the burst of a full page and by the **promote** (an entry gets a second value: the page's entries are built again with that entry as a single-key page; with the sorted entries at hand

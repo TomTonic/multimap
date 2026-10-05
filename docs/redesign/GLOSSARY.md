@@ -72,9 +72,9 @@ Every object that stores entries stores only the end of their keys. The tree spe
   (`leaf[T,K]`, `findLeaf` ... ) are single-key pages in older forms and keep those names until step 3.5 replaces them. **Renamed 2026-10-04** (commit 622d634):
   `leafHead` -> `singleKeyHead`, `isLeaf`/`isPage` -> `isSingleKey`/`isMultiKey`, `kSet` -> `kValueOverflow`, `kind` -> `objType` (the type byte, byte 0 of
   every object), the set leaf -> value overflow.
-- **page**: an object of 128, 256, 384 or 512 bytes that stores entries (384 since the user's
-  sketch; the code of step 2 has 128, 256 and 512). A **single-key page** may also be 32 or 64 bytes
-  (decided 2026-10-04, [step3-skmv-sizes.md](step3-skmv-sizes.md)): most keys hold 20 to 60 bytes. It has no pointer in it unless its values need
+- **page**: an object of 32, 64, 128, 256, 384 or 512 bytes that stores entries (the grid of
+  [step3-skmv-sizes.md](step3-skmv-sizes.md), decided 2026-10-04 for the single-key page: most keys hold 20 to 60 bytes; decided 2026-10-05 for the multi-key page too, step 4:
+  [step4-mksv-design.md](step4-mksv-design.md), a page of two entries takes 64). It has no pointer in it unless its values need
   one. There are two kinds, and until step 5 no page mixes them: no page holds entries with
   different numbers of values.
   - **single-key page** *(planned, step 3)*: exactly one entry with all its values inline, as many as
@@ -104,7 +104,7 @@ Every object that stores entries stores only the end of their keys. The tree spe
   - **byte node**: one child per byte value. The child never sees that byte again; the node
     consumes it. (Before: `inner node`, N5 to N256.)
   - **range node**: one child per range of byte values. The byte stays in the keys below, because a
-    child holds several values of it. (R8 to R256.)
+    child holds several values of it. (R8 to R256.) *Not part of the tree since 2026-10-05* (step 4 hangs the multi-key pages below byte nodes); whether it comes back is the question of step 6 (routing).
 
   A byte node is the special case of a range node with one value per range, plus the consumed byte.
 
@@ -121,13 +121,12 @@ Every object that stores entries stores only the end of their keys. The tree spe
 ## Operations
 
 - **grow**, **shrink**: a page moves to the next larger or smaller size class (a new object).
-- **split**, **merge**: a full multi-key page becomes two, at a byte boundary; two thin
-  neighbours become one.
-- **burst**: a full page that cannot be split at a byte boundary gets a range node of its own.
-- **promote**: an entry that gets a second value leaves its multi-key page for a single-key page.
-- **fall back**: a subtree is rebuilt from byte nodes and single-key pages, because entries with
-  several values crowd it. (Before: `settle`, `crowded`. Only exists as long as a single-key page
-  cuts a multi-key page in two, see below.)
+- **burst** (changed 2026-10-05, step 4): a full multi-key page is replaced by a byte node on the next byte in which its keys differ, with a page (or, for one entry, a single-key page)
+  for each byte value. The tree has no range nodes in step 4; *before:* a full page was split at a byte boundary, or got a range node of its own.
+- **promote** (changed 2026-10-05): an entry that gets a second value leaves its multi-key page: the page's entries are built again with that entry as a single-key page
+  (`build`, the function that also does the burst).
+- **merge**: after a removal, a byte node whose children are single-value pages that fit one page together becomes one page.
+- **fall back**, **split**: retired (2026-10-05). A multi-key page never holds a multi-value entry, so no subtree needs a fall back; there is no range node to split at. (Before: `settle`, `crowded`.)
 
 ## Parts of the multi-key page
 
