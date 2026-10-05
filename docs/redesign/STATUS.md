@@ -1,5 +1,11 @@
 # Status
 
+## 2026-10-05: step 4 (MKSV) design note written, waiting for the user's approval ([step4-mksv-design.md](step4-mksv-design.md))
+
+- Proposal: no range nodes, multi-key pages below byte nodes that burst when full (model: `street` strings 30.9 B an entry against 30.4 measured with range nodes, `dirs` 50.3 against 54.3; random `uint64` keys 24.0 against 16 with range nodes: the case for step 6); layout B with a 3-byte head, one grid 32 to 512, pointer pages as the existing `ptrObject` with N = n;
+  one `build` function for burst and promote, the fall back goes. Prediction: single-value `street`/`uint64` 66.5 to 26.9 B an entry (`btree-map` 55), `dirs` 72.2 to 39.5, `uint64` -> `*T` 52.6 to 24.0 (45); the real mix at most -22 % / -11 %, gate 4 asks only for no loss.
+- New: `bench/cmd/skmodel -multi [-values string|words|pointers] [-mkgrid ...]` (the model, reproduces the single-key tree's measured memory to 1 B).
+
 ## 2026-10-05: step 3.5 measured on the PC ([results](step3-tree-results.md)); gate 3 not met in two places
 
 - 18 runs (10:17 to 12:04): `node-layout` and the tree before 3.5 as references. Memory as predicted (`uint64` real 90 and 108 B per entry, one value 67; `*T` real 90 and 108). Real maps: credo 1 met in every cell against `btree-sets` (churn 1.26 at the lowest), speed 0.85 to 0.99 of `node-layout`, no cell below 0.70, 0.93 to 1.06 of the tree before 3.5.

@@ -57,6 +57,9 @@ func main() {
 			row(kind, keys.Capacity(kind), singleValue)
 		}
 	}
+	if *multiF {
+		u64Model()
+	}
 }
 
 type entry struct {
@@ -150,6 +153,9 @@ func row(kind keys.Kind, n int, singleValue bool) {
 	}
 	if *nodesF {
 		wholeTree(kind, singleValue, c, es)
+	}
+	if *multiF {
+		multiModel(kind, singleValue, c, es)
 	}
 	if *overflowF && !singleValue {
 		overflow(kind, c, es)
