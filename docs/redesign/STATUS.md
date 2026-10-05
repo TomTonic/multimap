@@ -3,8 +3,7 @@
 ## 2026-10-04 late night: step 3.5.1 done, `skpage.Fixed` standalone ([results](step3-fixed-results.md))
 
 - `Fixed` with 166 generated pointer types, GC test for all of them, fuzz, 100 %; `BackFits` (the way back from the value overflow, also for strings). Against flat and typed leaf on the real entries: hit and read equal, churn +2 to 6 % (`uint64`) and
-  +15 to 42 % (`*rec`), build +17 to 22 % (`uint64`); memory equal for `uint64`, **+20 % / +41 % for `*rec`** (32-byte minimum class against the typed leaf's 24). Two questions for the user in the results (a 24-byte class; the
-  hysteresis for the string page). Step 3.5.2 waits for them.
+  +15 to 42 % (`*rec`), build +17 to 22 % (`uint64`); memory equal for `uint64`, **+20 % / +41 % for `*rec`** (32-byte minimum class against the typed leaf's 24). User's answers (2026-10-05): no 24-byte class for now (backlog for the profile after 0.8); the string page got the same shrink hysteresis. Next: step 3.5.2, the value overflow generic in `T`.
 
 ## 2026-10-04 night: step 3.5.0 done, the multi-key pages are out of the code
 

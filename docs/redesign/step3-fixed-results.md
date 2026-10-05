@@ -46,7 +46,12 @@ Page / old leaf, time (hot: 4,096 keys in the cache; all: every key). Full table
 4. **Build** for `uint64` is slower because the flat leaf grows by doubling to at least 64 bytes and the page by one class: more small objects when keys get their values one by one. In a map built from a bulk the page is
    cheaper (`BuildFixed` makes the page of the right class at once; the tree does not use it for that yet).
 
-## Decisions for the user (before step 2)
+## Decisions of the user (2026-10-05)
+
+- **No 24-byte class for now** ("erstmal keine"): the pages stay on the grid 32/64/128/256/384/512; the pointer maps are 5 to 14 % bigger than the typed leaf for the time being, a candidate for the profile after 0.8.
+- **The string page gets the same hysteresis** (done, commit below; tests, race, both fuzz tests, lint green). One rule for both flavors.
+
+The questions as asked:
 
 - **A 24-byte class for the pages?** For one word of value and a remainder of up to 10 bytes a page of 24 bytes (3 words: head and remainder in two, the value in one) is what the typed leaf has now, and what the
   `uint64` page would take too (`flat leaf` starts at 32 for `uint64`, so no gain there). It brings the pointer page to the typed leaf's memory (-5.8 B/key on `street`) and costs: one class that is not on the grid 32/64/128/...,

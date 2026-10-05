@@ -310,9 +310,13 @@ func (p *Page) Add(val []byte) (*Page, Result) {
 }
 
 // Remove removes val from the values and reports whether it was there. It
-// returns the page that holds the rest: p itself, a page of a smaller class if
-// the content now fits one that saves at least half of p's size, or nil if val
-// was the only value, when the key is gone.
+// returns the page that holds the rest: p itself, a page of a smaller class once
+// the values fill at most half of it (the smallest class that holds twice the
+// bytes of values, behind head and remainder), or nil if val was the only
+// value, when the key is gone. A page grows by the smallest class that holds one
+// more value, so a key whose values hover at a class border does not change its
+// object with every added and removed value: after shrinking it is half empty
+// and takes as many additions to grow again (the rule of Fixed).
 func (p *Page) Remove(val []byte) (*Page, bool) {
 	if len(val) > MaxValue {
 		return p, false
@@ -330,13 +334,15 @@ func (p *Page) Remove(val []byte) (*Page, bool) {
 	clear(m[used-(end-at) : used])
 	p.n--
 	used -= end - at
-	if c := classFor(used); c >= 0 && 2*sizes[c] <= p.Size() {
-		q := newPage(c, p.rem(), int(p.kl))
-		q.n = p.n
-		copy(q.mem()[Header:], m[Header:used])
-		return q, true
+	fixed := Header + p.rem()
+	c := classFor(fixed + 2*(used-fixed)) // twice the values: the smaller class is then half empty
+	if c < 0 || c >= p.class() {
+		return p, true
 	}
-	return p, true
+	q := newPage(c, p.rem(), int(p.kl))
+	q.n = p.n
+	copy(q.mem()[Header:], m[Header:used])
+	return q, true
 }
 
 // Each calls fn with every value in the order of their arrival until fn returns

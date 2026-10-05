@@ -141,8 +141,8 @@ func bytesOf(ss []string) [][]byte {
 // TestAddAndRemove covers what a user does to the values of one key: add one
 // (a value that is there changes nothing), remove one. It belongs to the
 // single-key page of the tree. The page grows into a larger class when the
-// content outgrows it, shrinks when a removal leaves at most half of it
-// in use, disappears with its last value, and tells the tree with Full when a
+// content outgrows it, shrinks when a removal leaves the values at most half of
+// a smaller class, disappears with its last value, and tells the tree with Full when a
 // value does not fit any more.
 func TestAddAndRemove(t *testing.T) {
 	t.Run("adds in place while the content fits", func(t *testing.T) {
@@ -235,14 +235,40 @@ func TestAddAndRemove(t *testing.T) {
 			t.Fatalf("got %p, %v", q, ok)
 		}
 	})
-	t.Run("shrinks when the content fits a class of at most half the size", func(t *testing.T) {
-		p := New([]byte("ab"), keyLen, bytes.Repeat([]byte("x"), 23))
-		p, _ = p.Add([]byte("y")) // 64 bytes, content 35
-		q, ok := p.Remove([]byte("y"))
-		if !ok || q == p || q.Size() != 32 {
+	t.Run("shrinks to the class that holds twice the values, not at once to the smallest", func(t *testing.T) {
+		v := func(c string) []byte { return bytes.Repeat([]byte(c), 20) } // 21 bytes with its length
+		p := New([]byte("ab"), keyLen, v("a"))                            // 8 + 21
+		p, _ = p.Add(v("b"))
+		p, _ = p.Add(v("c")) // content 71: 128 bytes
+		if p.Size() != 128 {
+			t.Fatalf("got %d bytes", p.Size())
+		}
+		q, _ := p.Remove(v("c")) // 42 bytes of values: twice that is 92, which fills the 128
+		if q != p {
+			t.Fatalf("with two values the page moved to %d bytes", q.Size())
+		}
+		q, _ = q.Remove(v("b")) // 21 bytes of values: twice that is 50 and 8 of head, 64 bytes (the content would fit 32)
+		if q == p || q.Size() != 64 {
+			t.Fatalf("with one value got a page of %d bytes", q.Size())
+		}
+		verify(t, q, model{"ab", []string{string(v("a"))}})
+	})
+	t.Run("a value that comes and goes at a class border copies nothing", func(t *testing.T) {
+		p := New([]byte("ab"), keyLen, bytes.Repeat([]byte("x"), 23)) // 6 + 2 + 24 = 32: full
+		q, _ := p.Add([]byte("y"))                                    // 64 bytes
+		if q == p || q.Size() != 64 {
 			t.Fatalf("got a page of %d bytes", q.Size())
 		}
-		verify(t, q, model{"ab", []string{strings.Repeat("x", 23)}})
+		for range 3 {
+			r, _ := q.Remove([]byte("y"))
+			if r != q {
+				t.Fatal("the page shrank at the border")
+			}
+			r, _ = r.Add([]byte("y"))
+			if r != q {
+				t.Fatal("the page was copied for a value that fits")
+			}
+		}
 	})
 	t.Run("keeps a page that would save less than half", func(t *testing.T) {
 		p := New(nil, keyLen, bytes.Repeat([]byte("a"), 200)) // 256
@@ -250,7 +276,7 @@ func TestAddAndRemove(t *testing.T) {
 		if p.Size() != 384 {
 			t.Fatalf("got %d bytes", p.Size())
 		}
-		q, _ := p.Remove(bytes.Repeat([]byte("b"), 100)) // content 207: class 256 saves a third
+		q, _ := p.Remove(bytes.Repeat([]byte("b"), 100)) // 201 bytes of values: twice that is 402, which needs 512
 		if q != p || q.Size() != 384 {
 			t.Fatalf("got a page of %d bytes", q.Size())
 		}

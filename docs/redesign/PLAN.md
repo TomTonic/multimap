@@ -211,6 +211,8 @@ and every comparison of `kind` (`isLeaf`, `isPage`, the descent), so: note with 
 
 ### 3.5 The other cases
 
+**3.5.1 done 2026-10-05** ([step3-fixed-results.md](step3-fixed-results.md)); decided: no 24-byte class for now, the string page shrinks with the same hysteresis as `Fixed`. A 24-byte class (the typed leaf's size for one pointer) is a candidate for the profile after 0.8.
+
 **Decided 2026-10-04 (user), see [step3-fixed-design.md](step3-fixed-design.md):** the multi-key pages are off and cut out of `internal/art` first (tag `before-mk-pages-removal`; they are redesigned in step 4 with what is learned by then, or the old code comes back from the tag); pointer pages for one-word `T` only; values aligned to `T` and compared as `T`.
 
 **First, the vocabulary of what survives** (user's remark of 2026-10-04: new code still said "leaf", and the code's `isPage` means the multi-key page while the single-key page
