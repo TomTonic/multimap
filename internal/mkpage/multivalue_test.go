@@ -250,6 +250,80 @@ func (f *fixedPage) invariants(t *testing.T) {
 	}
 }
 
+type ptrPage struct{ p *Fixed }
+
+func (f *ptrPage) build(m mvModel) mvPage {
+	rests, vals := m.rests()
+	vs := make([]*uint64, len(vals))
+	for i, v := range vals {
+		vs[i] = ptrVal(string(v))
+	}
+	return &ptrPage{BuildFixed(rests, vs)}
+}
+
+// ptrPool holds the values of the pointer pages in the tests: the pointer of "n" is &ptrPool[n], and holds n.
+var ptrPool = func() (p [64]uint64) {
+	for i := range p {
+		p[i] = uint64(i)
+	}
+	return p
+}()
+
+func ptrVal(s string) *uint64 { n, _ := strconv.ParseUint(s, 10, 64); return &ptrPool[n] }
+
+func (f *ptrPage) value(r *rand.Rand) string { return strconv.Itoa(r.IntN(6)) }
+func (f *ptrPage) add(key, val string) Result {
+	q, res := f.p.Add([]byte(key), ptrVal(val))
+	f.p = q
+	return res
+}
+func (f *ptrPage) remove(key, val string) Removal {
+	q, rm := f.p.Remove([]byte(key), ptrVal(val))
+	f.p = q
+	return rm
+}
+func (f *ptrPage) widen(key, val string) bool {
+	q := f.p.Widen([]byte(key), ptrVal(val))
+	if q != nil {
+		f.p = q
+	}
+	return q != nil
+}
+func (f *ptrPage) gone() bool { return f.p == nil }
+func (f *ptrPage) cp() string { return string(f.p.CP()) }
+func (f *ptrPage) need(slots, remBytes, _ int) int {
+	return NeedFixed[*uint64](slots, f.p.PrefixLen(), remBytes)
+}
+func (f *ptrPage) tooLong(string, string) bool { return false }
+func (f *ptrPage) flat() (out []mvFlat) {
+	cp := string(f.p.CP())
+	f.p.Each(func(rem []byte, v *uint64, first bool) bool {
+		out = append(out, mvFlat{cp + string(rem), strconv.FormatUint(*v, 10), first})
+		return true
+	})
+	return out
+}
+func (f *ptrPage) values(key string) (vs []string, ok bool) {
+	ok = f.p.EachValue([]byte(key), func(v *uint64) bool { vs = append(vs, strconv.FormatUint(*v, 10)); return true })
+	return vs, ok
+}
+func (f *ptrPage) get(key string) (string, bool) {
+	v, ok := f.p.Get[*uint64]([]byte(key))
+	return strconv.FormatUint(*v, 10), ok
+}
+func (f *ptrPage) counts() (int, int) { return f.p.Len(), f.p.Keys() }
+func (f *ptrPage) invariants(t *testing.T) {
+	t.Helper()
+	used := f.p.Used()
+	vs := f.p.vs(int(unsafe.Sizeof(uint64(0))))
+	if vs < used {
+		t.Fatalf("values start at %d, the keys end at %d", vs, used)
+	}
+	if mem := f.p.mem(); bytes.Count(mem[used:vs], []byte{0}) != vs-used {
+		t.Fatal("bytes between the keys and the values are not zero")
+	}
+}
+
 // checkMV compares a page with the model: every value of every key in order, the first
 // flags, the counts, the lookups, and the layout invariants.
 func checkMV(t *testing.T, pg mvPage, m mvModel) {
@@ -326,7 +400,7 @@ func expectAdd(pg mvPage, m mvModel, key, val string) Result {
 // the first flags, the counts and the lookups equal the model's, the layout invariants
 // hold, and a refused Widen is one that a page built from all the entries would also refuse.
 func TestMultiValuePageAgainstModel(t *testing.T) {
-	for _, pg := range []mvPage{&strPage{}, &fixedPage{}} {
+	for _, pg := range []mvPage{&strPage{}, &fixedPage{}, &ptrPage{}} {
 		t.Run(fmt.Sprintf("%T", pg), func(t *testing.T) { runMV(t, pg) })
 	}
 }
@@ -507,7 +581,7 @@ func binaryLE(b []byte, v uint64) []byte {
 // the others stay in order each time, the key stays until the last value is gone, and the
 // only value of a page makes the page gone.
 func TestMultiValuePageRemovals(t *testing.T) {
-	for _, pg := range []mvPage{&strPage{}, &fixedPage{}} {
+	for _, pg := range []mvPage{&strPage{}, &fixedPage{}, &ptrPage{}} {
 		t.Run(fmt.Sprintf("%T", pg), func(t *testing.T) {
 			m := mvModel{{"Bahnhof", []string{"7"}}, {"Bahnhofsallee", []string{"1"}}, {"Bahnhofstrasse", []string{"2", "5", "9"}}, {"Bahnhofweg", []string{"4"}}}
 			for _, order := range [][]string{{"5", "2", "9"}, {"2", "5", "9"}, {"9", "5", "2"}} {
@@ -638,11 +712,15 @@ func TestMultiValuePageSkipAndPrepend(t *testing.T) {
 			q.p.Skip[uint64](skip)
 			checkMV(t, pg, stripped)
 			q.p = q.p.Prepend[uint64]([]byte(m[0].key[:skip]))
+		case *ptrPage:
+			q.p.Skip[*uint64](skip)
+			checkMV(t, pg, stripped)
+			q.p = q.p.Prepend[*uint64]([]byte(m[0].key[:skip]))
 		}
 		checkMV(t, pg, m)
 	}
 	m := mvModel{{"Bahnhof", []string{"7"}}, {"Bahnhofsallee", []string{"1"}}, {"Bahnhofstrasse", []string{"2", "5", "9"}}, {"Bahnhofweg", []string{"4"}}}
-	for _, pg := range []mvPage{&strPage{}, &fixedPage{}} {
+	for _, pg := range []mvPage{&strPage{}, &fixedPage{}, &ptrPage{}} {
 		check("short", pg.build(m.clone()), m, 3)
 		check("all of it", pg.build(m.clone()), m, 7)
 	}
@@ -749,7 +827,7 @@ func TestMultiValuePageWidenRefusesLongRemainder(t *testing.T) {
 func FuzzMultiValuePage(f *testing.F) {
 	f.Add([]byte("abc\x00x1abc\x00y2\x01abc\x00x1abd\x00z2"))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		for _, fl := range []mvPage{&strPage{}, &fixedPage{}} {
+		for _, fl := range []mvPage{&strPage{}, &fixedPage{}, &ptrPage{}} {
 			var pg mvPage
 			var m mvModel
 			d := data
@@ -761,7 +839,7 @@ func FuzzMultiValuePage(f *testing.F) {
 				}
 				key, val := string(d[:kl]), string(d[kl:kl+vl])
 				d = d[kl+vl:]
-				if _, isFixed := fl.(*fixedPage); isFixed {
+				if _, isStr := fl.(*strPage); !isStr {
 					val = strconv.Itoa(len(val) % 6)
 				}
 				switch {

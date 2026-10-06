@@ -278,7 +278,7 @@ func TestFixedLimits(t *testing.T) {
 	})); p == nil || p.Size() != 512 || p.Len() != 63 {
 		t.Errorf("63 values of 8 bytes fill a page of 512: %v", p)
 	}
-	if allocPtr[*rec](0, 4) != nil || allocPtr[*rec](6, 1) != nil {
+	if allocPtr[*rec](0, 4) != nil || allocPtr[*rec](6, 1) != nil || AllocPtr[*rec](0, 4) != nil || AllocPtr[*rec](2, 5) == nil {
 		t.Error("allocPtr gives an object for a layout that no page has")
 	}
 	p := NewFixed(nil, 3, uint64(0))

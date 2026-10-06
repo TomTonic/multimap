@@ -2,10 +2,26 @@ package art
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+// recPool returns a function that gives the same *rec for the same i, for the tests of maps of
+// pointers: a value is the pointer, and its identity is what the map compares.
+func recPool() func(i int) *rec {
+	pool := map[int]*rec{}
+	return func(i int) *rec {
+		if pool[i] == nil {
+			pool[i] = &rec{id: uint64(i)}
+		}
+		return pool[i]
+	}
+}
 
 // pageValues returns how many values the multi-key pages of m hold in all.
 func pageValues[T comparable](m *Map[T]) (values int) {
@@ -45,6 +61,7 @@ func holds[T comparable](t *testing.T, m *Map[T], key []byte, want []T) {
 func TestMultiKeyPagesHoldSeveralValues(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runSeveralValues(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runSeveralValues(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runSeveralValues(t, recPool()) })
 }
 
 func runSeveralValues[T comparable](t *testing.T, val func(i int) T) {
@@ -103,6 +120,7 @@ func TestMultiKeyPageBurstOnFurtherValue(t *testing.T) {
 		runBurst(t, func(i int) string { return fmt.Sprint("value-", i, strings.Repeat("x", 20)) })
 	})
 	t.Run("uint64", func(t *testing.T) { runBurst(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runBurst(t, recPool()) })
 }
 
 func runBurst[T comparable](t *testing.T, val func(i int) T) {
@@ -140,6 +158,7 @@ func runBurst[T comparable](t *testing.T, val func(i int) T) {
 func TestMultiKeyPagePairsWithSeveralValues(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runPairs(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runPairs(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runPairs(t, recPool()) })
 }
 
 func runPairs[T comparable](t *testing.T, val func(i int) T) {
@@ -173,6 +192,7 @@ func runPairs[T comparable](t *testing.T, val func(i int) T) {
 func TestMultiKeyPageRemovesValuesAndKeys(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runRemoves(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runRemoves(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runRemoves(t, recPool()) })
 }
 
 func runRemoves[T comparable](t *testing.T, val func(i int) T) {
@@ -233,6 +253,7 @@ func runRemoves[T comparable](t *testing.T, val func(i int) T) {
 func TestMultiKeyPageMergesWithSeveralValues(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runMerges(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runMerges(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runMerges(t, recPool()) })
 }
 
 func runMerges[T comparable](t *testing.T, val func(i int) T) {
@@ -261,4 +282,64 @@ func runMerges[T comparable](t *testing.T, val func(i int) T) {
 		holds(t, &m, key('a', i), []T{val(i * 10), val(i*10 + 1)})
 	}
 	checkInvariants(t, &m.t)
+}
+
+// TestMultiKeyPagesOfPointersKeepTheirValuesAlive makes sure that the values of a map of pointers
+// stay reachable for the garbage collector while the map holds them, in the pages that every
+// change of the map makes anew.
+//
+// A user whose map holds *Record values must never see a record freed that the map still has: a page
+// of pointers is a typed object, and the tree copies pages when a key or a value is added or removed.
+//
+// Expected: after many adds and removes of values of 200 keys (with up to four values each), with a
+// collection after every round, no value that the map holds has been finalized, and it still has
+// the very objects it was given.
+func TestMultiKeyPagesOfPointersKeepTheirValuesAlive(t *testing.T) {
+	var dead [1 << 13]atomic.Bool
+	var m Map[*rec]
+	r := rand.New(rand.NewPCG(3, 4))
+	keys := mkKeys(200)
+	want := make([][]int, len(keys)) // the ids a key holds: the test keeps no pointer to them
+	next := 0
+	for round := range 40 {
+		for range 150 {
+			i := r.IntN(len(keys))
+			if r.IntN(3) > 0 || len(want[i]) == 0 {
+				v := &rec{id: uint64(next)}
+				runtime.SetFinalizer(v, func(v *rec) { dead[v.id].Store(true) })
+				m.Add(keys[i], v)
+				want[i] = append(want[i], next)
+				next++
+				continue
+			}
+			j := r.IntN(len(want[i]))
+			id := want[i][j]
+			var victim *rec
+			m.Each(keys[i], func(v *rec) bool {
+				if int(v.id) == id {
+					victim = v
+				}
+				return victim == nil
+			})
+			m.Remove(keys[i], victim)
+			want[i] = slices.Delete(want[i], j, j+1)
+		}
+		for range 3 {
+			runtime.GC()
+			time.Sleep(time.Millisecond)
+		}
+		for i, ids := range want {
+			got := 0
+			m.Each(keys[i], func(v *rec) bool {
+				if dead[v.id].Load() || !slices.Contains(ids, int(v.id)) {
+					t.Fatalf("round %d: key %q holds %d, which is freed or not one of %v", round, keys[i], v.id, ids)
+				}
+				got++
+				return true
+			})
+			if got != len(ids) {
+				t.Fatalf("round %d: key %q holds %d values, want %d", round, keys[i], got, len(ids))
+			}
+		}
+	}
 }

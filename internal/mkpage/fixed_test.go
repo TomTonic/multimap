@@ -193,7 +193,7 @@ func TestFixedAgainstModel(t *testing.T) {
 // decides between a page and a byte node, and a map of a type that has no page must
 // be told so.
 //
-// Expected: nil for a type that is not supported (a string, three words, a pointer),
+// Expected: nil for a type that is not supported (a string, three words),
 // for no entry, a different number of values, 256 entries, a remainder of 256 bytes
 // and content beyond 512 bytes; a page at the borders.
 func TestFixedLimits(t *testing.T) {
@@ -209,10 +209,10 @@ func TestFixedLimits(t *testing.T) {
 	for i := range many {
 		many[i] = []byte{byte(i)}
 	}
-	if BuildFixed(b("a", "b"), []string{"x", "y"}) != nil || BuildFixed(b("a"), [][3]uint64{{}}) != nil || BuildFixed(b("a"), []*int{nil}) != nil {
+	if BuildFixed(b("a", "b"), []string{"x", "y"}) != nil || BuildFixed(b("a"), [][3]uint64{{}}) != nil || BuildFixed(b("a"), []*int{nil}) == nil {
 		t.Error("BuildFixed built a page for a type without one")
 	}
-	if Supported[string]() || Supported[*int]() || !Supported[uint64]() || !Supported[[2]uint64]() || Supported[[3]uint64]() {
+	if Supported[string]() || !Supported[*int]() || HoldsPointers[uint64]() || !HoldsPointers[*int]() || !Supported[uint64]() || !Supported[[2]uint64]() || Supported[[3]uint64]() {
 		t.Error("Supported")
 	}
 	if BuildFixed[uint64](nil, nil) != nil || BuildFixed(b("a", "b"), []uint64{1}) != nil {

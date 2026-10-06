@@ -131,6 +131,12 @@ func valuesOf[T comparable](p *Fixed, n int) []T {
 	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(p), valuesAt[T](p.rem()))), n)
 }
 
+// AllocPtr returns a zeroed object of class c, whose first j words are no pointers and
+// whose other words are values of T, a word with a pointer (1 <= j < words of the class). The
+// multi-key page of values with pointers is made of it (internal/mkpage). It is nil for a
+// class or a j that no object has.
+func AllocPtr[T any](c, j int) unsafe.Pointer { return allocPtr[T](c, j) }
+
 // allocFixed returns a zeroed page of class c with the head set, for a
 // remainder of r bytes of a key of kl bytes. It does not check that a value
 // fits.

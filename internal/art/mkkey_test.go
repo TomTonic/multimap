@@ -44,6 +44,7 @@ func mkKeys(n int) [][]byte {
 func TestMultiKeyPages(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runMultiKeyPages(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runMultiKeyPages(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runMultiKeyPages(t, recPool()) })
 }
 
 func runMultiKeyPages[T comparable](t *testing.T, val func(i int) T) {
@@ -109,6 +110,7 @@ func TestMultiKeyPageAboveAndUp(t *testing.T) {
 		runAboveAndUp(t, 3, func(i int) string { return fmt.Sprint(i, strings.Repeat("v", 150)) })
 	})
 	t.Run("uint64", func(t *testing.T) { runAboveAndUp(t, 49, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runAboveAndUp(t, 49, recPool()) })
 }
 
 func runAboveAndUp[T comparable](t *testing.T, n int, val func(i int) T) {
@@ -303,6 +305,7 @@ func TestMultiKeyPageRefusals(t *testing.T) {
 func TestMultiKeyPageScans(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runScans(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runScans(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runScans(t, recPool()) })
 }
 
 func runScans[T comparable](t *testing.T, val func(i int) T) {
@@ -426,6 +429,7 @@ func TestMultiKeyPageMergeWaitsForNearlyEmptyPage(t *testing.T) {
 func TestMultiKeyPageLongPrefix(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runLongPrefix(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runLongPrefix(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runLongPrefix(t, recPool()) })
 }
 
 func runLongPrefix[T comparable](t *testing.T, val func(i int) T) {

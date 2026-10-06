@@ -128,3 +128,14 @@ What changes in `internal/art/mkkey.go` and `map.go`; nothing in the node layer.
 - `Objects` reports keys and values of a page separately.
 
 **Prediction.** `evPromote` is gone. The census of the real mix after the probe's cycle: pages hold at least 90 % of the keys of the fresh tree. Events: burst at most 5 in 1000 operations, merge tries as before. Cells with one value per entry stay within 0.95 to 1.05 of m43 (the added work on their path: `KeysUpTo` on a removal, the `first` flag in scans); the other predictions are those of the table above.
+
+## 5.3: the pointer page (plan, 2026-10-06)
+
+A map of `*X` (or any `T` that is one word with a pointer) gets multi-key pages like a map of `uint64`: `mkpage.Fixed` with `T` of that kind, `mkpage.Supported` admits it, the map's `mk` is on for it.
+
+- **Object.** The page is the typed object `ptrObject[T, [J]uint64, [N]T]` of `internal/skpage` (166 shapes: class × words in front), with **N = n** and **J = Size/8 - n**: the words in front hold the head and the keys (untyped, the collector never reads them as pointers), the last `n` words are the values, exactly where option B put them. So the layout in bytes is that of the `uint64` page; only the allocation differs. The gap of zeros between keys and values is untyped words.
+- **Every change of `n` is a new object**: the shape is (class, n). Add, Remove and Widen allocate and copy (at most 512 bytes), also within a class; Skip and the Prepend that stays in its class change only key bytes and stay in place. The keys are copied as bytes, **the values as `T` (`copy` of `[]T`, typed stores, typed zeroing)**: a byte move of pointers would hide them from the write barrier. The same typed code serves the `uint64` page (for a type without pointers the compiler's typed copy is the same `memmove`).
+- **Not done:** spare slots (an object with more value slots than `n`, which would let an insert stay in place). The page cannot know where its pointer words begin, except from `n`; a measurement may bring it back.
+- The object statistic reports such a page as an object with pointers (scanned by the collector).
+
+**Prediction.** Memory a key equals that of `uint64` (same bytes; `*T` map and `uint64` map built from the same keys differ by at most 0.5 B a key, rounding of the classes). Get and scans as for `uint64`. An insert or remove in a page costs one allocation of the page's class more than for `uint64`: +60 to 120 ns for pages of 128 to 512 bytes, so `churn` and `build` of a `*T` map with the real mix +20 to 40 % over the map of `uint64`; `single-value` maps +10 to 25 % on inserts. Values survive the collector under stress (`GOGC` 1, model test with `*T`). The scannable bytes of the collector fall with the pages' share: only the value words of a page are scanned (today a typed leaf per key).

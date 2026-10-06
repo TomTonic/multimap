@@ -7,13 +7,17 @@ import (
 )
 
 // Fixed is the multi-key page of values of one size, see the package comment: for
-// the maps whose values are small and hold no pointer (a uint64). The values are
-// an array of T at the end of the object, one for each slot in the order of the slots,
-// and compared as T (a == b), not as bytes: the array does not move when the keys grow or
-// shrink in front of it, and a reader finds it without adding up the length list (it ends
-// with the object, as the slots of the typed objects of a pointer page do). Between the
-// remainders and the values the bytes are zero. The pointer page (a T that is a word with
-// a pointer, the typed objects of skpage) is step 5.3.
+// the maps whose values are small and hold no pointer (a uint64), or are a word with a
+// pointer (a *X). The values are an array of T at the end of the object, one for each slot in
+// the order of the slots, and compared as T (a == b), not as bytes: the array does not move
+// when the keys grow or shrink in front of it, and a reader finds it without adding up the
+// length list. Between the remainders and the values the bytes are zero.
+//
+// A page of a T with a pointer is a typed object of skpage (AllocPtr): the words in front of
+// the n values are no pointers, the n words at the end are. Its shape is (class, n), so a
+// change of n is a new object, and the values are moved as T (never as bytes: a byte move of
+// pointers hides them from the write barrier); for a T without a pointer the same code is a
+// plain memmove and the page changes in place.
 //
 // The methods are generic in T and do not carry it: the tree holds untyped *Fixed
 // pointers, as it holds *Page, and the map that owns the page names T in every
@@ -21,9 +25,31 @@ import (
 type Fixed struct{ head }
 
 // Supported reports whether values of type T go into a Fixed page: T of 1 to 16
-// bytes without a pointer.
-func Supported[T comparable]() bool {
-	return skpage.Supported[T]() && !skpage.HoldsPointers[T]()
+// bytes without a pointer, or one word that is a pointer.
+func Supported[T comparable]() bool { return skpage.Supported[T]() }
+
+// HoldsPointers reports whether the page of T is a typed object with pointers.
+func HoldsPointers[T comparable]() bool { return skpage.HoldsPointers[T]() }
+
+// newFixed returns a zeroed object of class c for slots values, with its head set for slots
+// slots and a common prefix of cpl bytes. For a T with a pointer it is the typed object whose
+// last slots words are the values.
+func newFixed[T comparable](c, slots, cpl int) *Fixed {
+	var p *Fixed
+	if HoldsPointers[T]() {
+		p = (*Fixed)(skpage.AllocPtr[T](c, sizes[c]/8-slots))
+	} else {
+		p = (*Fixed)(allocRaw(c))
+	}
+	newHead(&p.head, c, slots, cpl)
+	return p
+}
+
+// valuesIn returns the n values at the end of the object m as a slice, to be moved with copy
+// (a move as T keeps the write barrier for a T with a pointer).
+func valuesIn[T comparable](m []byte, n int) []T {
+	w, _ := sizeAlign[T]()
+	return unsafe.Slice((*T)(unsafe.Pointer(&m[len(m)-n*w])), n)
 }
 
 func sizeAlign[T comparable]() (w, a int) {
@@ -79,8 +105,7 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 	if c < 0 {
 		return nil
 	}
-	p := (*Fixed)(allocRaw(c))
-	newHead(&p.head, c, n, cp)
+	p := newFixed[T](c, n, cp)
 	m := p.mem()
 	vs := p.vs(w)
 	lo := Header + cp
@@ -218,25 +243,26 @@ func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) {
 	if c < 0 {
 		return p, Full
 	}
-	q, old := p, m
-	if c > p.class() {
-		q = (*Fixed)(grow(&p.head, c, keyEnd))
+	q, old := p, valuesIn[T](m, n)
+	if c > p.class() || HoldsPointers[T]() { // a new object: a class more, or a page of pointers, whose shape is n
+		q = newFixed[T](max(c, p.class()), n+1, cpl)
 		m = q.mem()
+		copy(m[Header:keyEnd], p.mem()[Header:keyEnd])
 	}
 	// the array grows at its front: the values before the new one move down by one slot,
-	// those behind it stay where they are (from the old object, if the page grew)
-	nvs := len(m) - (n+1)*w
-	copy(m[nvs:nvs+slot*w], old[vs:vs+slot*w])
+	// those behind it stay where they are (from the old object, if there is a new one)
+	vals := valuesIn[T](m, n+1)
+	copy(vals[:slot], old[:slot])
 	if q != p {
-		copy(m[nvs+(slot+1)*w:], old[vs+slot*w:vs+n*w])
+		copy(vals[slot+1:], old[slot:])
 	}
 	a := lo + slot
 	copy(m[at+1+len(r):nk], m[at:keyEnd])
 	copy(m[a+1:at+1], m[a:at])
 	m[a] = rl
 	copy(m[at+1:], r)
-	*valueAt[T](m, nvs, slot) = v
-	q.n++
+	vals[slot] = v
+	q.n = uint8(n + 1)
 	return q, Added + Result(b2i(found))
 }
 
@@ -256,7 +282,6 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	m := p.mem()
 	lo := Header + cpl
 	keyEnd := p.Used()
-	vs := p.vs(w)
 	heads, longest := 0, 0
 	for _, rl := range m[lo : lo+n] {
 		if rl != Further {
@@ -274,8 +299,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	if !first {
 		at = n
 	}
-	q := (*Fixed)(allocRaw(c))
-	newHead(&q.head, c, n+1, mis)
+	q := newFixed[T](c, n+1, mis)
 	out := q.mem()
 	nlo := Header + mis
 	for i := range n {
@@ -303,9 +327,9 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	if !first {
 		copy(out[off:], newRem)
 	}
-	nvs := len(out) - (n+1)*w
-	copy(out[nvs+b2i(first)*w:nvs+b2i(first)*w+n*w], m[vs:vs+n*w])
-	*valueAt[T](out, nvs, at) = v
+	vals := valuesIn[T](out, n+1)
+	copy(vals[b2i(first):], valuesIn[T](m, n))
+	vals[at] = v
 	return q
 }
 
@@ -353,16 +377,26 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, Removal) {
 	copy(m[a:], m[a+1:remOff])
 	copy(m[remOff-1:], m[remOff+remLen:keyEnd])
 	clear(m[nk:keyEnd])
-	// the array shrinks at its front: the values before the removed one move up by one slot
-	copy(m[vs+w:vs+(slot+1)*w], m[vs:vs+slot*w])
-	clear(m[vs : vs+w])
-	p.n--
-	if c := classFor(2 * (nk + (n-1)*w)); c >= 0 && c < p.class() {
-		q := (*Fixed)(grow(&p.head, c, nk))
-		out := q.mem()
-		copy(out[len(out)-(n-1)*w:], m[vs+w:vs+n*w])
+	sc := classFor(2 * (nk + (n-1)*w))
+	shrink := sc >= 0 && sc < p.class()
+	if shrink || HoldsPointers[T]() { // a new object: a smaller class, or a page of pointers, whose shape is n
+		nc := p.class()
+		if shrink {
+			nc = sc
+		}
+		q := newFixed[T](nc, n-1, cpl)
+		copy(q.mem()[Header:nk], m[Header:nk])
+		old, vals := valuesIn[T](m, n), valuesIn[T](q.mem(), n-1)
+		copy(vals[:slot], old[:slot])
+		copy(vals[slot:], old[slot+1:])
 		return q, res
 	}
+	// the array shrinks at its front: the values before the removed one move up by one slot
+	vals := valuesIn[T](m, n)
+	copy(vals[1:slot+1], vals[:slot])
+	var zero T
+	vals[0] = zero
+	p.n--
 	return p, res
 }
 
@@ -416,8 +450,9 @@ func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
 	}
 	q := p
 	if c > p.class() {
-		q = (*Fixed)(grow(&p.head, c, keyEnd))
-		copy(q.mem()[q.Size()-n*w:], p.mem()[p.Size()-n*w:])
+		q = newFixed[T](c, n, p.cpl())
+		copy(q.mem()[Header:keyEnd], p.mem()[Header:keyEnd])
+		copy(valuesIn[T](q.mem(), n), valuesIn[T](p.mem(), n))
 	}
 	m := q.mem()
 	copy(m[Header+len(pre):nk], m[Header:keyEnd])
