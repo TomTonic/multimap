@@ -62,3 +62,19 @@ This is a knob with a reason, not a defect: the choice is between memory after u
 | street / dirs single-value | 1.21 / 1.20 | 1.17 / 1.16 | |
 
 **The prediction is missed again (1.18, not 1.10), and so the explanation above was only a small part.** The threshold buys 3 to 4 points of memory for ten times the shrinks. The census by size shows why: even right after the build stream the pages of 128 bytes hold 4.5 values, the fresh tree's 5.5; they stay at 4.1 after the cycle. The fill is the equilibrium of a structure that is changed at random (as in any B-tree under random inserts and removes, about two thirds to 70 %), not the hysteresis: pages lose entries where they are, and a merge of neighbours is tried only when a page has `mergeBelow` keys left. The lever for it would be the merge (siblings that fit one page together), not the shrink; step 4 found that trying it more often costs a third of the time of the churn.
+
+## Option C tried: is the lost fill a merge that is not tried? (no)
+
+The merge of the nodes above a page is tried only when the page has `mergeBelow = 2` keys left. The probe was run with `mergeBelow` 2, 4, 8 and "at every removal" (a constant changed for the run, nothing committed; raw: `bench/results-layout/step5-probe/mergebelow/`), 8 cases (street and dirs, both profiles, 4,096 and 65,536 keys), page shrink as in the code (half):
+
+| after / fresh | 2 (now) | 4 | 8 | every removal |
+|---|--:|--:|--:|--:|
+| street natural 4,096 | 1.22 | 1.22 | 1.21 | **1.20** |
+| street natural 65,536 | 1.24 | 1.23 | 1.23 | 1.22 |
+| dirs natural 4,096 / 65,536 | 1.18 / 1.21 | 1.18 / 1.20 | 1.17 / 1.19 | 1.17 / 1.19 |
+| street single-value 4,096 | 1.21 | 1.20 | 1.19 | 1.17 |
+| dirs single-value 4,096 | 1.20 | 1.19 | 1.18 | 1.18 |
+| merge tries per 1000 operations, street natural 4,096 | 42 | 60 | 86 | 140 |
+| merges done per 1000 operations | 2.3 | 2.5 | 2.9 | 4.6 |
+
+A merge tried at every removal buys 1 to 3 points of memory for 2.5 to 5 times the tries; `replay` ns/op rises with it (194 → 226, 289 → 328, 435 → 616: single runs of ten milliseconds, but in one direction). **The fill that is lost is not a merge that is not tried**: it is the fill of a structure that is changed at random. Nothing is changed. Remaining options were the page shrink (3 to 4 points, ten times the shrinks) and nothing: **the after-use factor of 1.2 stays, to be measured against `btree-sets` in gate 5.**

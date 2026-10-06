@@ -1,0 +1,1202 @@
+=== RUN   TestProbe
+
+## street natural n=4096 (10449 corpus values, 27218 operations in the cycle, 37733 in the build)
+
+build stream: 251 ns per operation
+
+events of build stream (37733 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 314 | 8.3 | 20 / 24 / 29 |
+| build: page made | 998 | 26.4 | 3 / 11 / 25 |
+| build: single-key page made | 841 | 22.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 315 | 8.3 | 20 / 24 / 29 |
+| entry removed from a page | 11670 | 309.3 | 8 / 17 / 26 |
+| key added to a page in place | 8578 | 227.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 143 | 3.8 | 19 / 23 / 26 |
+| merge tried (node with children that are pages) | 5178 | 137.2 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 9 | 0.2 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 522 | 13.8 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 7 | 0.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 797 | 21.1 | 2 / 3 / 55 |
+| value added to a key in a page in place | 9222 | 244.4 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 130 | 3.4 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 87 | 11136 | 0 | 0.0 % |
+| N26 | 25 | 6400 | 0 | 0.0 % |
+| N5 | 64 | 4096 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 647 | 146816 | 3624 | 88.5 % |
+| single-key page | 459 | 22176 | 459 | 11.2 % |
+| value overflow | 13 | 416 | 13 | 0.3 % |
+
+block bytes per key: 46.8
+
+multi-key pages: 647, entries per page: mean 5.6, median 4, 10th percentile 2, 90th percentile 12, largest 24
+
+multi-key pages by size (count, keys and values a page, bytes a value): 64: 132, 2.1, 2.3, 27.4; 128: 190, 3.1, 4.3, 30.1; 256: 165, 5.5, 9.0, 28.4; 384: 79, 9.3, 19.1, 20.1; 512: 81, 13.7, 26.5, 19.3;
+
+single-key pages by number of values: 1: 355, 2: 54, 3-4: 27, 5+: 23
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 85 | 10880 | 0 | 0.0 % |
+| N26 | 17 | 4352 | 0 | 0.0 % |
+| N5 | 65 | 4160 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 628 | 125504 | 3637 | 88.8 % |
+| single-key page | 446 | 20192 | 446 | 10.9 % |
+| value overflow | 13 | 416 | 13 | 0.3 % |
+
+block bytes per key: 40.5
+
+multi-key pages: 628, entries per page: mean 5.8, median 4, 10th percentile 2, 90th percentile 13, largest 24
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 2, 2.0, 2.0, 16.0; 64: 188, 2.3, 2.5, 25.5; 128: 181, 3.8, 5.5, 23.2; 256: 121, 6.8, 11.6, 22.2; 384: 81, 11.3, 21.3, 18.1; 512: 55, 14.2, 30.5, 16.8;
+
+single-key pages by number of values: 1: 344, 2: 52, 3-4: 27, 5+: 23
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 87 | 11136 | 0 | 0.0 % |
+| N26 | 26 | 6656 | 0 | 0.0 % |
+| N5 | 58 | 3712 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 634 | 154048 | 3628 | 88.6 % |
+| single-key page | 455 | 22496 | 455 | 11.1 % |
+| value overflow | 13 | 416 | 13 | 0.3 % |
+
+block bytes per key: 48.6
+
+multi-key pages: 634, entries per page: mean 5.7, median 4, 10th percentile 2, 90th percentile 13, largest 24
+
+multi-key pages by size (count, keys and values a page, bytes a value): 64: 99, 2.0, 2.2, 28.5; 128: 193, 3.0, 3.8, 33.5; 256: 169, 5.1, 8.5, 30.0; 384: 69, 8.5, 17.9, 21.5; 512: 104, 13.5, 25.3, 20.3;
+
+single-key pages by number of values: 1: 353, 2: 52, 3-4: 27, 5+: 23
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 18.3 % | 210 |
+| insert into key with 1 value | 18.1 % | 150 |
+| insert into key with 2 values | 4.6 % | 163 |
+| insert into key with 3+ values | 9.0 % | 135 |
+| delete from key with 1 value | 18.3 % | 512 |
+| delete from key with 2 values | 18.1 % | 138 |
+| delete from key with 3+ values | 13.6 % | 130 |
+| all | 100 % | 222 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 33.3 % | 53.2 % | 6.3 % | 2.4 % | 1.1 % | 0.7 % | 0.5 % | 2.4 % |
+| middle of the cycle | 28.6 % | 49.3 % | 13.9 % | 3.2 % | 1.5 % | 0.6 % | 0.6 % | 2.2 % |
+
+events of one steady-state cycle (27218 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 124 | 4.6 | 20 / 22 / 27 |
+| build: page made | 352 | 12.9 | 3 / 15 / 21 |
+| build: single-key page made | 299 | 11.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 124 | 4.6 | 20 / 22 / 27 |
+| byte node put above a page | 1 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 11232 | 412.7 | 8 / 17 / 27 |
+| key added to a page in place | 3886 | 142.8 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 124 | 4.6 | 19 / 21 / 26 |
+| merge tried (node with children that are pages) | 3812 | 140.1 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 12 | 0.4 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 480 | 17.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 3 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 478 | 17.6 | 2 / 4 / 14 |
+| value added to a key in a page in place | 6754 | 248.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 21 | 0.8 | 1 / 1 / 1 |
+
+removing every second key value by value: 221 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 49 | 6272 | 0 | 0.0 % |
+| N26 | 10 | 2560 | 0 | 0.0 % |
+| N5 | 24 | 1536 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 321 | 89600 | 1862 | 90.9 % |
+| single-key page | 180 | 7968 | 180 | 8.8 % |
+| value overflow | 6 | 192 | 6 | 0.3 % |
+
+block bytes per key: 53.0
+
+multi-key pages: 321, entries per page: mean 5.8, median 4, 10th percentile 2, 90th percentile 12, largest 23
+
+multi-key pages by size (count, keys and values a page, bytes a value): 64: 42, 2.2, 2.5, 25.8; 128: 76, 2.6, 3.5, 36.4; 256: 78, 4.4, 6.7, 38.0; 384: 53, 7.4, 13.2, 29.0; 512: 72, 11.7, 22.1, 23.2;
+
+single-key pages by number of values: 1: 149, 2: 18, 3-4: 5, 5+: 8
+
+plain replay of a cycle: 226 ns per operation
+
+## street natural n=65536 (185027 corpus values, 483790 operations in the cycle, 663737 in the build)
+
+build stream: 326 ns per operation
+
+events of build stream (663737 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 5093 | 7.7 | 21 / 26 / 32 |
+| build: page made | 16097 | 24.3 | 3 / 12 / 26 |
+| build: single-key page made | 13304 | 20.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 5120 | 7.7 | 21 / 26 / 32 |
+| byte node put above a page | 27 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 198395 | 298.9 | 7 / 18 / 30 |
+| key added to a page in place | 136550 | 205.7 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 2362 | 3.6 | 21 / 25 / 30 |
+| merge tried (node with children that are pages) | 62242 | 93.8 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 390 | 0.6 | 2 / 3 / 7 |
+| page with one entry left becomes a single-key page | 10046 | 15.1 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 155 | 0.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 15262 | 23.0 | 2 / 3 / 55 |
+| value added to a key in a page in place | 157280 | 237.0 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 2739 | 4.1 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 1117 | 142976 | 0 | 0.0 % |
+| N26 | 567 | 145152 | 0 | 0.0 % |
+| N5 | 1176 | 75264 | 0 | 0.0 % |
+| N58 | 17 | 8704 | 0 | 0.0 % |
+| multi-key page | 10712 | 2247488 | 57586 | 87.9 % |
+| single-key page | 7699 | 370464 | 7699 | 11.7 % |
+| value overflow | 251 | 8032 | 251 | 0.4 % |
+
+block bytes per key: 45.7
+
+multi-key pages: 10712, entries per page: mean 5.4, median 4, 10th percentile 2, 90th percentile 12, largest 28
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 174, 2.0, 2.0, 16.0; 64: 2302, 2.2, 2.5, 25.9; 128: 3360, 3.2, 4.4, 28.9; 256: 2682, 5.9, 10.0, 25.5; 384: 1136, 9.5, 18.9, 20.3; 512: 1058, 14.2, 29.6, 17.3;
+
+single-key pages by number of values: 1: 6094, 2: 704, 3-4: 401, 5+: 500
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 1042 | 133376 | 0 | 0.0 % |
+| N26 | 479 | 122624 | 0 | 0.0 % |
+| N5 | 1283 | 82112 | 0 | 0.0 % |
+| N58 | 11 | 5632 | 0 | 0.0 % |
+| multi-key page | 10587 | 1882240 | 57805 | 88.2 % |
+| single-key page | 7479 | 337440 | 7479 | 11.4 % |
+| value overflow | 252 | 8064 | 252 | 0.4 % |
+
+block bytes per key: 39.2
+
+multi-key pages: 10587, entries per page: mean 5.5, median 4, 10th percentile 2, 90th percentile 12, largest 30
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 498, 2.0, 2.0, 16.0; 64: 3387, 2.4, 2.8, 23.0; 128: 2866, 4.1, 6.0, 21.4; 256: 2191, 7.3, 12.8, 20.0; 384: 941, 11.6, 23.0, 16.7; 512: 704, 14.5, 34.3, 14.9;
+
+single-key pages by number of values: 1: 5910, 2: 689, 3-4: 392, 5+: 488
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 1107 | 141696 | 0 | 0.0 % |
+| N26 | 589 | 150784 | 0 | 0.0 % |
+| N5 | 1159 | 74176 | 0 | 0.0 % |
+| N58 | 18 | 9216 | 0 | 0.0 % |
+| multi-key page | 10707 | 2370816 | 57607 | 87.9 % |
+| single-key page | 7676 | 378400 | 7676 | 11.7 % |
+| value overflow | 253 | 8096 | 253 | 0.4 % |
+
+block bytes per key: 47.8
+
+multi-key pages: 10707, entries per page: mean 5.4, median 4, 10th percentile 2, 90th percentile 12, largest 30
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 114, 2.0, 2.0, 16.0; 64: 1937, 2.1, 2.3, 27.5; 128: 3451, 3.0, 4.1, 31.4; 256: 2764, 5.5, 9.3, 27.6; 384: 1218, 9.0, 17.6, 21.8; 512: 1223, 13.9, 28.6, 17.9;
+
+single-key pages by number of values: 1: 6072, 2: 706, 3-4: 399, 5+: 499
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 17.5 % | 290 |
+| insert into key with 1 value | 18.0 % | 255 |
+| insert into key with 2 values | 4.8 % | 259 |
+| insert into key with 3+ values | 9.7 % | 257 |
+| delete from key with 1 value | 17.5 % | 622 |
+| delete from key with 2 values | 18.0 % | 234 |
+| delete from key with 3+ values | 14.6 % | 263 |
+| all | 100 % | 323 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 33.3 % | 52.8 % | 6.5 % | 2.4 % | 1.3 % | 0.7 % | 0.5 % | 2.4 % |
+| middle of the cycle | 27.1 % | 49.7 % | 14.5 % | 3.6 % | 1.4 % | 0.8 % | 0.5 % | 2.3 % |
+
+events of one steady-state cycle (483790 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 2319 | 4.8 | 21 / 25 / 32 |
+| build: page made | 7698 | 15.9 | 3 / 12 / 26 |
+| build: single-key page made | 6022 | 12.4 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 2323 | 4.8 | 21 / 25 / 32 |
+| byte node put above a page | 7 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 194896 | 402.9 | 7 / 17 / 30 |
+| key added to a page in place | 65689 | 135.8 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 2311 | 4.8 | 20 / 24 / 31 |
+| merge tried (node with children that are pages) | 48460 | 100.2 | 7 / 11 / 12 |
+| page shrinks to a smaller class | 425 | 0.9 | 2 / 3 / 8 |
+| page with one entry left becomes a single-key page | 8137 | 16.8 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 111 | 0.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 7946 | 16.4 | 2 / 4 / 55 |
+| value added to a key in a page in place | 119086 | 246.2 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 394 | 0.8 | 1 / 1 / 1 |
+
+removing every second key value by value: 217 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 570 | 72960 | 0 | 0.0 % |
+| N26 | 367 | 93952 | 0 | 0.0 % |
+| N5 | 519 | 33216 | 0 | 0.0 % |
+| N58 | 10 | 5120 | 0 | 0.0 % |
+| multi-key page | 5458 | 1330752 | 28597 | 87.3 % |
+| single-key page | 4048 | 186944 | 4048 | 12.4 % |
+| value overflow | 123 | 3936 | 123 | 0.4 % |
+
+block bytes per key: 52.7
+
+multi-key pages: 5458, entries per page: mean 5.2, median 4, 10th percentile 2, 90th percentile 11, largest 29
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 58, 2.0, 2.0, 16.0; 64: 808, 2.1, 2.4, 26.3; 128: 1663, 2.7, 3.6, 35.2; 256: 1372, 4.6, 7.7, 33.3; 384: 657, 7.4, 13.5, 28.4; 512: 900, 12.3, 24.8, 20.6;
+
+single-key pages by number of values: 1: 3180, 2: 374, 3-4: 211, 5+: 283
+
+plain replay of a cycle: 328 ns per operation
+
+## street single-value n=4096 (4096 corpus values, 10684 operations in the cycle, 14748 in the build)
+
+build stream: 238 ns per operation
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 222 | 15.1 | 24 / 27 / 29 |
+| build: page made | 900 | 61.0 | 4 / 12 / 26 |
+| build: single-key page made | 617 | 41.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 222 | 15.1 | 24 / 27 / 29 |
+| entry removed from a page | 5038 | 341.6 | 10 / 20 / 27 |
+| key added to a page in place | 8054 | 546.1 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 121 | 8.2 | 24 / 26 / 28 |
+| merge tried (node with children that are pages) | 4104 | 278.3 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 7 | 0.5 | 3 / 7 / 7 |
+| page with one entry left becomes a single-key page | 316 | 21.4 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 532 | 36.1 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 116 | 7.9 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 59 | 7552 | 0 | 0.0 % |
+| N26 | 23 | 5888 | 0 | 0.0 % |
+| N5 | 17 | 1088 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 536 | 113920 | 3831 | 93.5 % |
+| single-key page | 265 | 8704 | 265 | 6.5 % |
+
+block bytes per key: 33.6
+
+multi-key pages: 536, entries per page: mean 7.1, median 5, 10th percentile 2, 90th percentile 17, largest 26
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 2, 2.0, 2.0, 16.0; 64: 135, 2.2, 2.2, 28.7; 128: 156, 3.8, 3.8, 33.4; 256: 122, 7.6, 7.6, 33.7; 384: 62, 13.3, 13.3, 29.0; 512: 59, 20.0, 20.0, 25.6;
+
+single-key pages by number of values: 1: 265, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 60 | 7680 | 0 | 0.0 % |
+| N26 | 17 | 4352 | 0 | 0.0 % |
+| N5 | 22 | 1408 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 536 | 101312 | 3831 | 93.5 % |
+| single-key page | 265 | 8704 | 265 | 6.5 % |
+
+block bytes per key: 30.3
+
+multi-key pages: 536, entries per page: mean 7.1, median 5, 10th percentile 2, 90th percentile 17, largest 26
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 4, 2.0, 2.0, 16.0; 64: 179, 2.4, 2.4, 27.2; 128: 147, 4.6, 4.6, 28.0; 256: 107, 9.0, 9.0, 28.3; 384: 56, 15.3, 15.3, 25.2; 512: 43, 21.1, 21.1, 24.2;
+
+single-key pages by number of values: 1: 265, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 56 | 7168 | 0 | 0.0 % |
+| N26 | 26 | 6656 | 0 | 0.0 % |
+| N5 | 18 | 1152 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 539 | 121280 | 3820 | 93.3 % |
+| single-key page | 276 | 9056 | 276 | 6.7 % |
+
+block bytes per key: 35.6
+
+multi-key pages: 539, entries per page: mean 7.1, median 5, 10th percentile 2, 90th percentile 16, largest 26
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 2, 2.0, 2.0, 16.0; 64: 106, 2.2, 2.2, 29.4; 128: 166, 3.4, 3.4, 37.3; 256: 133, 6.9, 6.9, 37.3; 384: 66, 12.4, 12.4, 31.1; 512: 66, 19.5, 19.5, 26.3;
+
+single-key pages by number of values: 1: 276, 2: 0, 3-4: 0, 5+: 0
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 50.0 % | 178 |
+| delete from key with 1 value | 50.0 % | 379 |
+| all | 100 % | 278 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 50.0 % | 50.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+| middle of the cycle | 47.5 % | 52.5 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 160 | 15.0 | 26 / 27 / 30 |
+| build: page made | 646 | 60.5 | 4 / 11 / 21 |
+| build: single-key page made | 512 | 47.9 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 160 | 15.0 | 26 / 27 / 30 |
+| entry removed from a page | 4994 | 467.4 | 10 / 21 / 28 |
+| key added to a page in place | 4492 | 420.4 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 160 | 15.0 | 25 / 26 / 29 |
+| merge tried (node with children that are pages) | 3936 | 368.4 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 13 | 1.2 | 3 / 4 / 5 |
+| page with one entry left becomes a single-key page | 362 | 33.9 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 350 | 32.8 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 16 | 1.5 | 1 / 1 / 1 |
+
+removing every second key value by value: 330 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 31 | 3968 | 0 | 0.0 % |
+| N26 | 9 | 2304 | 0 | 0.0 % |
+| N5 | 9 | 576 | 0 | 0.0 % |
+| N58 | 1 | 512 | 0 | 0.0 % |
+| multi-key page | 273 | 75616 | 1946 | 95.0 % |
+| single-key page | 102 | 3392 | 102 | 5.0 % |
+
+block bytes per key: 42.2
+
+multi-key pages: 273, entries per page: mean 7.1, median 5, 10th percentile 2, 90th percentile 15, largest 25
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 1, 2.0, 2.0, 16.0; 64: 37, 2.2, 2.2, 29.6; 128: 67, 2.8, 2.8, 45.6; 256: 67, 5.3, 5.3, 47.9; 384: 33, 8.8, 8.8, 43.4; 512: 68, 15.1, 15.1, 33.9;
+
+single-key pages by number of values: 1: 102, 2: 0, 3-4: 0, 5+: 0
+
+plain replay of a cycle: 284 ns per operation
+
+## street single-value n=65536 (65536 corpus values, 171410 operations in the cycle, 235116 in the build)
+
+build stream: 304 ns per operation
+
+events of build stream (235116 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 3173 | 13.5 | 27 / 30 / 35 |
+| build: page made | 12761 | 54.3 | 4 / 15 / 31 |
+| build: single-key page made | 8742 | 37.2 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 3187 | 13.6 | 27 / 30 / 35 |
+| byte node put above a page | 18 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 78875 | 335.5 | 9 / 22 / 33 |
+| key added to a page in place | 124559 | 529.8 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1708 | 7.3 | 26 / 29 / 33 |
+| merge tried (node with children that are pages) | 43044 | 183.1 | 8 / 12 / 12 |
+| page shrinks to a smaller class | 231 | 1.0 | 2 / 3 / 8 |
+| page with one entry left becomes a single-key page | 5945 | 25.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 10115 | 43.0 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 2115 | 9.0 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 628 | 80384 | 0 | 0.0 % |
+| N26 | 535 | 136960 | 0 | 0.0 % |
+| N5 | 339 | 21696 | 0 | 0.0 % |
+| N58 | 14 | 7168 | 0 | 0.0 % |
+| multi-key page | 8992 | 1685184 | 60897 | 92.9 % |
+| single-key page | 4639 | 151104 | 4639 | 7.1 % |
+
+block bytes per key: 31.8
+
+multi-key pages: 8992, entries per page: mean 6.8, median 4, 10th percentile 2, 90th percentile 16, largest 33
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 360, 2.0, 2.0, 16.0; 64: 2413, 2.4, 2.4, 27.1; 128: 2743, 4.1, 4.1, 31.2; 256: 1979, 8.3, 8.3, 30.9; 384: 820, 14.7, 14.7, 26.1; 512: 677, 21.8, 21.8, 23.5;
+
+single-key pages by number of values: 1: 4639, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 644 | 82432 | 0 | 0.0 % |
+| N26 | 453 | 115968 | 0 | 0.0 % |
+| N5 | 390 | 24960 | 0 | 0.0 % |
+| N58 | 11 | 5632 | 0 | 0.0 % |
+| multi-key page | 8893 | 1467872 | 61022 | 93.1 % |
+| single-key page | 4514 | 147072 | 4514 | 6.9 % |
+
+block bytes per key: 28.1
+
+multi-key pages: 8893, entries per page: mean 6.9, median 4, 10th percentile 2, 90th percentile 16, largest 33
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 533, 2.0, 2.0, 16.0; 64: 3045, 2.5, 2.5, 25.2; 128: 2442, 5.0, 5.0, 25.4; 256: 1687, 9.9, 9.9, 25.7; 384: 748, 17.1, 17.1, 22.5; 512: 438, 23.8, 23.8, 21.5;
+
+single-key pages by number of values: 1: 4514, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 629 | 80512 | 0 | 0.0 % |
+| N26 | 554 | 141824 | 0 | 0.0 % |
+| N5 | 318 | 20352 | 0 | 0.0 % |
+| N58 | 20 | 10240 | 0 | 0.0 % |
+| multi-key page | 9001 | 1807584 | 60866 | 92.9 % |
+| single-key page | 4670 | 152160 | 4670 | 7.1 % |
+
+block bytes per key: 33.8
+
+multi-key pages: 9001, entries per page: mean 6.8, median 4, 10th percentile 2, 90th percentile 16, largest 33
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 279, 2.0, 2.0, 16.0; 64: 2022, 2.2, 2.2, 28.5; 128: 2871, 3.7, 3.7, 34.7; 256: 2141, 7.6, 7.6, 33.9; 384: 864, 13.6, 13.6, 28.3; 512: 824, 21.0, 21.0, 24.4;
+
+single-key pages by number of values: 1: 4670, 2: 0, 3-4: 0, 5+: 0
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 50.0 % | 202 |
+| delete from key with 1 value | 50.0 % | 418 |
+| all | 100 % | 310 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 50.0 % | 50.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+| middle of the cycle | 48.2 % | 51.8 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+
+events of one steady-state cycle (171410 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1526 | 8.9 | 28 / 31 / 35 |
+| build: page made | 5897 | 34.4 | 4 / 16 / 30 |
+| build: single-key page made | 3903 | 22.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1527 | 8.9 | 28 / 31 / 35 |
+| byte node put above a page | 7 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 79982 | 466.6 | 10 / 22 / 32 |
+| key added to a page in place | 72490 | 422.9 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1525 | 8.9 | 27 / 30 / 34 |
+| merge tried (node with children that are pages) | 41720 | 243.4 | 8 / 12 / 12 |
+| page shrinks to a smaller class | 316 | 1.8 | 2 / 4 / 8 |
+| page with one entry left becomes a single-key page | 5844 | 34.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 5712 | 33.3 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 433 | 2.5 | 1 / 1 / 1 |
+
+removing every second key value by value: 420 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 303 | 38784 | 0 | 0.0 % |
+| N26 | 330 | 84480 | 0 | 0.0 % |
+| N5 | 172 | 11008 | 0 | 0.0 % |
+| N58 | 10 | 5120 | 0 | 0.0 % |
+| multi-key page | 4657 | 1102272 | 30218 | 92.2 % |
+| single-key page | 2550 | 83040 | 2550 | 7.8 % |
+
+block bytes per key: 40.4
+
+multi-key pages: 4657, entries per page: mean 6.5, median 4, 10th percentile 2, 90th percentile 15, largest 30
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 56, 2.0, 2.0, 16.0; 64: 749, 2.2, 2.2, 29.5; 128: 1510, 3.0, 3.0, 43.1; 256: 1070, 5.6, 5.6, 45.5; 384: 515, 9.4, 9.4, 40.8; 512: 757, 17.3, 17.3, 29.5;
+
+single-key pages by number of values: 1: 2550, 2: 0, 3-4: 0, 5+: 0
+
+plain replay of a cycle: 385 ns per operation
+
+## dirs natural n=4096 (12775 corpus values, 33454 operations in the cycle, 45983 in the build)
+
+build stream: 283 ns per operation
+
+events of build stream (45983 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 658 | 14.3 | 10 / 15 / 27 |
+| build: page made | 1312 | 28.5 | 3 / 8 / 20 |
+| build: single-key page made | 1331 | 28.9 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 664 | 14.4 | 10 / 15 / 27 |
+| byte node put above a page | 21 | 0.5 | 1 / 1 / 1 |
+| entry removed from a page | 13464 | 292.8 | 4 / 10 / 25 |
+| key added to a page in place | 7097 | 154.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 340 | 7.4 | 10 / 14 / 25 |
+| merge tried (node with children that are pages) | 4502 | 97.9 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 42 | 0.9 | 2 / 4 / 5 |
+| page with one entry left becomes a single-key page | 1052 | 22.9 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 7 | 0.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1574 | 34.2 | 2 / 4 / 39 |
+| value added to a key in a page in place | 13368 | 290.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 328 | 7.1 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 84 | 10752 | 0 | 0.0 % |
+| N12+tail | 3 | 432 | 0 | 0.0 % |
+| N26 | 31 | 7936 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 205 | 13120 | 0 | 0.0 % |
+| N5+tail | 21 | 1712 | 0 | 0.0 % |
+| N58 | 4 | 2048 | 0 | 0.0 % |
+| N58+tail | 1 | 528 | 0 | 0.0 % |
+| multi-key page | 853 | 241344 | 3376 | 82.4 % |
+| single-key page | 704 | 59136 | 704 | 17.2 % |
+| value overflow | 16 | 640 | 16 | 0.4 % |
+
+block bytes per key: 82.7
+
+multi-key pages: 853, entries per page: mean 4.0, median 3, 10th percentile 2, 90th percentile 7, largest 21
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 2, 2.0, 2.0, 16.0; 64: 34, 2.0, 2.2, 29.4; 128: 212, 2.3, 3.6, 35.9; 256: 314, 3.3, 7.0, 36.3; 384: 136, 5.0, 13.3, 28.9; 512: 155, 7.1, 20.4, 25.1;
+
+single-key pages by number of values: 1: 399, 2: 121, 3-4: 84, 5+: 100
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 76 | 9728 | 0 | 0.0 % |
+| N12+tail | 2 | 288 | 0 | 0.0 % |
+| N26 | 24 | 6144 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 214 | 13696 | 0 | 0.0 % |
+| N5+tail | 22 | 1792 | 0 | 0.0 % |
+| N58 | 4 | 2048 | 0 | 0.0 % |
+| N58+tail | 1 | 528 | 0 | 0.0 % |
+| multi-key page | 851 | 205056 | 3390 | 82.8 % |
+| single-key page | 689 | 55136 | 689 | 16.8 % |
+| value overflow | 17 | 800 | 17 | 0.4 % |
+
+block bytes per key: 72.3
+
+multi-key pages: 851, entries per page: mean 4.0, median 3, 10th percentile 2, 90th percentile 7, largest 21
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 6, 2.0, 2.0, 16.0; 64: 87, 2.1, 2.4, 27.2; 128: 276, 2.6, 4.3, 30.0; 256: 265, 4.0, 8.6, 29.8; 384: 117, 6.0, 16.9, 22.7; 512: 100, 7.4, 24.1, 21.3;
+
+single-key pages by number of values: 1: 388, 2: 120, 3-4: 84, 5+: 97
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 86 | 11008 | 0 | 0.0 % |
+| N12+tail | 3 | 432 | 0 | 0.0 % |
+| N26 | 31 | 7936 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 203 | 12992 | 0 | 0.0 % |
+| N5+tail | 21 | 1712 | 0 | 0.0 % |
+| N58 | 4 | 2048 | 0 | 0.0 % |
+| N58+tail | 1 | 528 | 0 | 0.0 % |
+| multi-key page | 853 | 249216 | 3379 | 82.5 % |
+| single-key page | 699 | 58976 | 699 | 17.1 % |
+| value overflow | 18 | 832 | 18 | 0.4 % |
+
+block bytes per key: 84.6
+
+multi-key pages: 853, entries per page: mean 4.0, median 3, 10th percentile 2, 90th percentile 7, largest 21
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 2, 2.0, 2.0, 16.0; 64: 31, 2.0, 2.2, 29.2; 128: 198, 2.3, 3.4, 37.3; 256: 308, 3.2, 6.8, 37.8; 384: 139, 4.8, 12.0, 31.9; 512: 175, 7.0, 20.1, 25.5;
+
+single-key pages by number of values: 1: 396, 2: 122, 3-4: 84, 5+: 97
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 15.9 % | 290 |
+| insert into key with 1 value | 15.8 % | 189 |
+| insert into key with 2 values | 6.2 % | 187 |
+| insert into key with 3+ values | 12.1 % | 185 |
+| delete from key with 1 value | 15.9 % | 570 |
+| delete from key with 2 values | 15.8 % | 168 |
+| delete from key with 3+ values | 18.2 % | 170 |
+| all | 100 % | 258 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 33.3 % | 41.4 % | 10.9 % | 4.6 % | 2.4 % | 1.6 % | 0.9 % | 4.9 % |
+| middle of the cycle | 24.6 % | 41.2 % | 17.4 % | 6.8 % | 2.6 % | 1.5 % | 1.2 % | 4.6 % |
+
+events of one steady-state cycle (33454 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 295 | 8.8 | 10 / 15 / 19 |
+| build: page made | 595 | 17.8 | 3 / 8 / 18 |
+| build: single-key page made | 494 | 14.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 298 | 8.9 | 10 / 15 / 19 |
+| byte node put above a page | 7 | 0.2 | 1 / 1 / 1 |
+| entry removed from a page | 13124 | 392.3 | 4 / 9 / 23 |
+| key added to a page in place | 3489 | 104.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 292 | 8.7 | 9 / 14 / 18 |
+| merge tried (node with children that are pages) | 3592 | 107.4 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 35 | 1.0 | 2 / 4 / 4 |
+| page with one entry left becomes a single-key page | 750 | 22.4 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 9 | 0.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 712 | 21.3 | 3 / 7 / 50 |
+| value added to a key in a page in place | 8611 | 257.4 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 48 | 1.4 | 1 / 1 / 1 |
+
+removing every second key value by value: 228 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 41 | 5248 | 0 | 0.0 % |
+| N12+tail | 3 | 432 | 0 | 0.0 % |
+| N26 | 19 | 4864 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 100 | 6400 | 0 | 0.0 % |
+| N5+tail | 7 | 560 | 0 | 0.0 % |
+| N58 | 3 | 1536 | 0 | 0.0 % |
+| N58+tail | 2 | 1056 | 0 | 0.0 % |
+| multi-key page | 418 | 137248 | 1646 | 80.4 % |
+| single-key page | 396 | 32096 | 396 | 19.3 % |
+| value overflow | 6 | 288 | 6 | 0.3 % |
+
+block bytes per key: 93.1
+
+multi-key pages: 418, entries per page: mean 3.9, median 3, 10th percentile 2, 90th percentile 7, largest 20
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 1, 2.0, 2.0, 16.0; 64: 16, 2.1, 2.6, 24.4; 128: 70, 2.2, 3.2, 40.4; 256: 130, 2.8, 5.3, 48.1; 384: 70, 3.8, 9.7, 39.8; 512: 131, 6.3, 17.2, 29.8;
+
+single-key pages by number of values: 1: 240, 2: 56, 3-4: 57, 5+: 43
+
+plain replay of a cycle: 262 ns per operation
+
+## dirs natural n=65536 (226063 corpus values, 590682 operations in the cycle, 810341 in the build)
+
+build stream: 486 ns per operation
+
+events of build stream (810341 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 10624 | 13.1 | 13 / 18 / 38 |
+| build: page made | 23961 | 29.6 | 4 / 10 / 31 |
+| build: single-key page made | 17352 | 21.4 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 10729 | 13.2 | 13 / 18 / 38 |
+| byte node put above a page | 260 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 242302 | 299.0 | 6 / 13 / 36 |
+| key added to a page in place | 135172 | 166.8 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 5740 | 7.1 | 13 / 17 / 37 |
+| merge tried (node with children that are pages) | 88458 | 109.2 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 516 | 0.6 | 2 / 3 / 7 |
+| page with one entry left becomes a single-key page | 11828 | 14.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 112 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 17452 | 21.5 | 2 / 4 / 55 |
+| prepend refused: page stays below the node | 9 | 0.0 | 1 / 1 / 1 |
+| value added to a key in a page in place | 225227 | 277.9 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 4332 | 5.3 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 1173 | 150144 | 0 | 0.0 % |
+| N12+tail | 84 | 12288 | 0 | 0.0 % |
+| N26 | 409 | 104704 | 0 | 0.0 % |
+| N26+tail | 22 | 5984 | 0 | 0.0 % |
+| N5 | 3431 | 219584 | 0 | 0.0 % |
+| N5+tail | 211 | 17232 | 0 | 0.0 % |
+| N58 | 19 | 9728 | 0 | 0.0 % |
+| N58+tail | 3 | 1616 | 0 | 0.0 % |
+| multi-key page | 11819 | 3190048 | 56370 | 86.0 % |
+| single-key page | 8833 | 692320 | 8833 | 13.5 % |
+| value overflow | 333 | 11328 | 333 | 0.5 % |
+
+block bytes per key: 67.4
+
+multi-key pages: 11819, entries per page: mean 4.8, median 4, 10th percentile 2, 90th percentile 10, largest 32
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 51, 2.0, 2.0, 16.0; 64: 1155, 2.1, 2.6, 24.6; 128: 3065, 2.6, 4.3, 29.4; 256: 3481, 4.1, 8.9, 28.9; 384: 1963, 6.2, 15.7, 24.5; 512: 2104, 9.3, 22.2, 23.1;
+
+single-key pages by number of values: 1: 4817, 2: 1387, 3-4: 972, 5+: 1657
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 1040 | 133120 | 0 | 0.0 % |
+| N12+tail | 67 | 9840 | 0 | 0.0 % |
+| N26 | 326 | 83456 | 0 | 0.0 % |
+| N26+tail | 17 | 4624 | 0 | 0.0 % |
+| N5 | 3579 | 229056 | 0 | 0.0 % |
+| N5+tail | 221 | 18032 | 0 | 0.0 % |
+| N58 | 17 | 8704 | 0 | 0.0 % |
+| N58+tail | 2 | 1088 | 0 | 0.0 % |
+| multi-key page | 11718 | 2702432 | 56560 | 86.3 % |
+| single-key page | 8645 | 644320 | 8645 | 13.2 % |
+| value overflow | 331 | 11584 | 331 | 0.5 % |
+
+block bytes per key: 58.7
+
+multi-key pages: 11718, entries per page: mean 4.8, median 4, 10th percentile 2, 90th percentile 10, largest 32
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 161, 2.0, 2.0, 16.0; 64: 2043, 2.2, 2.8, 22.7; 128: 3286, 3.0, 5.3, 24.2; 256: 3168, 5.0, 10.9, 23.5; 384: 1811, 7.5, 18.8, 20.4; 512: 1249, 9.9, 26.7, 19.2;
+
+single-key pages by number of values: 1: 4710, 2: 1349, 3-4: 952, 5+: 1634
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 1176 | 150528 | 0 | 0.0 % |
+| N12+tail | 80 | 11744 | 0 | 0.0 % |
+| N26 | 424 | 108544 | 0 | 0.0 % |
+| N26+tail | 23 | 6256 | 0 | 0.0 % |
+| N5 | 3418 | 218752 | 0 | 0.0 % |
+| N5+tail | 209 | 17072 | 0 | 0.0 % |
+| N58 | 19 | 9728 | 0 | 0.0 % |
+| N58+tail | 3 | 1616 | 0 | 0.0 % |
+| multi-key page | 11832 | 3334464 | 56371 | 86.0 % |
+| single-key page | 8827 | 704544 | 8827 | 13.5 % |
+| value overflow | 338 | 11840 | 338 | 0.5 % |
+
+block bytes per key: 69.8
+
+multi-key pages: 11832, entries per page: mean 4.8, median 4, 10th percentile 2, 90th percentile 10, largest 32
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 32, 2.0, 2.0, 16.0; 64: 939, 2.1, 2.5, 25.8; 128: 2948, 2.5, 4.1, 31.5; 256: 3489, 3.8, 8.2, 31.1; 384: 2049, 5.9, 15.0, 25.5; 512: 2375, 9.1, 21.4, 23.9;
+
+single-key pages by number of values: 1: 4817, 2: 1390, 3-4: 971, 5+: 1649
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 15.2 % | 499 |
+| insert into key with 1 value | 15.9 % | 408 |
+| insert into key with 2 values | 6.3 % | 411 |
+| insert into key with 3+ values | 12.6 % | 385 |
+| delete from key with 1 value | 15.2 % | 1001 |
+| delete from key with 2 values | 15.9 % | 374 |
+| delete from key with 3+ values | 18.9 % | 392 |
+| all | 100 % | 501 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 33.3 % | 41.4 % | 11.2 % | 4.6 % | 2.4 % | 1.5 % | 1.0 % | 4.6 % |
+| middle of the cycle | 23.9 % | 41.8 % | 18.1 % | 6.4 % | 2.9 % | 1.6 % | 1.0 % | 4.3 % |
+
+events of one steady-state cycle (590682 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 4384 | 7.4 | 13 / 17 / 33 |
+| build: page made | 9930 | 16.8 | 4 / 10 / 27 |
+| build: single-key page made | 6860 | 11.6 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 4422 | 7.5 | 13 / 17 / 33 |
+| byte node put above a page | 129 | 0.2 | 1 / 1 / 1 |
+| entry removed from a page | 235399 | 398.5 | 6 / 12 / 32 |
+| key added to a page in place | 66308 | 112.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 4359 | 7.4 | 12 / 16 / 32 |
+| merge tried (node with children that are pages) | 69894 | 118.3 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 471 | 0.8 | 2 / 4 / 6 |
+| page with one entry left becomes a single-key page | 9642 | 16.3 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 214 | 0.4 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 9274 | 15.7 | 2 / 6 / 55 |
+| prepend refused: page stays below the node | 2 | 0.0 | 1 / 1 / 1 |
+| value added to a key in a page in place | 155393 | 263.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 624 | 1.1 | 1 / 1 / 1 |
+
+removing every second key value by value: 371 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 629 | 80512 | 0 | 0.0 % |
+| N12+tail | 41 | 6000 | 0 | 0.0 % |
+| N26 | 262 | 67072 | 0 | 0.0 % |
+| N26+tail | 18 | 4896 | 0 | 0.0 % |
+| N5 | 1551 | 99264 | 0 | 0.0 % |
+| N5+tail | 122 | 9984 | 0 | 0.0 % |
+| N58 | 15 | 7680 | 0 | 0.0 % |
+| N58+tail | 3 | 1616 | 0 | 0.0 % |
+| multi-key page | 6094 | 1917056 | 28061 | 85.6 % |
+| single-key page | 4522 | 332544 | 4522 | 13.8 % |
+| value overflow | 185 | 6464 | 185 | 0.6 % |
+
+block bytes per key: 77.3
+
+multi-key pages: 6094, entries per page: mean 4.6, median 4, 10th percentile 2, 90th percentile 9, largest 28
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 26, 2.0, 2.0, 16.0; 64: 409, 2.1, 2.6, 24.4; 128: 1185, 2.4, 3.9, 33.2; 256: 1666, 3.3, 6.6, 38.7; 384: 983, 4.7, 11.8, 32.6; 512: 1825, 7.8, 19.1, 26.9;
+
+single-key pages by number of values: 1: 2468, 2: 772, 3-4: 514, 5+: 768
+
+plain replay of a cycle: 573 ns per operation
+
+## dirs single-value n=4096 (4096 corpus values, 10684 operations in the cycle, 14748 in the build)
+
+build stream: 358 ns per operation
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 443 | 30.0 | 12 / 17 / 34 |
+| build: page made | 999 | 67.7 | 4 / 9 / 32 |
+| build: single-key page made | 983 | 66.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 452 | 30.6 | 12 / 17 / 34 |
+| byte node put above a page | 14 | 0.9 | 1 / 1 / 1 |
+| entry removed from a page | 4595 | 311.6 | 5 / 11 / 31 |
+| key added to a page in place | 6187 | 419.5 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 239 | 16.2 | 11 / 17 / 22 |
+| merge tried (node with children that are pages) | 3153 | 213.8 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 32 | 2.2 | 2 / 4 / 7 |
+| page with one entry left becomes a single-key page | 688 | 46.7 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1213 | 82.2 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 1 | 0.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 280 | 19.0 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 63 | 8064 | 0 | 0.0 % |
+| N12+tail | 1 | 144 | 0 | 0.0 % |
+| N26 | 29 | 7424 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 125 | 8000 | 0 | 0.0 % |
+| N5+tail | 11 | 912 | 0 | 0.0 % |
+| N58 | 4 | 2048 | 0 | 0.0 % |
+| N58+tail | 1 | 528 | 0 | 0.0 % |
+| multi-key page | 792 | 192192 | 3582 | 87.5 % |
+| single-key page | 514 | 27104 | 514 | 12.5 % |
+
+block bytes per key: 60.4
+
+multi-key pages: 792, entries per page: mean 4.5, median 3, 10th percentile 2, 90th percentile 9, largest 26
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 2, 2.0, 2.0, 16.0; 64: 98, 2.1, 2.1, 30.9; 128: 239, 2.7, 2.7, 47.6; 256: 245, 4.0, 4.0, 63.4; 384: 109, 6.9, 6.9, 55.3; 512: 99, 9.9, 9.9, 51.5;
+
+single-key pages by number of values: 1: 514, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 63 | 8064 | 0 | 0.0 % |
+| N12+tail | 1 | 144 | 0 | 0.0 % |
+| N26 | 24 | 6144 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 130 | 8320 | 0 | 0.0 % |
+| N5+tail | 11 | 912 | 0 | 0.0 % |
+| N58 | 4 | 2048 | 0 | 0.0 % |
+| N58+tail | 1 | 528 | 0 | 0.0 % |
+| multi-key page | 792 | 167776 | 3582 | 87.5 % |
+| single-key page | 514 | 27104 | 514 | 12.5 % |
+
+block bytes per key: 54.2
+
+multi-key pages: 792, entries per page: mean 4.5, median 3, 10th percentile 2, 90th percentile 9, largest 26
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 7, 2.0, 2.0, 16.0; 64: 132, 2.1, 2.1, 30.3; 128: 281, 2.8, 2.8, 45.0; 256: 218, 4.9, 4.9, 52.1; 384: 90, 8.1, 8.1, 47.4; 512: 64, 10.8, 10.8, 47.6;
+
+single-key pages by number of values: 1: 514, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 67 | 8576 | 0 | 0.0 % |
+| N12+tail | 2 | 320 | 0 | 0.0 % |
+| N26 | 30 | 7680 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 120 | 7680 | 0 | 0.0 % |
+| N5+tail | 10 | 800 | 0 | 0.0 % |
+| N58 | 4 | 2048 | 0 | 0.0 % |
+| N58+tail | 1 | 528 | 0 | 0.0 % |
+| multi-key page | 792 | 206112 | 3582 | 87.5 % |
+| single-key page | 514 | 27104 | 514 | 12.5 % |
+
+block bytes per key: 63.9
+
+multi-key pages: 792, entries per page: mean 4.5, median 3, 10th percentile 2, 90th percentile 9, largest 26
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 3, 2.0, 2.0, 16.0; 64: 81, 2.1, 2.1, 31.0; 128: 219, 2.6, 2.6, 49.7; 256: 244, 3.7, 3.7, 68.9; 384: 118, 6.3, 6.3, 61.1; 512: 127, 9.4, 9.4, 54.4;
+
+single-key pages by number of values: 1: 514, 2: 0, 3-4: 0, 5+: 0
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 50.0 % | 278 |
+| delete from key with 1 value | 50.0 % | 554 |
+| all | 100 % | 416 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 50.0 % | 50.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+| middle of the cycle | 47.5 % | 52.5 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 281 | 26.3 | 12 / 18 / 31 |
+| build: page made | 648 | 60.7 | 4 / 9 / 24 |
+| build: single-key page made | 583 | 54.6 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 283 | 26.5 | 12 / 18 / 31 |
+| byte node put above a page | 6 | 0.6 | 1 / 1 / 1 |
+| entry removed from a page | 4673 | 437.4 | 5 / 11 / 28 |
+| key added to a page in place | 3752 | 351.2 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 281 | 26.3 | 11 / 17 / 30 |
+| merge tried (node with children that are pages) | 3221 | 301.5 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 43 | 4.0 | 2 / 4 / 4 |
+| page with one entry left becomes a single-key page | 634 | 59.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 618 | 57.8 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 61 | 5.7 | 1 / 1 / 1 |
+
+removing every second key value by value: 437 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 35 | 4480 | 0 | 0.0 % |
+| N12+tail | 2 | 288 | 0 | 0.0 % |
+| N26 | 18 | 4608 | 0 | 0.0 % |
+| N26+tail | 3 | 848 | 0 | 0.0 % |
+| N5 | 60 | 3840 | 0 | 0.0 % |
+| N5+tail | 3 | 240 | 0 | 0.0 % |
+| N58 | 3 | 1536 | 0 | 0.0 % |
+| N58+tail | 2 | 1056 | 0 | 0.0 % |
+| multi-key page | 385 | 117888 | 1722 | 84.1 % |
+| single-key page | 326 | 18112 | 326 | 15.9 % |
+
+block bytes per key: 74.7
+
+multi-key pages: 385, entries per page: mean 4.5, median 3, 10th percentile 2, 90th percentile 9, largest 23
+
+multi-key pages by size (count, keys and values a page, bytes a value): 64: 18, 2.1, 2.1, 31.1; 128: 83, 2.3, 2.3, 55.0; 256: 125, 3.2, 3.2, 80.4; 384: 57, 4.7, 4.7, 82.0; 512: 102, 8.1, 8.1, 63.1;
+
+single-key pages by number of values: 1: 326, 2: 0, 3-4: 0, 5+: 0
+
+plain replay of a cycle: 367 ns per operation
+
+## dirs single-value n=65536 (65536 corpus values, 171410 operations in the cycle, 235116 in the build)
+
+build stream: 525 ns per operation
+
+events of build stream (235116 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 6663 | 28.3 | 15 / 21 / 43 |
+| build: page made | 16877 | 71.8 | 4 / 12 / 32 |
+| build: single-key page made | 10594 | 45.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 6758 | 28.7 | 15 / 21 / 43 |
+| byte node put above a page | 216 | 0.9 | 1 / 1 / 1 |
+| entry removed from a page | 77205 | 328.4 | 7 / 15 / 41 |
+| key added to a page in place | 113819 | 484.1 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 3614 | 15.4 | 15 / 20 / 39 |
+| merge tried (node with children that are pages) | 59398 | 252.6 | 5 / 11 / 12 |
+| page shrinks to a smaller class | 334 | 1.4 | 2 / 4 / 8 |
+| page with one entry left becomes a single-key page | 7113 | 30.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 12440 | 52.9 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 5 | 0.0 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 3882 | 16.5 | 1 / 1 / 1 |
+
+objects of the tree after the build stream:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 843 | 107904 | 0 | 0.0 % |
+| N12+tail | 50 | 7296 | 0 | 0.0 % |
+| N26 | 365 | 93440 | 0 | 0.0 % |
+| N26+tail | 22 | 5984 | 0 | 0.0 % |
+| N5 | 2073 | 132672 | 0 | 0.0 % |
+| N5+tail | 122 | 9984 | 0 | 0.0 % |
+| N58 | 18 | 9216 | 0 | 0.0 % |
+| N58+tail | 3 | 1616 | 0 | 0.0 % |
+| multi-key page | 10347 | 2404576 | 59762 | 91.2 % |
+| single-key page | 5774 | 238912 | 5774 | 8.8 % |
+
+block bytes per key: 46.0
+
+multi-key pages: 10347, entries per page: mean 5.8, median 4, 10th percentile 2, 90th percentile 12, largest 39
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 215, 2.0, 2.0, 16.0; 64: 1992, 2.3, 2.3, 28.0; 128: 2752, 3.2, 3.2, 39.5; 256: 2587, 5.7, 5.7, 44.6; 384: 1394, 9.1, 9.1, 42.3; 512: 1407, 13.0, 13.0, 39.3;
+
+single-key pages by number of values: 1: 5774, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree as built from the corpus:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 790 | 101120 | 0 | 0.0 % |
+| N12+tail | 46 | 6720 | 0 | 0.0 % |
+| N26 | 312 | 79872 | 0 | 0.0 % |
+| N26+tail | 15 | 4080 | 0 | 0.0 % |
+| N5 | 2168 | 138752 | 0 | 0.0 % |
+| N5+tail | 133 | 10864 | 0 | 0.0 % |
+| N58 | 17 | 8704 | 0 | 0.0 % |
+| N58+tail | 2 | 1088 | 0 | 0.0 % |
+| multi-key page | 10284 | 2096064 | 59841 | 91.3 % |
+| single-key page | 5695 | 236192 | 5695 | 8.7 % |
+
+block bytes per key: 41.0
+
+multi-key pages: 10284, entries per page: mean 5.8, median 4, 10th percentile 2, 90th percentile 12, largest 40
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 306, 2.0, 2.0, 16.0; 64: 2650, 2.3, 2.3, 27.3; 128: 2749, 3.8, 3.8, 33.9; 256: 2420, 6.7, 6.7, 37.9; 384: 1251, 10.6, 10.6, 36.2; 512: 908, 14.4, 14.4, 35.6;
+
+single-key pages by number of values: 1: 5695, 2: 0, 3-4: 0, 5+: 0
+
+objects of the tree after one cycle:
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 858 | 109824 | 0 | 0.0 % |
+| N12+tail | 53 | 7728 | 0 | 0.0 % |
+| N26 | 392 | 100352 | 0 | 0.0 % |
+| N26+tail | 23 | 6256 | 0 | 0.0 % |
+| N5 | 2028 | 129792 | 0 | 0.0 % |
+| N5+tail | 118 | 9664 | 0 | 0.0 % |
+| N58 | 19 | 9728 | 0 | 0.0 % |
+| N58+tail | 3 | 1616 | 0 | 0.0 % |
+| multi-key page | 10354 | 2560928 | 59767 | 91.2 % |
+| single-key page | 5769 | 238752 | 5769 | 8.8 % |
+
+block bytes per key: 48.4
+
+multi-key pages: 10354, entries per page: mean 5.8, median 4, 10th percentile 2, 90th percentile 12, largest 32
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 177, 2.0, 2.0, 16.0; 64: 1662, 2.2, 2.2, 28.5; 128: 2735, 3.0, 3.0, 42.4; 256: 2668, 5.3, 5.3, 47.9; 384: 1387, 8.4, 8.4, 45.9; 512: 1725, 12.5, 12.5, 40.9;
+
+single-key pages by number of values: 1: 5769, 2: 0, 3-4: 0, 5+: 0
+
+per operation, by what the operation does to its key (clock overhead taken off):
+
+| operation | share of operations | ns per operation |
+|---|--:|--:|
+| insert into key with 0 values (new key) | 50.0 % | 385 |
+| delete from key with 1 value | 50.0 % | 784 |
+| all | 100 % | 584 |
+
+keys by number of values (of all keys the stream knows, including those without a value):
+
+| when | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| start of the cycle | 50.0 % | 50.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+| middle of the cycle | 48.2 % | 51.8 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+
+events of one steady-state cycle (171410 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 3694 | 21.6 | 17 / 22 / 36 |
+| build: page made | 9327 | 54.4 | 4 / 13 / 29 |
+| build: single-key page made | 5262 | 30.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 3739 | 21.8 | 17 / 22 / 36 |
+| byte node put above a page | 136 | 0.8 | 1 / 1 / 1 |
+| entry removed from a page | 78407 | 457.4 | 7 / 15 / 36 |
+| key added to a page in place | 67497 | 393.8 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 3675 | 21.4 | 16 / 21 / 35 |
+| merge tried (node with children that are pages) | 61580 | 359.3 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 464 | 2.7 | 2 / 5 / 8 |
+| page with one entry left becomes a single-key page | 6944 | 40.5 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 6672 | 38.9 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 1 | 0.0 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 772 | 4.5 | 1 / 1 / 1 |
+
+removing every second key value by value: 588 ns per removal
+
+objects of the tree with every second key removed (Remove, value by value):
+
+| object | count | bytes | keys | share of keys |
+|---|--:|--:|--:|--:|
+| N12 | 452 | 57856 | 0 | 0.0 % |
+| N12+tail | 29 | 4208 | 0 | 0.0 % |
+| N26 | 240 | 61440 | 0 | 0.0 % |
+| N26+tail | 17 | 4624 | 0 | 0.0 % |
+| N5 | 939 | 60096 | 0 | 0.0 % |
+| N5+tail | 73 | 5968 | 0 | 0.0 % |
+| N58 | 15 | 7680 | 0 | 0.0 % |
+| N58+tail | 3 | 1616 | 0 | 0.0 % |
+| multi-key page | 5443 | 1584896 | 29675 | 90.6 % |
+| single-key page | 3093 | 134784 | 3093 | 9.4 % |
+
+block bytes per key: 58.7
+
+multi-key pages: 5443, entries per page: mean 5.5, median 4, 10th percentile 2, 90th percentile 11, largest 28
+
+multi-key pages by size (count, keys and values a page, bytes a value): 32: 52, 2.0, 2.0, 16.0; 64: 542, 2.1, 2.1, 29.9; 128: 1267, 2.6, 2.6, 48.3; 256: 1395, 4.0, 4.0, 63.8; 384: 707, 6.2, 6.2, 61.7; 512: 1480, 10.2, 10.2, 50.3;
+
+single-key pages by number of values: 1: 3093, 2: 0, 3-4: 0, 5+: 0
+
+plain replay of a cycle: 616 ns per operation
+--- PASS: TestProbe (4.34s)
+PASS
+ok  	github.com/TomTonic/multimap/bench/cmd/bench	4.365s
