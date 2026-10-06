@@ -78,3 +78,22 @@ The merge of the nodes above a page is tried only when the page has `mergeBelow 
 | merges done per 1000 operations | 2.3 | 2.5 | 2.9 | 4.6 |
 
 A merge tried at every removal buys 1 to 3 points of memory for 2.5 to 5 times the tries; `replay` ns/op rises with it (194 → 226, 289 → 328, 435 → 616: single runs of ten milliseconds, but in one direction). **The fill that is lost is not a merge that is not tried**: it is the fill of a structure that is changed at random. Nothing is changed. Remaining options were the page shrink (3 to 4 points, ten times the shrinks) and nothing: **the after-use factor of 1.2 stays, to be measured against `btree-sets` in gate 5.**
+
+## 5.3: the pointer page (commit `e2c912d`)
+
+`mkpage.Fixed` takes a `T` that is one word with a pointer; the page is the typed object `ptrObject[T, [J]uint64, [N]T]` of `skpage` with N = n, values moved as `T`; the map's `mk` is on for such a `T`. Tests: the model test runs a third flavor (`*uint64`), a collector test (`TestFixedPointerPageKeepsItsValuesAlive`: finalizers on the values, a collection every few steps, adds, removes, Skip, Prepend; with the page allocated untyped it fails in the first step, so it sees a lost value), the tree tests run with `*rec` too (`recPool`), and a collector test of the map (`TestMultiKeyPagesOfPointersKeepTheirValuesAlive`). `mkpage`, `skpage` and `art`: 100 %, race, lint 0.
+
+Probe with `-tags ptrvals,mkstats` (WSL; raw `bench/results-layout/step5-probe/wsl-probe-ptr.txt`, before 5.3: `wsl-probe-ptr-before-5.3.txt`; in brackets the same case for `uint64`):
+
+| case | fresh B/key | after cycle B/key | keys in pages after the cycle | replay ns/op | build ns/op |
+|---|--:|--:|--:|--:|--:|
+| street natural 4,096 | 73.8 → **40.5** (40.5) | 81.3 → 49.4 (49.4) | 0 → 88 % | 109 → **429** (193) | 172 → 413 (256) |
+| street natural 65,536 | 74.1 → 39.2 (39.2) | 80.0 → 48.5 (48.5) | 0 → 88 % | 261 → 493 (274) | 228 → 480 (270) |
+| dirs natural 4,096 | 107.2 → 72.3 (72.3) | 115.4 → 85.6 | 0 → 82 % | 162 → 342 (229) | 175 → 330 (245) |
+| dirs natural 65,536 | 93.4 → 58.7 (58.7) | 101.5 → 71.2 | 0 → 85 % | 393 → 698 (421) | 381 → 714 (391) |
+| street single-value 4,096 | 65.7 → 30.3 (30.3) | 67.2 → 36.6 | 0 → 93 % | 129 → 290 (198) | 127 → 294 (169) |
+| u64 natural 65,536 | 81.0 → 62.6 (62.6) | 86.6 → 73.6 | 0 → 59 % | 186 → 264 (183) | 157 → 261 (167) |
+
+**Memory is as predicted: exactly that of the `uint64` map** (the bytes are the same), -45 % (street) and -33 % (dirs) fresh against the pointer map of step 5.2, with the same after-use factor of about 1.2 instead of 1.1 to 1.0 for the typed leaves, which never shared. **Time misses the prediction** (+20 to 40 % over `uint64`): the replay is 1.4 to 2.2 times that of `uint64` (street natural 4,096: 429 against 193 ns an operation) and 1.6 to 4 times the pointer map before 5.3 (109), because every change of `n` is a new object.
+
+Page level (hot, WSL, `BenchmarkFixed` against `BenchmarkFixedPointers`, one insert and one remove): n=3 61 → 182 ns, n=20 95 → 432 ns; Get hit the same (17.5 / 17.2 ns, 42 / 43 ns). That is one allocation of the page's class for each change: about 60 ns for a page of 64 bytes, about 170 ns for 256 to 512 bytes, with its share of the collector's work; the probe adds the collector's marking of the values.

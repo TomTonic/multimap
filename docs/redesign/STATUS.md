@@ -1,5 +1,10 @@
 # Status
 
+## 2026-10-06: step 5.3 built: the pointer page ([results](step5-tree-results.md)); stopped at one missed prediction (time)
+
+- `mkpage.Fixed` for a `T` with a pointer: typed object of `skpage` (N = n), values moved as `T`; `art` uses pages for `*T` maps. Gates green (100 %, race, lint 0), collector tests; commit `e2c912d`.
+- Memory as predicted (equal to the `uint64` map: -45 % street, -33 % dirs against before). **Time missed**: churn/build of a `*T` map 1.4 to 2.2 times that of `uint64` (predicted 1.2 to 1.4), every change of `n` allocates a page. Decision for the user: accept, or spare slots (grid of 4 values: in place for three changes in four, about 1.5 B a key more). PC and M1 runs not started.
+
 ## 2026-10-06: step 5.2 built: the tree with several values in a page ([results](step5-tree-results.md)); stopped at one missed prediction
 
 - Promote and `Insert`/`Differs` gone; `reach`, `pair`, `build`, merge, `pageRemove`/`RemoveKey` and the scans take entries with several values; `Remove` of the pages says `Removed`/`Gone`/`Absent`, `KeysUpTo` counts keys cheaply. 100 % (race), lint 0; commit `dbbf333`.

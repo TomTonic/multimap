@@ -187,3 +187,38 @@ func BenchmarkFixedScan(b *testing.B) {
 }
 
 var sink uint64
+
+// BenchmarkFixedPointers is BenchmarkFixed for values that are pointers: a page of pointers is a
+// new object for every change of the number of values (docs/redesign/step5-mkmv-design.md, 5.3).
+func BenchmarkFixedPointers(b *testing.B) {
+	for _, n := range []int{3, 7, 20} {
+		keys, _ := pageSet(n)
+		pages := make([]*Fixed, len(keys))
+		for i := range pages {
+			vs := make([]*uint64, len(keys[i]))
+			for j := range vs {
+				vs[j] = &ptrPool[j]
+			}
+			pages[i] = BuildFixed(keys[i], vs)
+		}
+		b.Run(fmt.Sprintf("n=%d/get hit", n), func(b *testing.B) {
+			for i := range b.N {
+				j := i & 4095
+				if _, ok := pages[j].Get[*uint64](keys[j][i%len(keys[j])]); !ok {
+					b.Fatal("lost")
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("n=%d/insert and remove", n), func(b *testing.B) {
+			k := []byte("prem")
+			for i := range b.N {
+				p := pages[i&4095]
+				q, res := p.Add(k, &ptrPool[63])
+				if res == Added {
+					p, _ = q.Remove(k, &ptrPool[63])
+					pages[i&4095] = p
+				}
+			}
+		})
+	}
+}
