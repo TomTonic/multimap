@@ -85,3 +85,20 @@ Page level, one insert and one remove (n = 3 / 7 / 20, ns): `3e1e952` 51.1 / 62.
 5. The real-mix build that was predicted 0.95 to 1.0 of m43 (the 32 rebuilds in 1,000 operations are gone) is 0.99 to 1.11: its gain is smaller than these costs, the cost per operation of the same code rises by the same 4 to 6 %.
 
 Options (not decided): (A) leave it, (B) pass `ptr bool` (decided once in `decide`) to `Add`, `Remove`, `Widen`, `Prepend`, `BuildFixedOf`; expected back to about 2 to 3 % over m43 for `uint64`; (C) B and then a look at the removal and the merge walk with the `first` flag.
+
+### Option B done (user, 2026-10-06): the pointer flag is decided once per map
+
+`Map.decide` sets `m.ptr` (`mkpage.HoldsPointers[T]()`, asked once); `mkpage.Fixed.Add/Remove/Widen/Prepend` and `BuildFixedOf` take it as `ptr bool` and no longer ask the type; `skpage.NewFixed/EmptyFixed/BuildFixed` ask `kindOf` once instead of twice. `kindOf` is the only use of `reflect` in the library (2.9 ns a call for `uint64`, 8 ns for a two-word array). Tests, race, lint and 100 % unchanged.
+
+Page level (insert and remove, n = 3 / 7 / 20, ns): m43 51.1 / 62.8 / 83.1; 5.3 61.6 / 73.5 / 94.8; **now 52.4 / 63.2 / 86.9** (+1 to 4 % over m43). Tree level (probe, medians of 11, build / replay ns an operation, m43 → 5.3 → now):
+
+| case | m43 | 5.3 | now |
+|---|--|--|--|
+| `uint64` single-value 4,096 | 75 / 72 | 87 / 77 | **81 / 74** |
+| `uint64` single-value 65,536 | 118 / 124 | 130 / 135 | 122 / 134 |
+| street single-value 4,096 | 197 / 219 | 214 / 227 | **197 / 219** |
+| dirs single-value 4,096 | 264 / 262 | 279 / 272 | 274 / 267 |
+| street natural 4,096 | 192 / 174 | 206 / 181 | 201 / 174 |
+| `uint64` natural 4,096 | 72 / 67 | 103 / 89 | 99 / 81 |
+
+What is left of the single-value gap is 0 to 8 %, mostly in `uint64` keys. **A second finding that this run shows and the PC run confirms** (`u64` keys real: build 1.11 to 1.40 of m43's time): the real mix on random `uint64` keys (pages of 4 entries, many bursts and merges) is 20 to 40 % slower in build and 20 % in replay than m43; it is not the reflection (it stays at 99 / 81). Cause not found yet: candidates are the items with `multi` (a slice for every key with several values in `pageItems`, `leafItem`, `appendValue`) and the larger `pageOf`.

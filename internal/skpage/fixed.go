@@ -140,9 +140,9 @@ func AllocPtr[T any](c, j int) unsafe.Pointer { return allocPtr[T](c, j) }
 // allocFixed returns a zeroed page of class c with the head set, for a
 // remainder of r bytes of a key of kl bytes. It does not check that a value
 // fits.
-func allocFixed[T comparable](c, r, kl int) *Fixed {
+func allocFixed[T comparable](c, r, kl int, kind fixedKind) *Fixed {
 	var p *Fixed
-	if kindOf[T]() == fixedPtr {
+	if kind == fixedPtr {
 		p = (*Fixed)(allocPtr[T](c, valuesAt[T](r)/8))
 	} else {
 		p = (*Fixed)(allocRaw(c))
@@ -158,10 +158,11 @@ func allocFixed[T comparable](c, r, kl int) *Fixed {
 // a key arrives that no page holds yet, with the remainder it has cut from the
 // key.
 func NewFixed[T comparable](rest []byte, keyLen int, v T) *Fixed {
-	if kindOf[T]() == fixedNone || len(rest) > MaxRemainderFixed[T]() {
+	kind := kindOf[T]() // asked once: it is a reflection of the type
+	if kind == fixedNone || len(rest) > MaxRemainderFixed[T]() {
 		return nil
 	}
-	p := allocFixed[T](classHolding[T](1, len(rest)), len(rest), keyLen)
+	p := allocFixed[T](classHolding[T](1, len(rest)), len(rest), keyLen, kind)
 	copy(p.mem()[Header:], rest)
 	valuesOf[T](p, 1)[0] = v
 	p.n = 1
@@ -173,10 +174,11 @@ func NewFixed[T comparable](rest []byte, keyLen int, v T) *Fixed {
 // makes it when a key arrives and adds the first value at once with Add; a page
 // without values is not a state a key stays in.
 func EmptyFixed[T comparable](rest []byte, keyLen int) *Fixed {
-	if kindOf[T]() == fixedNone || len(rest) > MaxRemainderFixed[T]() {
+	kind := kindOf[T]() // asked once: it is a reflection of the type
+	if kind == fixedNone || len(rest) > MaxRemainderFixed[T]() {
 		return nil
 	}
-	p := allocFixed[T](classHolding[T](1, len(rest)), len(rest), keyLen)
+	p := allocFixed[T](classHolding[T](1, len(rest)), len(rest), keyLen, kind)
 	copy(p.mem()[Header:], rest)
 	return p
 }
@@ -186,14 +188,15 @@ func EmptyFixed[T comparable](rest []byte, keyLen int) *Fixed {
 // they do not fit the largest class. The tree calls it when the value set of a
 // key has shrunk to what BackFits allows.
 func BuildFixed[T comparable](rest []byte, keyLen int, vals []T) *Fixed {
-	if kindOf[T]() == fixedNone || len(vals) == 0 || len(rest) > MaxRemainderFixed[T]() {
+	kind := kindOf[T]()
+	if kind == fixedNone || len(vals) == 0 || len(rest) > MaxRemainderFixed[T]() {
 		return nil
 	}
 	c := classHolding[T](len(vals), len(rest))
 	if c < 0 {
 		return nil
 	}
-	p := allocFixed[T](c, len(rest), keyLen)
+	p := allocFixed[T](c, len(rest), keyLen, kind)
 	copy(p.mem()[Header:], rest)
 	copy(valuesOf[T](p, len(vals)), vals)
 	p.n = uint16(len(vals))
@@ -243,7 +246,7 @@ func (p *Fixed) Add[T comparable](v T) (*Fixed, Result) {
 	if c < 0 {
 		return p, Full
 	}
-	q := allocFixed[T](c, p.rem(), int(p.kl))
+	q := allocFixed[T](c, p.rem(), int(p.kl), kindOf[T]())
 	copy(q.mem()[Header:], p.Rest())
 	copy(valuesOf[T](q, n+1), valuesOf[T](p, n))
 	valuesOf[T](q, n+1)[n] = v
@@ -275,7 +278,7 @@ func (p *Fixed) Remove[T comparable](v T) (*Fixed, bool) {
 	vs[len(vs)-1] = zero
 	p.n--
 	if c := classHolding[T](2*int(p.n), p.rem()); c >= 0 && c < p.class() {
-		q := allocFixed[T](c, p.rem(), int(p.kl))
+		q := allocFixed[T](c, p.rem(), int(p.kl), kindOf[T]())
 		copy(q.mem()[Header:], p.Rest())
 		copy(valuesOf[T](q, int(p.n)), valuesOf[T](p, int(p.n)))
 		q.n = p.n
@@ -316,7 +319,7 @@ func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
 		p.setRem(r)
 		return p
 	}
-	q := allocFixed[T](c, r, int(p.kl))
+	q := allocFixed[T](c, r, int(p.kl), kindOf[T]())
 	m := q.mem()
 	copy(m[Header:], pre)
 	copy(m[Header+len(pre):], p.Rest())

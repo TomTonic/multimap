@@ -118,7 +118,7 @@ func runFixedModel[T comparable](t *testing.T, gen func(r *rand.Rand) T) {
 				v = m[i].val
 			}
 			if r.IntN(3) > 0 {
-				q, rm := p.Remove(key2b(key), v)
+				q, rm := p.Remove(key2b(key), v, HoldsPointers[T]())
 				ok := rm != Absent
 				i, found := m.find(key)
 				want := found && strings.HasPrefix(key, cp) && m[i].val == v
@@ -137,7 +137,7 @@ func runFixedModel[T comparable](t *testing.T, gen func(r *rand.Rand) T) {
 					v = m[i].val
 				}
 				want := expectFixedInsert(m, cp, key, v)
-				q, res := p.Add(key2b(key), v)
+				q, res := p.Add(key2b(key), v, HoldsPointers[T]())
 				if res != want {
 					t.Fatalf("seed %d step %d: Insert(%q, %v) = %v, want %v", seed, step, key, v, res, want)
 				}
@@ -272,7 +272,7 @@ func TestFixedInsertResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := fresh()
-			q, res := p.Add([]byte(tt.key), tt.val)
+			q, res := p.Add([]byte(tt.key), tt.val, false)
 			if res != tt.want {
 				t.Fatalf("Insert = %v, want %v", res, tt.want)
 			}
@@ -295,11 +295,11 @@ func TestFixedInsertResults(t *testing.T) {
 		key string
 		val uint64
 	}{{"abd1", 10}, {"abc9", 10}, {"abc1", 20}} {
-		if q, rm := p.Remove([]byte(c.key), c.val); rm != Absent || q != p {
+		if q, rm := p.Remove([]byte(c.key), c.val, false); rm != Absent || q != p {
 			t.Errorf("Remove(%q, %d) took something it must not", c.key, c.val)
 		}
 	}
-	if q, rm := BuildFixed([][]byte{[]byte("k")}, []uint64{1}).Remove([]byte("k"), 1); rm != Gone || q != nil {
+	if q, rm := BuildFixed([][]byte{[]byte("k")}, []uint64{1}).Remove([]byte("k"), 1, false); rm != Gone || q != nil {
 		t.Error("Remove of the only entry")
 	}
 }
@@ -317,7 +317,7 @@ func TestFixedGrowsThroughTheClasses(t *testing.T) {
 	m := fixedModel[uint64]{{"\x00", 0}, {"\xff", 255}}
 	sizes := []int{p.Size()}
 	for i := 1; i < 255; i++ {
-		q, res := p.Add([]byte{byte(i)}, uint64(i))
+		q, res := p.Add([]byte{byte(i)}, uint64(i), false)
 		if res == Full {
 			break
 		}
@@ -345,7 +345,7 @@ func TestFixedShrinksWithHysteresis(t *testing.T) {
 	p := BuildFixed([][]byte{{0}, {255}}, []uint64{0, 255})
 	last := 0
 	for i := 1; ; i++ {
-		q, res := p.Add([]byte{byte(i)}, uint64(i))
+		q, res := p.Add([]byte{byte(i)}, uint64(i), false)
 		if res == Full {
 			break
 		}
@@ -354,7 +354,7 @@ func TestFixedShrinksWithHysteresis(t *testing.T) {
 	classes := []int{p.Size()}
 	for i := last; i >= 1; i-- {
 		var rm Removal
-		if p, rm = p.Remove([]byte{byte(i)}, uint64(i)); rm == Absent {
+		if p, rm = p.Remove([]byte{byte(i)}, uint64(i), false); rm == Absent {
 			t.Fatalf("entry %d not removed", i)
 		}
 		if c := classFor(2 * fixedEnd[uint64](p)); c >= 0 && c < p.class() {
@@ -369,11 +369,11 @@ func TestFixedShrinksWithHysteresis(t *testing.T) {
 	}
 	size := p.Size()
 	for range 5 {
-		q, res := p.Add([]byte{9}, 9)
+		q, res := p.Add([]byte{9}, 9, false)
 		if res != Added {
 			t.Fatalf("insert: %v", res)
 		}
-		r, rm := q.Remove([]byte{9}, 9)
+		r, rm := q.Remove([]byte{9}, 9, false)
 		ok := rm != Absent
 		if !ok || r.Size() != size {
 			t.Fatalf("remove after insert: %v, size %d, was %d", ok, r.Size(), size)
@@ -397,20 +397,20 @@ func TestFixedSkipAndPrepend(t *testing.T) {
 	checkFixed(t, p, fixedModel[uint64]{{"cdef1", 1}, {"cdef2", 2}})
 	p.Skip[uint64](4)
 	checkFixed(t, p, fixedModel[uint64]{{"1", 1}, {"2", 2}})
-	q := p.Prepend[uint64]([]byte("abcd"))
+	q := p.Prepend[uint64]([]byte("abcd"), false)
 	checkFixed(t, q, fixedModel[uint64]{{"abcd1", 1}, {"abcd2", 2}})
 	if q != p {
 		t.Error("Prepend allocated although the class holds it")
 	}
-	big := q.Prepend[uint64]([]byte(strings.Repeat("P", 40)))
+	big := q.Prepend[uint64]([]byte(strings.Repeat("P", 40)), false)
 	if big == nil || big == q || big.Size() <= q.Size() {
 		t.Fatalf("Prepend of 40 bytes: %v", big)
 	}
 	checkFixed(t, big, fixedModel[uint64]{{strings.Repeat("P", 40) + "abcd1", 1}, {strings.Repeat("P", 40) + "abcd2", 2}})
-	if big.Prepend[uint64]([]byte(strings.Repeat("P", MaxPrefix))) != nil {
+	if big.Prepend[uint64]([]byte(strings.Repeat("P", MaxPrefix)), false) != nil {
 		t.Error("Prepend beyond MaxPrefix")
 	}
-	if big.Prepend[uint64]([]byte(strings.Repeat("P", 470))) != nil {
+	if big.Prepend[uint64]([]byte(strings.Repeat("P", 470)), false) != nil {
 		t.Error("Prepend beyond the largest class")
 	}
 }
@@ -449,7 +449,7 @@ func FuzzFixed(f *testing.F) {
 				m = fixedModel[uint32]{{key, v}}
 			case p == nil:
 			case op == 1:
-				q, rm := p.Remove([]byte(key), v)
+				q, rm := p.Remove([]byte(key), v, false)
 				ok := rm != Absent
 				if want := found && strings.HasPrefix(key, string(p.CP())) && m[i].val == v; ok != want {
 					t.Fatalf("Remove %q: %v, want %v", key, ok, want)
@@ -462,7 +462,7 @@ func FuzzFixed(f *testing.F) {
 					v = m[i].val
 				}
 				want := expectFixedInsert(m, string(p.CP()), key, v)
-				q, res := p.Add([]byte(key), v)
+				q, res := p.Add([]byte(key), v, false)
 				if res != want {
 					t.Fatalf("Insert %q: %v, want %v", key, res, want)
 				}

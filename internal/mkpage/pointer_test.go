@@ -71,7 +71,7 @@ func TestFixedPointerPageKeepsItsValuesAlive(t *testing.T) {
 			i, ok := find(key)
 			switch op := r.IntN(10); {
 			case op < 6:
-				q, res := p.Add([]byte(key), newPtrRec(next))
+				q, res := p.Add([]byte(key), newPtrRec(next), true)
 				p = q
 				switch res {
 				case Added:
@@ -83,7 +83,7 @@ func TestFixedPointerPageKeepsItsValuesAlive(t *testing.T) {
 			case op < 9 && ok:
 				id := model[i].ids[r.IntN(len(model[i].ids))]
 				v := ptrDeref(t, p, key, id)
-				q, rm := p.Remove([]byte(key), v)
+				q, rm := p.Remove([]byte(key), v, true)
 				if q == nil {
 					t.Fatalf("seed %d: the page went away", seed)
 				}
@@ -94,7 +94,7 @@ func TestFixedPointerPageKeepsItsValuesAlive(t *testing.T) {
 				}
 			case op == 9 && r.IntN(3) == 0:
 				p.Skip[*ptrRec](2)
-				p = p.Prepend[*ptrRec]([]byte("ke"))
+				p = p.Prepend[*ptrRec]([]byte("ke"), true)
 			}
 			if step%7 == 0 {
 				settle()

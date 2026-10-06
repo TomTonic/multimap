@@ -19,6 +19,10 @@ import (
 // pointers hides them from the write barrier); for a T without a pointer the same code is a
 // plain memmove and the page changes in place.
 //
+// The methods that may make a new object (BuildFixedOf, Add, Remove, Widen, Prepend) take ptr, whether T
+// holds a pointer (HoldsPointers[T]()): it is a reflection of the type, about 3 ns, too slow to ask on every
+// change, so the map that owns the pages asks once and passes it.
+//
 // The methods are generic in T and do not carry it: the tree holds untyped *Fixed
 // pointers, as it holds *Page, and the map that owns the page names T in every
 // call. T must be the type the page was made with.
@@ -32,11 +36,11 @@ func Supported[T comparable]() bool { return skpage.Supported[T]() }
 func HoldsPointers[T comparable]() bool { return skpage.HoldsPointers[T]() }
 
 // newFixed returns a zeroed object of class c for slots values, with its head set for slots
-// slots and a common prefix of cpl bytes. For a T with a pointer it is the typed object whose
-// last slots words are the values.
-func newFixed[T comparable](c, slots, cpl int) *Fixed {
+// slots and a common prefix of cpl bytes. For a T with a pointer (ptr) it is the typed object
+// whose last slots words are the values.
+func newFixed[T comparable](c, slots, cpl int, ptr bool) *Fixed {
 	var p *Fixed
-	if HoldsPointers[T]() {
+	if ptr {
 		p = (*Fixed)(skpage.AllocPtr[T](c, sizes[c]/8-slots))
 	} else {
 		p = (*Fixed)(allocRaw(c))
@@ -79,12 +83,12 @@ func BuildFixed[T comparable](rests [][]byte, vals []T) *Fixed {
 	if !Supported[T]() {
 		return nil
 	}
-	return BuildFixedOf(rests, vals)
+	return BuildFixedOf(rests, vals, HoldsPointers[T]())
 }
 
-// BuildFixedOf is BuildFixed for a T that is known to be Supported: the check is a reflection
-// of the type, too slow for a tree that builds a page for every burst.
-func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
+// BuildFixedOf is BuildFixed for a T that is known to be Supported, and ptr says whether it holds a
+// pointer: the checks are reflection of the type, too slow for a tree that builds a page for every burst.
+func BuildFixedOf[T comparable](rests [][]byte, vals []T, ptr bool) *Fixed {
 	n := len(rests)
 	if n == 0 || n > MaxEntries || len(vals) != n {
 		return nil
@@ -105,7 +109,7 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 	if c < 0 {
 		return nil
 	}
-	p := newFixed[T](c, n, cp)
+	p := newFixed[T](c, n, cp, ptr)
 	m := p.mem()
 	vs := p.vs(w)
 	lo := Header + cp
@@ -210,7 +214,9 @@ func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 // Add adds the value v to the key rest and returns the page that holds the result, which is
 // p itself unless the content no longer fits p's class, and says what happened (see Result).
 // A key that is there gets the value behind its others.
-func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) {
+//
+// ptr is HoldsPointers[T]() (see Fixed): a page of pointers is a new object for every change.
+func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 	cpl := p.cpl()
 	if p.Match(rest) < cpl {
 		return p, Outside
@@ -244,8 +250,8 @@ func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) {
 		return p, Full
 	}
 	q, old := p, valuesIn[T](m, n)
-	if c > p.class() || HoldsPointers[T]() { // a new object: a class more, or a page of pointers, whose shape is n
-		q = newFixed[T](max(c, p.class()), n+1, cpl)
+	if c > p.class() || ptr { // a new object: a class more, or a page of pointers, whose shape is n
+		q = newFixed[T](max(c, p.class()), n+1, cpl, ptr)
 		m = q.mem()
 		copy(m[Header:keyEnd], p.mem()[Header:keyEnd])
 	}
@@ -269,7 +275,9 @@ func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) {
 // Widen is Page.Widen for values of one size: it adds the entry rest -> v, a key that leaves
 // the common prefix after mis = Match(rest) < PrefixLen() bytes, and shortens the prefix to those
 // bytes. It returns the new page, or nil if the entry does not go in.
-func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
+//
+// ptr is HoldsPointers[T]() (see Fixed): a page of pointers is a new object for every change.
+func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	cpl := p.cpl()
 	mis := p.Match(rest)
 	d := cpl - mis
@@ -299,7 +307,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	if !first {
 		at = n
 	}
-	q := newFixed[T](c, n+1, mis)
+	q := newFixed[T](c, n+1, mis, ptr)
 	out := q.mem()
 	nlo := Header + mis
 	for i := range n {
@@ -337,7 +345,9 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 // whether the key went with it (Gone, its last value). It returns the page that holds the rest: p itself, a page of a smaller
 // class once the content fills at most half of it, or nil if the value was the only one (the
 // page is gone); see Page.Remove.
-func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, Removal) {
+//
+// ptr is HoldsPointers[T]() (see Fixed): a page of pointers is a new object for every change.
+func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Removal) {
 	cpl := p.cpl()
 	if p.Match(rest) < cpl {
 		return p, Absent
@@ -379,12 +389,12 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, Removal) {
 	clear(m[nk:keyEnd])
 	sc := classFor(2 * (nk + (n-1)*w))
 	shrink := sc >= 0 && sc < p.class()
-	if shrink || HoldsPointers[T]() { // a new object: a smaller class, or a page of pointers, whose shape is n
+	if shrink || ptr { // a new object: a smaller class, or a page of pointers, whose shape is n
 		nc := p.class()
 		if shrink {
 			nc = sc
 		}
-		q := newFixed[T](nc, n-1, cpl)
+		q := newFixed[T](nc, n-1, cpl, ptr)
 		copy(q.mem()[Header:nk], m[Header:nk])
 		old, vals := valuesIn[T](m, n), valuesIn[T](q.mem(), n-1)
 		copy(vals[:slot], old[:slot])
@@ -439,7 +449,9 @@ func (p *Fixed) Skip[T comparable](k int) {
 // in the tree, when the node above it goes away. It is p itself if the content still
 // fits, else a page of a larger class; nil if the common prefix would exceed MaxPrefix
 // or the content the largest class.
-func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
+//
+// ptr is HoldsPointers[T]() (see Fixed): a page of pointers is a new object for every change.
+func (p *Fixed) Prepend[T comparable](pre []byte, ptr bool) *Fixed {
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
 	keyEnd := p.Used()
@@ -450,7 +462,7 @@ func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
 	}
 	q := p
 	if c > p.class() {
-		q = newFixed[T](c, n, p.cpl())
+		q = newFixed[T](c, n, p.cpl(), ptr)
 		copy(q.mem()[Header:keyEnd], p.mem()[Header:keyEnd])
 		copy(valuesIn[T](q.mem(), n), valuesIn[T](p.mem(), n))
 	}

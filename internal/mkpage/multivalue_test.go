@@ -199,17 +199,17 @@ func fixedVal(s string) uint64 { n, _ := strconv.ParseUint(s, 10, 64); return n 
 
 func (f *fixedPage) value(r *rand.Rand) string { return strconv.Itoa(r.IntN(6)) }
 func (f *fixedPage) add(key, val string) Result {
-	q, res := f.p.Add([]byte(key), fixedVal(val))
+	q, res := f.p.Add([]byte(key), fixedVal(val), false)
 	f.p = q
 	return res
 }
 func (f *fixedPage) remove(key, val string) Removal {
-	q, rm := f.p.Remove([]byte(key), fixedVal(val))
+	q, rm := f.p.Remove([]byte(key), fixedVal(val), false)
 	f.p = q
 	return rm
 }
 func (f *fixedPage) widen(key, val string) bool {
-	q := f.p.Widen([]byte(key), fixedVal(val))
+	q := f.p.Widen([]byte(key), fixedVal(val), false)
 	if q != nil {
 		f.p = q
 	}
@@ -273,17 +273,17 @@ func ptrVal(s string) *uint64 { n, _ := strconv.ParseUint(s, 10, 64); return &pt
 
 func (f *ptrPage) value(r *rand.Rand) string { return strconv.Itoa(r.IntN(6)) }
 func (f *ptrPage) add(key, val string) Result {
-	q, res := f.p.Add([]byte(key), ptrVal(val))
+	q, res := f.p.Add([]byte(key), ptrVal(val), true)
 	f.p = q
 	return res
 }
 func (f *ptrPage) remove(key, val string) Removal {
-	q, rm := f.p.Remove([]byte(key), ptrVal(val))
+	q, rm := f.p.Remove([]byte(key), ptrVal(val), true)
 	f.p = q
 	return rm
 }
 func (f *ptrPage) widen(key, val string) bool {
-	q := f.p.Widen([]byte(key), ptrVal(val))
+	q := f.p.Widen([]byte(key), ptrVal(val), true)
 	if q != nil {
 		f.p = q
 	}
@@ -711,11 +711,11 @@ func TestMultiValuePageSkipAndPrepend(t *testing.T) {
 		case *fixedPage:
 			q.p.Skip[uint64](skip)
 			checkMV(t, pg, stripped)
-			q.p = q.p.Prepend[uint64]([]byte(m[0].key[:skip]))
+			q.p = q.p.Prepend[uint64]([]byte(m[0].key[:skip]), false)
 		case *ptrPage:
 			q.p.Skip[*uint64](skip)
 			checkMV(t, pg, stripped)
-			q.p = q.p.Prepend[*uint64]([]byte(m[0].key[:skip]))
+			q.p = q.p.Prepend[*uint64]([]byte(m[0].key[:skip]), true)
 		}
 		checkMV(t, pg, m)
 	}
@@ -763,7 +763,7 @@ func TestMultiValuePagePrefixOfNineBits(t *testing.T) {
 		}
 		g := f
 		for i := range 40 {
-			g, _ = g.Add([]byte(long+"c"+string(rune('a'+i))), uint64(i))
+			g, _ = g.Add([]byte(long+"c"+string(rune('a'+i))), uint64(i), false)
 		}
 		if g.Class() != 5 || g.PrefixLen() != 300 {
 			t.Errorf("fixed after growing: class %d prefix %d", g.Class(), g.PrefixLen())
@@ -777,7 +777,7 @@ func TestMultiValuePagePrefixOfNineBits(t *testing.T) {
 		if g.PrefixLen() != 200 || g.objType&1 != 0 || q.PrefixLen() != 200 || q.objType&1 != 0 {
 			t.Errorf("after Skip: %d %d", g.PrefixLen(), q.PrefixLen())
 		}
-		g = g.Prepend[uint64]([]byte(strings.Repeat("p", 100)))
+		g = g.Prepend[uint64]([]byte(strings.Repeat("p", 100)), false)
 		q = q.Prepend([]byte(strings.Repeat("p", 100)))
 		if g.PrefixLen() != 300 || g.objType&1 != 1 || q.PrefixLen() != 300 || q.objType&1 != 1 {
 			t.Errorf("after Prepend: %d %d", g.PrefixLen(), q.PrefixLen())
@@ -803,16 +803,16 @@ func TestMultiValuePageWidenRefusesLongRemainder(t *testing.T) {
 	long := strings.Repeat("p", 300)
 	f := BuildFixed(bs(long), []uint64{1})
 	p := BuildStrings(bs(long), bs("1"))
-	if f.Widen([]byte("zzz"), uint64(2)) != nil || p.Widen([]byte("zzz"), []byte("2")) != nil {
+	if f.Widen([]byte("zzz"), uint64(2), false) != nil || p.Widen([]byte("zzz"), []byte("2")) != nil {
 		t.Fatal("widened into a remainder of 300 bytes")
 	}
 	if f.PrefixLen() != 300 || p.PrefixLen() != 300 {
 		t.Error("the page changed")
 	}
-	if g := f.Widen([]byte(strings.Repeat("p", 100)+"zzz"), uint64(2)); g == nil || g.PrefixLen() != 100 || g.Keys() != 2 {
+	if g := f.Widen([]byte(strings.Repeat("p", 100)+"zzz"), uint64(2), false); g == nil || g.PrefixLen() != 100 || g.Keys() != 2 {
 		t.Errorf("widened at 100: %v", g)
 	}
-	if g := f.Widen([]byte(strings.Repeat("z", 300)), uint64(2)); g != nil {
+	if g := f.Widen([]byte(strings.Repeat("z", 300)), uint64(2), false); g != nil {
 		t.Error("a remainder of 300 bytes for the new key")
 	}
 }

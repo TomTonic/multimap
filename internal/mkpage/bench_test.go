@@ -130,9 +130,9 @@ func BenchmarkFixed(b *testing.B) {
 			k := []byte("prem")
 			for i := range b.N {
 				p := pages[i&4095]
-				q, res := p.Add(k, uint64(99))
+				q, res := p.Add(k, uint64(99), false)
 				if res == Added {
-					p, _ = q.Remove(k, uint64(99))
+					p, _ = q.Remove(k, uint64(99), false)
 					pages[i&4095] = p
 				}
 			}
@@ -213,9 +213,9 @@ func BenchmarkFixedPointers(b *testing.B) {
 			k := []byte("prem")
 			for i := range b.N {
 				p := pages[i&4095]
-				q, res := p.Add(k, &ptrPool[63])
+				q, res := p.Add(k, &ptrPool[63], true)
 				if res == Added {
-					p, _ = q.Remove(k, &ptrPool[63])
+					p, _ = q.Remove(k, &ptrPool[63], true)
 					pages[i&4095] = p
 				}
 			}

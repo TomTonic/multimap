@@ -617,7 +617,7 @@ func TestFixedWiden(t *testing.T) {
 					case "above":
 						key += "z"
 					}
-					q := p.Widen([]byte(key), uint64(9))
+					q := p.Widen([]byte(key), uint64(9), false)
 					if q == nil {
 						t.Fatal("Widen refused")
 					}
@@ -640,10 +640,10 @@ func TestFixedWiden(t *testing.T) {
 		rests[i] = []byte{'m', byte('A' + i)}
 	}
 	full := BuildFixed(rests, vals)
-	if full == nil || full.PrefixLen() != 1 || full.Widen([]byte("z"), 1) != nil {
+	if full == nil || full.PrefixLen() != 1 || full.Widen([]byte("z"), 1, false) != nil {
 		t.Error("Widen took an entry into a full page")
 	}
-	if full.Widen([]byte("z"+strings.Repeat("k", 256)), 1) != nil {
+	if full.Widen([]byte("z"+strings.Repeat("k", 256)), 1, false) != nil {
 		t.Error("Widen took a remainder of 256 bytes")
 	}
 }

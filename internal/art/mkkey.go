@@ -166,7 +166,7 @@ func (m *Map[T]) pageOf(items []item[T]) *header {
 	}
 	m.scrT = vs
 	defer clear(vs)
-	if p := mkpage.BuildFixedOf(rests, vs); p != nil {
+	if p := mkpage.BuildFixedOf(rests, vs, m.ptr); p != nil {
 		return mkFixHdr(p)
 	}
 	return nil
@@ -320,7 +320,7 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 	}
 	m.scrT = vals
 	defer clear(vals)
-	if p := mkpage.BuildFixedOf(rests, vals); p != nil {
+	if p := mkpage.BuildFixedOf(rests, vals, m.ptr); p != nil {
 		ev(evPair, k+1)
 		return mkFixHdr(p)
 	}
@@ -345,7 +345,7 @@ func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **heade
 		if mis := p.Match(rest); mis < p.PrefixLen() {
 			return m.outside(loc, n, key, pathLen, mis)
 		}
-		r, x := p.Add(rest, m.cur)
+		r, x := p.Add(rest, m.cur, m.ptr)
 		q, res = mkFixHdr(r), x
 	}
 	switch res {
@@ -399,7 +399,7 @@ func (m *Map[T]) outside(loc **header, n *header, key []byte, pathLen, mis int) 
 		if p := asMKStr(n).Widen(rest, view(strOf(m.cur))); p != nil {
 			q = mkStrHdr(p)
 		}
-	} else if p := asMKFix(n).Widen(rest, m.cur); p != nil {
+	} else if p := asMKFix(n).Widen(rest, m.cur, m.ptr); p != nil {
 		q = mkFixHdr(p)
 	}
 	if q == nil {
@@ -523,7 +523,7 @@ func (m *Map[T]) removeFrom(n *header, rest []byte, v T, first bool) (*header, m
 		}
 		v = got
 	}
-	r, res := p.Remove(rest, v)
+	r, res := p.Remove(rest, v, m.ptr)
 	return mkFixHdr(r), res
 }
 
@@ -540,7 +540,7 @@ func (m *Map[T]) rekeyPage(l *singleKeyHead, pre []byte, b, pathLen int) *single
 		ev(evPrependNo, 1)
 		return nil
 	}
-	if q := asMKFix(h).Prepend[T](front); q != nil {
+	if q := asMKFix(h).Prepend[T](front, m.ptr); q != nil {
 		return asSingleKey(mkFixHdr(q))
 	}
 	ev(evPrependNo, 1)

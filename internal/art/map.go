@@ -16,7 +16,8 @@ import (
 type Map[T comparable] struct {
 	t    Tree
 	flat int8 // 1: single-key pages of fixed-size values (skpage.Fixed), 3: single-key pages of strings (skpage.Page), -1: value overflows only, 0: not decided yet
-	mk   bool // entries with one value share multi-key pages (mkkey.go): strings and pointer-free fixed-size values
+	mk   bool // entries share multi-key pages (mkkey.go): strings and fixed-size values, with a pointer or none
+	ptr  bool // the values are a word with a pointer: the multi-key pages of fixed-size values are typed objects (mkpage.Fixed)
 	cur  T    // the value of the Add in progress, for the pager methods of mkkey.go
 
 	scrRests, scrVals [][]byte // scratch of pageOf, reused so that a burst allocates only its pages
@@ -53,6 +54,7 @@ func (m *Map[T]) decide() {
 		m.flat = -1
 	}
 	m.mk = m.flat == 3 || (m.flat == 1 && mkpage.Supported[T]())
+	m.ptr = m.flat == 1 && mkpage.HoldsPointers[T]()
 }
 
 // Len returns the number of keys.
