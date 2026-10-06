@@ -36,9 +36,9 @@ type keyBuf struct {
 	key  []byte // the key of the leaf reached last
 }
 
-// reach sets kb.key to the key of leaf l, whose path is in kb.path.
-func (kb *keyBuf) reach(l *singleKeyHead) {
-	kb.key = append(append(kb.key[:0], kb.path[:l.base()]...), l.stored()...)
+// reach sets kb.key to the key of leaf l, which stands at pathLen: the path, in kb.path, then its key part.
+func (kb *keyBuf) reach(l *singleKeyHead, pathLen int) {
+	kb.key = append(append(kb.key[:0], kb.path[:pathLen]...), l.stored()...)
 }
 
 // scanRange visits the leaves of the subtree n within b in order and returns
@@ -93,7 +93,7 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 	}
 	if t := endPageOf(n); t != nil && !lo && (!endPageIsFrom || b.FromIncl) && (!endPageIsTo || b.ToIncl) {
 		if kb != nil {
-			kb.reach(t)
+			kb.reach(t, pathLen)
 		}
 		if !fn(t) {
 			return false
@@ -121,17 +121,17 @@ func scanRange(n *header, b *Bounds, pathLen int, lo, hi bool, leafTail uintptr,
 // decides.
 func scanLeaf(l *singleKeyHead, b *Bounds, pathLen int, lo, hi bool, kb *keyBuf, fn func(*singleKeyHead) bool) bool {
 	if lo {
-		if c := bytes.Compare(l.from(pathLen), b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
+		if c := bytes.Compare(l.stored(), b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
 			return true
 		}
 	}
 	if hi {
-		if c := bytes.Compare(l.from(pathLen), b.To[pathLen:]); c > 0 || (c == 0 && !b.ToIncl) {
+		if c := bytes.Compare(l.stored(), b.To[pathLen:]); c > 0 || (c == 0 && !b.ToIncl) {
 			return false
 		}
 	}
 	if kb != nil {
-		kb.reach(l)
+		kb.reach(l, pathLen)
 	}
 	return fn(l)
 }

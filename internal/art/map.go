@@ -4,7 +4,6 @@ import (
 	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/page"
-	"github.com/TomTonic/multimap/internal/skpage"
 )
 
 // Map is a multimap from byte-string keys to sets of T on top of Tree. Every
@@ -24,29 +23,13 @@ type Map[T comparable] struct {
 	scrT              []T
 }
 
-// setPrepend makes value overflow l hold its key from pathLen on in place when the
-// longer remainder still fits the key area of l's class, which keeps its value
-// set where it is. It saves rekey the allocation of a new object, and reports
-// whether it did.
-func setPrepend(l *singleKeyHead, pre []byte, b, pathLen int) bool {
-	old, klen := l.rem(), l.keyLen()-pathLen // a value overflow that holds its whole key as a string never gets here
-	if klen > overflowKeyCap(old) {
-		return false
-	}
-	area := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), klen)
-	copy(area[klen-old:], area[:old])
-	fillHead(area[:klen-old], pre, b, pathLen)
-	l.setRem(klen)
-	return true
-}
-
 // decide settles once per map how it holds the values of an entry: in
 // single-key pages of fixed-size values if T takes them (skpage.Supported: small
 // and without pointers, or one word that is a pointer), in single-key pages of
 // strings if T is string, else in a value overflow for every entry.
 func (m *Map[T]) decide() {
 	switch {
-	case skpage.Supported[T]():
+	case page.Supported[T]():
 		m.flat = 1
 	case stringType[T]():
 		m.flat = 3
@@ -69,38 +52,10 @@ func (m *Map[T]) Add(key []byte, v T) {
 	if m.flat == 0 {
 		m.decide()
 	}
-	// Chosen here rather than returned from a helper: a function value that
-	// does not escape stays on the stack, one that is returned is allocated.
-	var nl newLeafFunc = newOverflowLeaf[T]
-	switch m.flat {
-	case 1:
-		nl = newFixedLeaf[T]
-	case 3:
-		nl = newSK
-	}
-	if m.mk {
-		m.cur = v
-	}
-	loc := m.upsert(key, nl)
-	if m.mk {
-		var zero T
-		m.cur = zero
-	}
-	if loc != nil {
-		m.addToLeaf(loc, asSingleKey(*loc), key, v)
-	}
-}
-
-// addToLeaf adds v to the values of leaf l of key, which sits in slot loc.
-func (m *Map[T]) addToLeaf(loc **header, l *singleKeyHead, key []byte, v T) {
-	switch {
-	case l.isValueOverflow():
-		overflowAdd(l, v)
-	case m.flat == 3:
-		addSK(loc, l, key, *(*string)(unsafe.Pointer(&v)))
-	default:
-		addFixed(loc, l, key, v)
-	}
+	m.cur = v
+	m.upsert(key)
+	var zero T
+	m.cur = zero
 }
 
 // Remove removes v from the values of key and removes the key once it holds
@@ -119,9 +74,6 @@ func (m *Map[T]) Remove(key []byte, v T) {
 // removeValue is Remove without the merge of the nodes above a removed key. It returns the
 // number of entries left in the multi-key page that held the entry, and 0 if it did not.
 func (m *Map[T]) removeValue(key []byte, v T) int {
-	// Chosen here, as in Add: a function value that does not escape stays on
-	// the stack.
-	rk := m.rekey
 	n, pathLen := m.t.find(key)
 	if n == nil {
 		return 0
@@ -131,25 +83,17 @@ func (m *Map[T]) removeValue(key []byte, v T) int {
 	}
 	l := asSingleKey(n)
 	if !l.isValueOverflow() {
-		if m.flat == 1 {
-			removeFixed(&m.t, l, key, v, rk)
-		} else {
-			m.t.removeSK(l, key, *(*string)(unsafe.Pointer(&v)), rk)
-		}
+		m.removeFromLeaf(l, key, pathLen, v)
 		return 0
 	}
 	s := *overflowSetOf[T](l)
 	switch {
 	case !s.Remove(v):
 	case s.Size() == 0:
-		m.t.remove(key, rk)
-	case m.flat == 1: // the values may fit a page again
-		if p := fixedFromOverflow[T](l); p != nil {
-			*m.t.findSlot(key) = singleKeyHdr(fixedHead(p))
-		}
-	case m.flat == 3:
-		if p := fromValueOverflow(l); p != nil {
-			*m.t.findSlot(key) = singleKeyHdr(skHead(p))
+		m.t.remove(key, m.rekey)
+	case m.flat != -1: // the values may fit a page again
+		if p := m.backToPage(l); p != nil {
+			*m.t.findSlot(key) = singleKeyHdr(p)
 		}
 	}
 	return 0
@@ -171,21 +115,6 @@ func (m *Map[T]) RemoveKey(key []byte) {
 	if m.mk && left <= mergeBelow {
 		m.mergeUp(&m.t.root, key, 0)
 	}
-}
-
-// rekey is the map's rekeyFunc: the one for its type of leaf, which also moves a
-// multi-key page up.
-func (m *Map[T]) rekey(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
-	ev(evRekeyLeaf, 1)
-	switch {
-	case isMultiKey(l.objType):
-		return m.rekeyPage(l, pre, b, pathLen)
-	case m.flat == 1:
-		return rekeyFixed[T](l, pre, b, pathLen)
-	case m.flat == 3:
-		return rekeySK(l, pre, b, pathLen)
-	}
-	return rekeyOverflow[T](l, pre, b, pathLen)
 }
 
 // Has reports whether key holds any values.
@@ -210,16 +139,17 @@ func (m *Map[T]) Each(key []byte, yield func(T) bool) {
 	}
 }
 
-// eachValue calls yield for every value of leaf l and reports whether it ran
-// to completion.
+// eachValue calls yield for every value of leaf l, a page or a value overflow, and reports whether it ran to
+// completion.
 func eachValue[T comparable](l *singleKeyHead, flat int8, yield func(T) bool) bool {
 	switch {
 	case l.isValueOverflow():
 		return overflowEach(l, yield)
 	case flat == 3: // T is string
-		return asSK(l).Strings(*(*func(string) bool)(unsafe.Pointer(&yield)))
+		y := *(*func(string) bool)(unsafe.Pointer(&yield))
+		return asSK(l).Each(func(_, val []byte, _ bool) bool { return y(string(val)) })
 	}
-	return asFixed(l).Each(yield)
+	return asFixed(l).Each(func(_ []byte, v T, _ bool) bool { return yield(v) })
 }
 
 // leafTail is the offset of the last byte of the smallest object of any map, a

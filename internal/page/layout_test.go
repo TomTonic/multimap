@@ -474,3 +474,66 @@ func TestPageNeed(t *testing.T) {
 		t.Errorf("NeedFixed = %d, page uses %d", got, f.Used()+48)
 	}
 }
+
+// TestPageNew shows the pages for a key that no page holds yet.
+//
+// A user who adds a key to the index gets a page of that key with its first value at once; a key or a value
+// that does not fit a page is refused (the tree then makes a value overflow), and the room that the values of a
+// key may take back in a page is half of what the largest page has.
+//
+// Expected: NewStr and NewFixed are the one-key pages BuildStrings and BuildFixed make for one entry, byte for
+// byte; they are nil for a value of 255 bytes, a key part that leaves no room, and (strings) content beyond 512
+// bytes; Room is 512 less the head and the key part and BackFits is half of it.
+func TestPageNew(t *testing.T) {
+	for _, k := range []string{"", "k", "Bahnhofstrasse", strings.Repeat("x", 300)} {
+		a, b := NewStr([]byte(k), []byte("Ost")), BuildStrings(bs(k), bs("Ost"))
+		if !bytes.Equal(a.mem(), b.mem()) || !a.OneKey() || a.Len() != 1 {
+			t.Errorf("NewStr(%q) differs from BuildStrings", k)
+		}
+		f, g := NewFixed([]byte(k), uint64(7), false), BuildFixed(bs(k), []uint64{7})
+		if !bytes.Equal(f.mem(), g.mem()) || !f.OneKey() {
+			t.Errorf("NewFixed(%q) differs from BuildFixed", k)
+		}
+		pp, qq := NewFixed([]byte(k), &ptrPool[7], true), BuildFixed(bs(k), []*uint64{&ptrPool[7]})
+		if pp.RawWords() != qq.RawWords() || !bytes.Equal(pp.mem()[:Header+len(k)], qq.mem()[:Header+len(k)]) {
+			t.Errorf("NewFixed of a pointer (%q) differs from BuildFixed", k)
+		}
+	}
+	if NewStr([]byte("k"), []byte(strings.Repeat("v", 255))) != nil || NewStr([]byte(strings.Repeat("k", 507)), []byte("v")) != nil || NewStr([]byte(strings.Repeat("k", 506)), []byte("v")) == nil {
+		t.Error("NewStr limits")
+	}
+	if NewFixed([]byte(strings.Repeat("k", 501)), uint64(1), false) != nil || NewFixed([]byte(strings.Repeat("k", 500)), uint64(1), false) == nil {
+		t.Error("NewFixed limits")
+	}
+	if Room(0) != 508 || Room(100) != 408 || !BackFits(100, 204) || BackFits(100, 205) {
+		t.Error("Room and BackFits")
+	}
+}
+
+// TestPageSlotLimit shows that a page of tiny values stops at 255 slots.
+//
+// A user who gives one key many values of one byte each fills a page with 255 slots (the head holds n
+// in one byte) before the 512 bytes are used up, and has to be told that the page is full, not get
+// a corrupt one; a value that is already there is still found.
+//
+// Expected: the 256th value of a key in a Fixed page of bytes is refused with Full, the page keeps its 255
+// values, and Add of one of them answers Present.
+func TestPageSlotLimit(t *testing.T) {
+	p := NewFixed[uint8](bs("key")[0], 0, false)
+	if p == nil {
+		t.Fatal("no page for the first value")
+	}
+	for v := 1; v < MaxEntries; v++ {
+		q, res := p.Add(bs("key")[0], uint8(v), false)
+		if res != AddedValue {
+			t.Fatalf("value %d: %v", v, res)
+		}
+		p = q
+	}
+	if q, res := p.Add(bs("key")[0], uint8(255), false); res != Full || q != p || p.Len() != MaxEntries {
+		t.Errorf("the 256th value: %v, %d values", res, p.Len())
+	}
+	if _, res := p.Add(bs("key")[0], uint8(7), false); res != Present {
+		t.Errorf("a value that is there: %v", res)
+	}
+}

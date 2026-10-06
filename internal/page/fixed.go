@@ -118,6 +118,22 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T, ptr bool) *Fixed {
 	return p
 }
 
+// NewFixed returns the one-key page of the key part rest (the key from the end of the path on) with the one value v,
+// or nil if they do not fit the largest class (T must be Supported); ptr is HoldsPointers[T](). The tree calls it
+// for a key that no page holds yet. It is BuildFixedOf of one entry without the slices.
+func NewFixed[T comparable](rest []byte, v T, ptr bool) *Fixed {
+	e := Header + len(rest)
+	c := classFor(e + size[T]())
+	if c < 0 {
+		return nil
+	}
+	p := newFixed[T](false, c, 1, len(rest), e, ptr)
+	m := p.mem()
+	copy(m[Header:], rest)
+	valuesIn[T](m, 1)[0] = v
+	return p
+}
+
 // Used returns the bytes of the page that hold keys: where the remainders end. The values are at the end
 // of the object.
 func (p *Fixed) Used() int {
@@ -255,6 +271,9 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 			kl, res = uint8(len(r)), Added
 		}
 		e = la.keyEndFrom(m, pos, off)
+	}
+	if la.n >= MaxEntries {
+		return p, Full
 	}
 	ne := e + b2i(la.many) + len(r)
 	q := p

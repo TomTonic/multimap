@@ -383,3 +383,14 @@ func toOneKey(p *head, m []byte, la lay, e int) int {
 	p.setHead(false, p.class(), la.n, nl, int(p.raw))
 	return ne
 }
+
+// Room returns the bytes that the largest page has for the values of a key behind a key part of l bytes: 512 less
+// the head and the key part.
+func Room(l int) int { return sizes[Classes-1] - Header - l }
+
+// BackFits reports whether the values of a key whose value overflow they have left, which take valueBytes (for
+// strings with their length bytes), go back into a page of the largest class that holds a key part of l bytes: when
+// they take at most half the room the page has for them. A key moves into a value overflow when its values no
+// longer fit the largest class; moving back only at half of that keeps a key at the border from changing its
+// object with every added and removed value, and does not depend on how long the key part is.
+func BackFits(l, valueBytes int) bool { return 2*valueBytes <= Room(l) }

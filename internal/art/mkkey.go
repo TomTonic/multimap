@@ -7,7 +7,6 @@ import (
 
 	set3 "github.com/TomTonic/Set3"
 	"github.com/TomTonic/multimap/internal/page"
-	"github.com/TomTonic/multimap/internal/skpage"
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
@@ -56,50 +55,42 @@ func (it *item[T]) values() []T {
 	return []T{it.val}
 }
 
-// newLeaf allocates an empty single-key page, or a value overflow, that holds key
-// from base on; the first value is added by addToLeaf. Only a map with multi-key
-// pages needs it, which holds strings or fixed-size values.
-func (m *Map[T]) newLeaf(key []byte, base int) *singleKeyHead {
-	if m.flat == 1 {
-		return newFixedLeaf[T](key, base)
-	}
-	return newSK(key, base)
-}
-
-// leafFor returns the single-key page, or the value overflow, of the entry it, whose
-// key starts at base.
-func (m *Map[T]) leafFor(it *item[T], base int) *singleKeyHead {
-	kl := base + len(it.rest)
+// leafFor returns the single-key page, or the value overflow, of the entry it, whose key part is its rest.
+func (m *Map[T]) leafFor(it *item[T]) *singleKeyHead {
 	if it.multi == nil {
 		switch m.flat {
 		case 3:
-			if p := skpage.New(it.rest, kl, view(strOf(it.val))); p != nil {
+			if p := page.NewStr(it.rest, view(strOf(it.val))); p != nil {
 				return skHead(p)
 			}
 		case 1:
-			if p := skpage.NewFixed(it.rest, kl, it.val); p != nil {
+			if p := page.NewFixed(it.rest, it.val, m.ptr); p != nil {
 				return fixedHead(p)
 			}
 		}
-	} else {
-		switch m.flat {
-		case 3:
-			if p := skpage.Build(it.rest, kl, asStrSlice(it.multi)); p != nil {
-				return skHead(p)
-			}
-		case 1:
-			if p := skpage.BuildFixed(it.rest, kl, it.multi); p != nil {
-				return fixedHead(p)
-			}
-		}
+	} else if p := m.onePage(it); p != nil {
+		return p
 	}
-	key := make([]byte, kl) // the value overflow holds the key from base on only
-	copy(key[base:], it.rest)
-	l := newValueOverflow(key, base, set3.EmptyWithCapacity[T](uint32(2*len(it.values()))))
+	l := newValueOverflow(it.rest, set3.EmptyWithCapacity[T](uint32(2*len(it.values()))))
 	for _, v := range it.values() {
 		overflowAdd(l, v)
 	}
 	return l
+}
+
+// onePage returns the page of the entry it, which has several values, or nil if they do not fit one.
+func (m *Map[T]) onePage(it *item[T]) *singleKeyHead {
+	n := len(it.multi)
+	rests := m.scrRests[:0]
+	for range n {
+		rests = append(rests, it.rest)
+	}
+	m.scrRests = rests
+	defer clear(rests)
+	if m.flat == 3 {
+		return skHead(page.BuildStrings(rests, asStrSlice(it.multi))) // a nil page is a nil head
+	}
+	return fixedHead(page.BuildFixedOf(rests, it.multi, m.ptr))
 }
 
 // pageOf returns the multi-key page of the entries, or nil if they do not make one: they
@@ -187,7 +178,7 @@ func (m *Map[T]) build(items []item[T], pathLen int) *header {
 	n := len(items)
 	if n == 1 {
 		ev(evBuildSingleKey, 1)
-		return singleKeyHdr(m.leafFor(&items[0], pathLen))
+		return singleKeyHdr(m.leafFor(&items[0]))
 	}
 	if h := m.pageOf(items); h != nil {
 		ev(evBuildPage, n)
@@ -201,7 +192,7 @@ func (m *Map[T]) build(items []item[T], pathLen int) *header {
 	i := 0
 	if len(first) == end { // the first key ends here: the end page of the node
 		items[0].rest = first[end:]
-		nn = setEndPage(nn, m.leafFor(&items[0], pathLen+end))
+		nn = setEndPage(nn, m.leafFor(&items[0]))
 		i = 1
 	}
 	for i < n {
@@ -261,44 +252,6 @@ func (m *Map[T]) pageItems(n *header) []item[T] {
 	return items
 }
 
-// onlyItem returns the entry of multi-key page n, which holds one key, as pageItems(n)[0]
-// does but without the slices for the entries that are not there: the page is about to
-// become a single-key page, and this is the one thing it needs.
-func (m *Map[T]) onlyItem(n *header) item[T] {
-	var it item[T]
-	if m.flat == 3 {
-		p := asMKStr(n)
-		cp := p.CP()
-		p.Each(func(rem, val []byte, first bool) bool {
-			v := fromStr[T](string(val))
-			if first {
-				it.rest, it.val = append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), v
-				return true
-			}
-			if it.multi == nil {
-				it.multi = append(make([]T, 0, p.Len()), it.val)
-			}
-			it.multi = append(it.multi, v)
-			return true
-		})
-		return it
-	}
-	p := asMKFix(n)
-	cp := p.CP()
-	p.Each(func(rem []byte, v T, first bool) bool {
-		if first {
-			it.rest, it.val = append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), v
-			return true
-		}
-		if it.multi == nil {
-			it.multi = append(make([]T, 0, p.Len()), it.val)
-		}
-		it.multi = append(it.multi, v)
-		return true
-	})
-	return it
-}
-
 // appendValue gives items[i] a further value v.
 func appendValue[T comparable](items []item[T], v T, i int) []item[T] {
 	it := &items[i]
@@ -307,64 +260,6 @@ func appendValue[T comparable](items []item[T], v T, i int) []item[T] {
 	}
 	it.multi = append(it.multi, v)
 	return items
-}
-
-// pair is called by upsert: single-key page l, with one value or several, and a new key meet
-// below pathLen; if both fit one page, the page is returned.
-func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
-	if !m.mk || l.isValueOverflow() {
-		ev(evPairNo, 1)
-		return nil
-	}
-	ls, ks := l.from(pathLen), key[pathLen:]
-	swapped := bytes.Compare(ls, ks) > 0
-	k := int(l.n)
-	rests := m.scrRests[:0]
-	if swapped {
-		rests = append(rests, ks)
-	}
-	for range k {
-		rests = append(rests, ls)
-	}
-	if !swapped {
-		rests = append(rests, ks)
-	}
-	m.scrRests = rests
-	defer clear(rests) // the scratch must not keep the keys alive
-	if m.flat == 3 {
-		vals := m.scrVals[:0]
-		if swapped {
-			vals = append(vals, view(strOf(m.cur)))
-		}
-		asSK(l).Each(func(val []byte) bool { vals = append(vals, val); return true })
-		if !swapped {
-			vals = append(vals, view(strOf(m.cur)))
-		}
-		m.scrVals = vals
-		defer clear(vals)
-		if p := page.BuildStrings(rests, vals); p != nil {
-			ev(evPair, k+1)
-			return mkStrHdr(p)
-		}
-		ev(evPairNo, 1)
-		return nil
-	}
-	vals := m.scrT[:0]
-	if swapped {
-		vals = append(vals, m.cur)
-	}
-	vals = append(vals, asFixed(l).Values[T]()...)
-	if !swapped {
-		vals = append(vals, m.cur)
-	}
-	m.scrT = vals
-	defer clear(vals)
-	if p := page.BuildFixedOf(rests, vals, m.ptr); p != nil {
-		ev(evPair, k+1)
-		return mkFixHdr(p)
-	}
-	ev(evPairNo, 1)
-	return nil
 }
 
 // reach is called by upsert: the descent for key ended at multi-key page n.
@@ -470,7 +365,7 @@ func (m *Map[T]) abovePage(loc **header, n *header, key []byte, pathLen, mis int
 	storePrefix(nn, rest[:mis])
 	h, _ := addChild(nn, b, n)
 	tail := rest[mis:]
-	h, slot := attachAt(h, tail, m.newLeaf(key, pathLen+mis+min(1, len(tail))))
+	h, slot := attachAt(h, tail, m.newLeaf(tail[min(1, len(tail)):]))
 	*loc = h
 	m.t.size++
 	return slot
@@ -527,12 +422,10 @@ func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) i
 		left = asMKFix(cur).KeysUpTo(mergeBelow + 1)
 	}
 	ev(evPageRemove, left)
-	switch {
-	case left == 1:
+	if left == 1 { // the page has made itself a single-key page, in place
 		ev(evToSingleKey, 1)
-		it := m.onlyItem(cur)
-		*m.t.findSlot(key) = singleKeyHdr(m.leafFor(&it, pathLen))
-	case cur != n:
+	}
+	if cur != n {
 		ev(evShrink, left)
 		*m.t.findSlot(key) = cur
 	}
@@ -567,11 +460,9 @@ func (m *Map[T]) removeFrom(n *header, rest []byte, v T, first bool) (*header, p
 	return mkFixHdr(r), res
 }
 
-// rekeyPage is rekeySK and rekeyFixed for multi-key page l, which moves up to
-// pathLen: it takes the bytes of pre from there on and b in front of its common
-// prefix. It returns nil if they do not fit.
-func (m *Map[T]) rekeyPage(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
-	front := append(append(make([]byte, 0, len(pre)-pathLen+1), pre[pathLen:]...), byte(b))
+// rekeyPage is rekey for multi-key page l, which moves up: it takes front, the bytes the node above
+// it no longer holds, in front of its common prefix. It returns nil if they do not fit.
+func (m *Map[T]) rekeyPage(l *singleKeyHead, front []byte) *singleKeyHead {
 	h := singleKeyHdr(l)
 	if m.flat == 3 {
 		if q := asMKStr(h).Prepend(front); q != nil {
@@ -711,9 +602,9 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 				ok = false
 				return
 			}
-			sumRest += len(pre) + extra + len(l.from(0+l.base()))
+			sumRest += len(pre) + extra + len(l.stored())
 			if m.flat == 3 {
-				asSK(l).Each(func(val []byte) bool { sumVal += len(val); return true })
+				asSK(l).Each(func(_, val []byte, _ bool) bool { sumVal += len(val); return true })
 			}
 			slots += int(l.n)
 			keys++
@@ -738,26 +629,21 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 // values, for the key rest.
 func (m *Map[T]) leafItem(l *singleKeyHead, rest []byte) item[T] {
 	it := item[T]{rest: rest}
+	add := func(v T) {
+		if l.n == 1 {
+			it.val = v
+			return
+		}
+		if it.multi == nil {
+			it.val, it.multi = v, make([]T, 0, l.n)
+		}
+		it.multi = append(it.multi, v)
+	}
 	if m.flat == 3 {
-		asSK(l).Each(func(val []byte) bool {
-			v := fromStr[T](string(val))
-			if l.n == 1 {
-				it.val = v
-				return false
-			}
-			if it.multi == nil {
-				it.val, it.multi = v, make([]T, 0, l.n)
-			}
-			it.multi = append(it.multi, v)
-			return true
-		})
+		asSK(l).Each(func(_, val []byte, _ bool) bool { add(fromStr[T](string(val))); return true })
 		return it
 	}
-	vals := asFixed(l).Values[T]()
-	it.val = vals[0]
-	if len(vals) > 1 {
-		it.multi = slices.Clone(vals) // vals aliases the page
-	}
+	asFixed(l).Each(func(_ []byte, v T, _ bool) bool { add(v); return true })
 	return it
 }
 
@@ -775,13 +661,11 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	if !m.mergeFits(n, pre) {
 		return false
 	}
-	d := pathLen + len(pre)
 	var items []item[T]
 	collect := func(b int, c *header) {
 		front := append(make([]byte, 0, len(pre)+1), pre...)
-		at := d
 		if b >= 0 {
-			front, at = append(front, byte(b)), d+1
+			front = append(front, byte(b))
 		}
 		if isMultiKey(c.objType) {
 			for _, it := range m.pageItems(c) {
@@ -791,7 +675,7 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 			return
 		}
 		l := asSingleKey(c)
-		items = append(items, m.leafItem(l, append(front, l.from(at)...)))
+		items = append(items, m.leafItem(l, append(front, l.stored()...)))
 	}
 	if e := endPageOf(n); e != nil {
 		collect(-1, singleKeyHdr(e))

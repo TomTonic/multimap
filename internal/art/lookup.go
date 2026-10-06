@@ -35,7 +35,7 @@ func (t *Tree) find(key []byte) (*header, int) {
 		if isPage(n.objType) {
 			// The nodes have checked the key up to pathLen; a single-key page holds
 			// the rest.
-			if !isSingleKey(n.objType) || asSingleKey(n).matches(key) {
+			if !isSingleKey(n.objType) || asSingleKey(n).matches(key[pathLen:]) {
 				return n, pathLen
 			}
 			return nil, 0

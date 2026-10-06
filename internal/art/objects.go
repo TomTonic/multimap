@@ -2,7 +2,6 @@ package art
 
 import (
 	"github.com/TomTonic/multimap/internal/page"
-	"github.com/TomTonic/multimap/internal/skpage"
 )
 
 // This file measures the objects of a tree against the cache-line rules of
@@ -97,9 +96,9 @@ func (m *Map[T]) leafValues(l *singleKeyHead) int {
 // and remainder.
 func (m *Map[T]) leafKind(l *singleKeyHead) Object {
 	if l.cls() > 0 {
-		return Object{Label: "single-key page", Size: asSK(l).Size(), Pointers: m.flat == 1 && skpage.HoldsPointers[T](), Keys: 1}
+		return Object{Label: "single-key page", Size: asSK(l).Size(), Pointers: m.flat == 1 && page.HoldsPointers[T](), Keys: 1}
 	}
-	return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
+	return Object{Label: "value overflow", Size: int(valueOverflowSize(l)), Pointers: true, Keys: 1}
 }
 
 // multiKeyObject describes multi-key page n: its keys and values, and Remainder is the common

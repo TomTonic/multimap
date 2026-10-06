@@ -100,10 +100,6 @@ const (
 	shrink256 = 48
 )
 
-// maxKeyLen is the longest key a leaf holds a remainder of; singleKeyHead.kl must
-// hold its length. A longer key is held whole, as a string.
-const maxKeyLen = 1<<16 - 1
-
 // header is the common start of all byte nodes (16 B).
 type header struct {
 	objType objType
@@ -116,19 +112,18 @@ type header struct {
 // tail is a string: its length is then 12 plus the string's (see prefixLen).
 const longPrefix = 1<<16 - 1
 
-// singleKeyHead is the start of every single-key page (6 B). The key remainder follows at
-// keyOff; a whole key held as a string sits at strOff.
+// singleKeyHead is the start of every leaf, a single-key page or a value overflow (4 B): the head of the page
+// (internal/page): type, the length of the key part, the number of values, rawWords. The key part, the remainder
+// of the leaf's key, follows at keyOff; a whole key held as a string sits at strOff.
 //
-// A leaf holds its key from its base on, the pathLen it was created at: the
-// bytes before are the path to it, stored in the nodes above. The leaf may
-// move deeper later, when a node is split in above it, and still holds the
-// bytes from its base, which are then also on its path; it moves up only
-// with a new base (see rekeyFunc).
+// A leaf holds its key from the path length it stands at: the bytes before are the path to it, stored in the
+// nodes above. When a node is put above the leaf it loses the bytes of the path (Skip, in place); when a node above it goes
+// away it gets them back (Prepend, see rekeyFunc).
 type singleKeyHead struct {
-	objType objType // kValueOverflow, or kValueOverflow+2c for a single-key page of class c; its lowest bit is bit 8 of the remainder length
-	klen    uint8   // bits 0 to 7 of the length of the inline key remainder, or of longKey for a whole key held as a string
-	n       uint16  // single-key pages: number of values
-	kl      uint16  // length of the whole key, if the remainder is inline
+	objType objType // kValueOverflow, or kValueOverflow+2c for a single-key page of class c; its lowest bit is bit 8 of the length of the key part
+	klen    uint8   // bits 0 to 7 of the length of the inline key part, or of longKey for a key held as a string
+	n       uint8   // single-key pages: number of values
+	raw     uint8   // rawWords of a page of pointers (internal/page); in a value overflow the offset of its value set in words
 }
 
 // isSingleKey reports whether an object of type k is a single-key page (in any of its
@@ -170,15 +165,11 @@ const (
 	strOff = 8
 )
 
-// newLeafFunc creates a leaf for key with base base (see singleKeyHead) and returns
-// its head. Map[T] supplies it so that the tree code does not need to know T.
-type newLeafFunc func(key []byte, base int) *singleKeyHead
-
-// rekeyFunc moves leaf l to pathLen, which is below its base: it returns a leaf
-// with the same values that holds its key from pathLen on. The tree calls it when
-// a node above l goes away and l takes its place. l's whole key is pre, then
-// the byte b unless b is negative, then l's key from there on. Map[T] supplies
-// it, and gets by without the whole key when the longer remainder still fits l.
+// rekeyFunc moves leaf l up to pathLen, which is below the path length it stands at: it returns a leaf with the same
+// values whose key part has the bytes in front of it that the node above l no longer holds. The tree calls it
+// when a node above l goes away and l takes its place. l's key from pathLen on is pre from there, the byte b
+// unless b is negative, then l's key part. Map[T] supplies it; a multi-key page that cannot take the bytes
+// answers nil.
 type rekeyFunc func(l *singleKeyHead, pre []byte, b int, pathLen int) *singleKeyHead
 
 // Every node type but the 256-way one keeps its end page, if any, in its
@@ -230,8 +221,8 @@ func asN58(h *header) *node58               { return (*node58)(unsafe.Pointer(h)
 func asN256(h *header) *node256             { return (*node256)(unsafe.Pointer(h)) }
 func singleKeyHdr(l *singleKeyHead) *header { return (*header)(unsafe.Pointer(l)) }
 
-// stored returns the key bytes the leaf holds: its key from its base on, or
-// its whole key. The slice aliases the leaf and must not be modified.
+// stored returns the key part of the leaf: its key from the path length on. The slice aliases the leaf and must
+// not be modified.
 func (l *singleKeyHead) stored() []byte {
 	if n := l.rem(); n != longKey {
 		return unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), n)
@@ -240,53 +231,24 @@ func (l *singleKeyHead) stored() []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// keyLen returns the length of the leaf's whole key.
-func (l *singleKeyHead) keyLen() int {
-	if l.rem() != longKey {
-		return int(l.kl)
-	}
-	return len(*(*string)(unsafe.Add(unsafe.Pointer(l), strOff)))
-}
-
-// base returns the pathLen the leaf holds its key from.
-func (l *singleKeyHead) base() int { return l.keyLen() - len(l.stored()) }
-
-// from returns the leaf's key from pathLen on; pathLen must not be below its base.
-func (l *singleKeyHead) from(pathLen int) []byte {
-	s := l.stored()
-	return s[pathLen-(l.keyLen()-len(s)):]
-}
-
-// matches reports whether l is the leaf of key. l holds the key from its base
-// on, which a key of the leaf's length has at the same distance from its end,
-// so no pathLen is needed; the bytes from the base down to l are checked twice.
-// Kept small enough to inline into find.
-func (l *singleKeyHead) matches(key []byte) bool {
+// matches reports whether the key part of l is rest, the key from the path length on. Kept small enough to inline
+// into find.
+func (l *singleKeyHead) matches(rest []byte) bool {
 	k := l.rem()
 	if k == longKey {
-		return string(key) == *(*string)(unsafe.Add(unsafe.Pointer(l), strOff))
+		return string(rest) == *(*string)(unsafe.Add(unsafe.Pointer(l), strOff))
 	}
-	return len(key) == int(l.kl) && string(key[len(key)-k:]) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), k)
+	return len(rest) == k && string(rest) == unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(l), keyOff)), k)
 }
 
-// wholeKey returns l's whole key, from its position in a rekeyFunc call: pre,
-// the byte b unless it is negative, then l's key from there on.
-func wholeKey(l *singleKeyHead, pre []byte, b int) []byte {
-	k := append(make([]byte, 0, l.keyLen()), pre...)
-	at := len(pre)
+// frontOf returns the bytes that a leaf that moves up to pathLen gets in front of its key part (see
+// rekeyFunc): the rest of pre from there on, then the byte b unless it is negative.
+func frontOf(pre []byte, b, pathLen int) []byte {
+	front := append(make([]byte, 0, len(pre)-pathLen+1), pre[pathLen:]...)
 	if b >= 0 {
-		k = append(k, byte(b))
-		at++
+		front = append(front, byte(b))
 	}
-	return append(k, l.from(at)...)
-}
-
-// fillHead writes the bytes of a rekeyFunc call's whole key from pathLen on into
-// dst, as many as dst holds: the rest of pre, then b.
-func fillHead(dst, pre []byte, b, pathLen int) {
-	if n := copy(dst, pre[pathLen:]); n < len(dst) {
-		dst[n] = byte(b)
-	}
+	return front
 }
 
 // slots returns all child slots of n, including the one its end page takes; n must

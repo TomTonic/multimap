@@ -478,12 +478,12 @@ func TestEmptyMap(t *testing.T) {
 // holds its key remainder where the untyped tree code reads it (keyOff) or, beyond
 // the longest inline remainder, the whole key as a string (strOff).
 func TestSmallestObject(t *testing.T) {
-	if leafTail >= 32 || leafTail >= valueOverflowSize(0) {
-		t.Errorf("leafTail = %d lies outside the smallest object (%d B)", leafTail, valueOverflowSize(0))
+	if leafTail >= 32 || leafTail >= unsafe.Sizeof(valueOverflow[[20]byte, int]{}) {
+		t.Errorf("leafTail = %d lies outside the smallest object (%d B)", leafTail, unsafe.Sizeof(valueOverflow[[20]byte, int]{}))
 	}
-	for _, n := range []int{0, 18, 50, 114, 242, 370, 498, 499} {
-		l := newValueOverflow(bytes.Repeat([]byte("k"), n), 0, set3.Empty[uint64]())
-		if n > maxInlineOverflow != (l.rem() == longKey) || l.keyLen() != n {
+	for _, n := range []int{0, 20, 52, 116, 244, 372, 500, 501} {
+		l := newValueOverflow(bytes.Repeat([]byte("k"), n), set3.Empty[uint64]())
+		if n > maxInlineOverflow != (l.rem() == longKey) || len(l.stored()) != n {
 			t.Errorf("key of %d bytes: remainder %d", n, l.rem())
 		}
 	}
@@ -510,7 +510,7 @@ func TestNodeLayout(t *testing.T) {
 		{"256-way node", unsafe.Sizeof(node256{}), 2080},
 		{"type at the start of a node", unsafe.Offsetof(header{}.objType), 0},
 		{"type at the start of a leaf", unsafe.Offsetof(singleKeyHead{}.objType), 0},
-		{"leaf head", unsafe.Sizeof(singleKeyHead{}), 6},
+		{"leaf head", unsafe.Sizeof(singleKeyHead{}), 4},
 		{"tail of a 5-way node", unsafe.Offsetof(tailed[node5, [16]byte]{}.t), fixedSize[kN5]},
 		{"string tail of a 12-way node", unsafe.Offsetof(tailed[node12, string]{}.t), fixedSize[kN12]},
 		{"tail of a 26-way node", unsafe.Offsetof(tailed[node26, [48]byte]{}.t), fixedSize[kN26]},
@@ -538,13 +538,15 @@ func checkInvariants(t *testing.T, tr *Tree) {
 	}
 }
 
-// checkLeaf fails unless leaf l, reached through path, holds its key from a
-// base within path on, and the bytes it holds of path agree with it.
+// checkLeaf fails unless leaf l, reached through path, is a well-formed leaf: a page has at least one value
+// and holds only its own key part (the path is in the nodes above), a value overflow's key part fits its kind.
 func checkLeaf(t *testing.T, l *singleKeyHead, path []byte) {
 	t.Helper()
-	b := l.base()
-	if b < 0 || b > len(path) || l.keyLen() < len(path) || !bytes.Equal(l.stored()[:len(path)-b], path[b:]) {
-		t.Fatalf("leaf holding %q from %d does not continue its path %q", l.stored(), b, path)
+	if !l.isValueOverflow() && l.n == 0 {
+		t.Fatalf("a page without a value after the path %q", path)
+	}
+	if k := l.rem(); k != longKey && k != len(l.stored()) {
+		t.Fatalf("leaf of %d key bytes announces %d", len(l.stored()), k)
 	}
 }
 
@@ -602,8 +604,8 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 	leaves := 0
 	if endPage != nil {
 		checkLeaf(t, endPage, end)
-		if endPage.keyLen() != len(end) {
-			t.Fatalf("endPage key of %d bytes does not end at pathLen %d", endPage.keyLen(), len(end))
+		if len(endPage.stored()) != 0 {
+			t.Fatalf("end page holds %d key bytes behind the path of %d bytes", len(endPage.stored()), len(end))
 		}
 		leaves++
 	}
@@ -668,10 +670,10 @@ func TestShrinkAndCollapse(t *testing.T) {
 		for _, fan := range []int{2, 4, 5, 11, 12, 25, 26, 57, 58, 256} {
 			t.Run(fmt.Sprintf("%q/%d", prefix, fan), func(t *testing.T) {
 				r := rand.New(rand.NewPCG(uint64(fan), 9))
-				m := Map[uint64]{flat: 1}        // single-key pages only, so that the keys make nodes
+				m := Map[uint64]{flat: 1}        // tails of 260 bytes: two keys do not fit one page, so the keys make nodes
 				keys := [][]byte{[]byte(prefix)} // the end page of the widest node
 				for b := range fan {
-					for _, tail := range []string{"", "x", "xy-longer-tail-than-16"} {
+					for _, tail := range []string{"", "x" + strings.Repeat("a", 260), "xy-longer-tail-than-16" + strings.Repeat("b", 260)} {
 						k := append([]byte(prefix), byte(b))
 						keys = append(keys, append(k, tail...))
 					}

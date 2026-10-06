@@ -66,6 +66,27 @@ func BuildStrings(rests, vals [][]byte) *Str {
 	return p
 }
 
+// NewStr returns the one-key page of the key part rest (the key from the end of the path on) with the one value
+// val, or nil if they do not fit: a value beyond MaxValue or a content beyond the largest class. The tree calls it
+// for a key that no page holds yet. It is BuildStrings of one entry without the slices.
+func NewStr(rest, val []byte) *Str {
+	if len(val) > MaxValue {
+		return nil
+	}
+	need := Header + len(rest) + 1 + len(val)
+	c := classFor(need)
+	if c < 0 {
+		return nil
+	}
+	p := (*Str)(allocRaw(c))
+	p.setHead(false, c, 1, len(rest), 0)
+	m := p.mem()
+	copy(m[Header:], rest)
+	m[Header+len(rest)] = uint8(len(val))
+	copy(m[len(m)-len(val):], val)
+	return p
+}
+
 // further reports whether rests[i] is a further value of the key of rests[i-1].
 func further(rests [][]byte, i int) bool {
 	return i > 0 && string(rests[i]) == string(rests[i-1])

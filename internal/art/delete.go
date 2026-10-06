@@ -27,7 +27,7 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc) bool {
 	if isPage(n.objType) {
 		// A multi-key page holds no entry that this removes: the typed map removes
 		// the entries of a page itself (mkkey.go).
-		if !isSingleKey(n.objType) || !asSingleKey(n).matches(key) {
+		if !isSingleKey(n.objType) || !asSingleKey(n).matches(key[pathLen:]) {
 			return false
 		}
 		*loc = nil
@@ -64,8 +64,8 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc) bool {
 // collapse replaces a byte node n at pathLen, whose common prefix ends at d,
 // that no longer branches: without children it becomes its end page, and with
 // a single child and no end page it merges into that child, whose common prefix
-// grows by n's common prefix plus the child's byte; a multi-key page that cannot take
-// those bytes stays below n, which then has one child. key is the key just deleted
+// grows by n's common prefix plus the child's byte, or which, if it is a leaf or a page, takes those bytes in front of its key part; a multi-key
+// page that cannot take them stays below n, which then has one child. key is the key just deleted
 // below n, which agrees with every key below n up to d. It returns what should
 // stand in n's place.
 func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
@@ -79,36 +79,20 @@ func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 		if e == nil {
 			return nil
 		}
-		return singleKeyHdr(lift(e, key[:d], pathLen, rk))
+		return singleKeyHdr(rk(e, key[:d], -1, pathLen))
 	case c > 1 || endPageOf(n) != nil:
 		return n
 	}
 	b, c := onlyChild(n)
-	if isPage(c.objType) {
-		l := asSingleKey(c)
-		if !isSingleKey(c.objType) { // a multi-key page takes the bytes in front of its common prefix, if they fit
-			if q := rk(l, key[:d], b, pathLen); q != nil {
-				return singleKeyHdr(q)
-			}
-			return n
+	if isPage(c.objType) { // the leaf or page takes the bytes in front of its key part, if they fit
+		if q := rk(asSingleKey(c), key[:d], b, pathLen); q != nil {
+			return singleKeyHdr(q)
 		}
-		if l.base() <= pathLen {
-			return c
-		}
-		return singleKeyHdr(rk(l, key[:d], b, pathLen))
+		return n
 	}
 	var buf [prefixBuf]byte // on the stack for the common short prefixes
 	p := append(appendPrefix(buf[:0], n), byte(b))
 	return withPrefix(c, appendPrefix(p, c))
-}
-
-// lift returns leaf l, whose key is k, ready to stand at pathLen: l itself if it
-// holds its key from there on, the leaf from rk otherwise.
-func lift(l *singleKeyHead, k []byte, pathLen int, rk rekeyFunc) *singleKeyHead {
-	if l.base() <= pathLen {
-		return l
-	}
-	return rk(l, k, -1, pathLen)
 }
 
 // onlyChild returns the single child of n and the byte it sits under. Only a

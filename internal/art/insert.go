@@ -1,36 +1,31 @@
 package art
 
 import (
-	"bytes"
-
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// upsert returns the slot that holds the leaf of key, creating the leaf with
-// nl when it is missing, or nil if the map has put the entry into a multi-key page
-// (pair, reach: the map knows the type of the values, the tree does not). The caller
-// may replace a leaf in its slot, as a page does when it grows.
-//
-// It descends like find, checking common prefixes and searching nodes the
-// same fast way, and keeps the slot it came through. A missing key is then
-// added right where the descent stopped, without a second traversal. It is a method
-// of the typed map, not of the tree, so that the calls into the pages are direct
-// calls and not through an interface.
-func (m *Map[T]) upsert(key []byte, nl newLeafFunc) **header {
+// upsert is the add of m.cur to the values of key: it descends like find, checking common prefixes and searching
+// nodes the same fast way, and puts the value where the descent stops, without a second traversal: into a new leaf
+// (a page with its first value) at the free place of a node, into the leaf or the multi-key page that holds the key
+// (reachLeaf, reach), or into a leaf below a new node where a key leaves a common prefix (splitPrefix). It is a method of
+// the typed map, not of the tree, so that the calls into the pages are direct calls and not through an interface.
+func (m *Map[T]) upsert(key []byte) {
 	t := &m.t
 	loc, pathLen := &t.root, 0
 	for {
 		n := *loc
 		if n == nil {
-			*loc = singleKeyHdr(nl(key, pathLen))
+			*loc = singleKeyHdr(m.newLeaf(key[pathLen:]))
 			t.size++
-			return loc
+			return
 		}
 		if isPage(n.objType) {
 			if isSingleKey(n.objType) {
-				return m.splitLeaf(loc, asSingleKey(n), key, pathLen, nl)
+				m.reachLeaf(loc, asSingleKey(n), key, pathLen)
+				return
 			}
-			return m.reach(loc, n, key, pathLen)
+			m.reach(loc, n, key, pathLen)
+			return
 		}
 		if n.plen > 0 {
 			pl := int(n.plen)
@@ -38,69 +33,44 @@ func (m *Map[T]) upsert(key []byte, nl newLeafFunc) **header {
 				pl = n.prefixLen()
 				if !prefixMatches(n, pl, key, pathLen) {
 					mis, _ := prefixLcp(n, pl, key[pathLen:])
-					return t.splitPrefix(loc, n, mis, key, pathLen, nl)
+					m.splitPrefix(loc, n, mis, key, pathLen)
+					return
 				}
 			}
 			pathLen += pl
 		}
 		if pathLen == len(key) {
-			if endPageOf(n) == nil {
-				*loc = setEndPage(n, nl(key, pathLen))
-				t.size++
+			if e := endPageOf(n); e != nil {
+				m.reachLeaf(endPageSlot(n), e, key, pathLen)
+				return
 			}
-			return endPageSlot(*loc)
+			*loc = setEndPage(n, m.newLeaf(nil))
+			t.size++
+			return
 		}
 		b := key[pathLen]
 		c := findLoc(n, b)
 		if c == nil {
-			var slot **header
-			*loc, slot = addChild(n, b, singleKeyHdr(nl(key, pathLen+1)))
+			*loc, _ = addChild(n, b, singleKeyHdr(m.newLeaf(key[pathLen+1:])))
 			t.size++
-			return slot
+			return
 		}
 		loc, pathLen = c, pathLen+1
 	}
 }
 
-// splitLeaf handles an insert that reaches leaf l at pathLen: either it is the
-// key's leaf, or both keys go below a new node holding their common prefix. l
-// keeps its base and moves below the new node, unless the two entries fit a multi-key
-// page, which pair then makes.
-func (m *Map[T]) splitLeaf(loc **header, l *singleKeyHead, key []byte, pathLen int, nl newLeafFunc) **header {
-	t := &m.t
-	ls, rest := l.from(pathLen), key[pathLen:]
-	if len(key) == l.keyLen() && bytes.Equal(ls, rest) {
-		return loc
-	}
-	if h := m.pair(l, key, pathLen); h != nil {
-		*loc = h
-		t.size++
-		return nil
-	}
-	ev(evSplitLeaf, 1)
-	p := swar.Lcp(ls, rest)
-	nn := newNode(kN5, p)
-	storePrefix(nn, rest[:p])
-	h, _ := attachAt(nn, ls[p:], l)
-	h, slot := attachAt(h, rest[p:], nl(key, pathLen+p+min(1, len(rest)-p)))
-	*loc = h
-	t.size++
-	return slot
-}
-
-// splitPrefix handles an insert whose key leaves n's common prefix after
-// mis bytes: a new node takes the common part, with n and the new leaf below.
-func (t *Tree) splitPrefix(loc **header, n *header, mis int, key []byte, pathLen int, nl newLeafFunc) **header {
+// splitPrefix handles an add whose key leaves n's common prefix after mis bytes: a new node takes the common
+// part, with n and the new leaf below.
+func (m *Map[T]) splitPrefix(loc **header, n *header, mis int, key []byte, pathLen int) {
 	var buf [prefixBuf]byte
 	pk := appendPrefix(buf[:0], n) // a copy: n's common prefix changes below
 	nn := newNode(kN5, mis)
 	storePrefix(nn, pk[:mis])
 	h, _ := addChild(nn, pk[mis], withPrefix(n, pk[mis+1:]))
 	rest := key[pathLen+mis:]
-	h, slot := attachAt(h, rest, nl(key, pathLen+mis+min(1, len(rest))))
+	h, _ = attachAt(h, rest, m.newLeaf(rest[min(1, len(rest)):]))
 	*loc = h
-	t.size++
-	return slot
+	m.t.size++
 }
 
 // attachAt hangs leaf l below node h, where rest is l's key from h's child

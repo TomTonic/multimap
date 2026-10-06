@@ -9,7 +9,8 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/TomTonic/multimap/internal/skpage"
+	set3 "github.com/TomTonic/Set3"
+	"github.com/TomTonic/multimap/internal/page"
 )
 
 // allocated returns the size of the blocks Go allocates for the objects that mk
@@ -127,11 +128,11 @@ func TestObjectSizes(t *testing.T) {
 		pages.flat = 3
 		for _, n := range []int{20, 50, 100, 240, 254} { // 32, 64, 128, 256 and 384 bytes
 			rest := bytes.Repeat([]byte("k"), n)
-			check(t, &pages, func() unsafe.Pointer { return unsafe.Pointer(newSK(rest, 0)) })
+			check(t, &pages, func() unsafe.Pointer { return unsafe.Pointer(page.NewStr(rest, []byte("v"))) })
 		}
 		long := bytes.Repeat([]byte("v"), 251)
 		check(t, &pages, func() unsafe.Pointer { // 512 bytes
-			return unsafe.Pointer(skHead(skpage.New(bytes.Repeat([]byte("k"), 254), 300, long)))
+			return unsafe.Pointer(page.NewStr(bytes.Repeat([]byte("k"), 254), long))
 		})
 	})
 	t.Run("nodes, with and without a prefix tail", func(t *testing.T) {
@@ -162,20 +163,21 @@ func TestObjectSizes(t *testing.T) {
 			recs[i] = &rec{id: uint64(i)}
 		}
 		for _, n := range []int{1, 3, 4, 7, 8, 15, 16, 31, 32, 47, 48, 62} {
-			check(t, &ptrs, func() unsafe.Pointer { return unsafe.Pointer(skpage.BuildFixed[*rec](nil, 1, recs[:n])) })
+			rests := make([][]byte, n)
+			check(t, &ptrs, func() unsafe.Pointer { return unsafe.Pointer(page.BuildFixed(rests, recs[:n])) })
 		}
 	})
 	t.Run("value overflows of every key area, and with the key as a string", func(t *testing.T) {
-		for _, n := range []int{0, 18, 19, 50, 51, 114, 115, 242, 243, 370, 371, 498} {
+		for _, n := range []int{0, 20, 21, 52, 53, 116, 117, 244, 245, 372, 373, 500} {
 			key := make([]byte, n)
-			check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newOverflowLeaf[uint64](key, 0)) })
+			check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newValueOverflow(key, set3.Empty[uint64]())) })
 		}
 		// the key of such an object is a string of its own; the object is what the test takes the address of
 		long := make([]byte, 600)
-		check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newOverflowLeaf[uint64](long, 0)) })
+		check(t, &sets, func() unsafe.Pointer { return unsafe.Pointer(newValueOverflow(long, set3.Empty[uint64]())) })
 		var strs Map[string]
 		strs.flat = -1
-		check(t, &strs, func() unsafe.Pointer { return unsafe.Pointer(newOverflowLeaf[string](long, 0)) })
+		check(t, &strs, func() unsafe.Pointer { return unsafe.Pointer(newValueOverflow(long, set3.Empty[string]())) })
 	})
 }
 

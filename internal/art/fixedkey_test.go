@@ -8,13 +8,13 @@ import (
 	"testing"
 
 	set3 "github.com/TomTonic/Set3"
-	"github.com/TomTonic/multimap/internal/skpage"
+	"github.com/TomTonic/multimap/internal/page"
 )
 
 // TestFixedKeys makes sure that a key of multimap.Ordered with small values
 // without pointers (uint64) keeps exactly its values while their number grows
 // from one to hundreds and shrinks back, whatever the key's length. It covers
-// the single-key page of fixed-size values (skpage.Fixed) behind Ordered, which
+// the single-key page of fixed-size values (the one-key form of page.Fixed) behind Ordered, which
 // holds the values right after the key's remainder and moves through its size
 // classes: after every step the key must hold exactly the values added and not
 // removed, a page must hold no more than the largest class takes, a key with more
@@ -28,10 +28,10 @@ func TestFixedKeys(t *testing.T) {
 			var m Map[uint64]
 			m.Add([]byte("neighbour"), 1) // the key's leaf lives below a node, which holds its first byte
 			rem := max(klen-1, 0)         // what the leaf holds
-			pageable := rem <= skpage.MaxRemainderFixed[uint64]()
+			pageable := page.Header+rem+8 <= 512
 			capLargest := 0
 			if pageable {
-				capLargest = (512 - (skpage.Header+rem+7)&^7) / 8
+				capLargest = (512 - page.Header - rem) / 8
 			}
 			var want []uint64
 			check := func(removing bool) {
@@ -52,7 +52,7 @@ func TestFixedKeys(t *testing.T) {
 				switch {
 				case l.isValueOverflow() && pageable && !removing && len(want) <= capLargest:
 					t.Fatalf("a value overflow with %d values, which a page holds", len(want))
-				case l.isValueOverflow() && pageable && removing && skpage.BackFits(rem, 8*len(want)):
+				case l.isValueOverflow() && pageable && removing && page.BackFits(rem, 8*len(want)):
 					t.Fatalf("a value overflow with %d values, which fit back into a page", len(want))
 				case !l.isValueOverflow() && (!pageable || asFixed(l).Len() != len(want) || len(want) > capLargest):
 					t.Fatalf("page holding %d values of at most %d", asFixed(l).Len(), capLargest)
@@ -109,10 +109,10 @@ func TestFixedKeyMovesUp(t *testing.T) {
 			l := m.t.findLeaf(k1)
 			got := valuesOf(&m, k1)
 			slices.Sort(got)
-			if !slices.Equal(got, want) || l.base() != 0 || !bytes.Equal(l.stored(), k1) {
-				t.Fatalf("after moving up the leaf holds %d bytes from %d and values %v, want the whole key and %v", len(l.stored()), l.base(), got, want)
+			if !slices.Equal(got, want) || !bytes.Equal(l.stored(), k1) {
+				t.Fatalf("after moving up the leaf holds %d bytes and values %v, want the whole key and %v", len(l.stored()), got, want)
 			}
-			// a remainder of 201 bytes puts the values at 208: 38 of 8 bytes fit
+			// a key part of 201 bytes leaves 307 bytes behind the head: 38 values of 8 bytes fit
 			if overflow := n > 38; overflow != l.isValueOverflow() {
 				t.Fatalf("%d values: value overflow = %v", n, l.isValueOverflow())
 			}
@@ -122,59 +122,61 @@ func TestFixedKeyMovesUp(t *testing.T) {
 
 // TestFixedRekey makes sure a leaf that has to hold more of its key, because the
 // node above it went away, keeps every value, and that it stays where it is as long
-// as the longer key still fits its size class (and, for a value overflow, its key
+// as the longer key part still fits its size class (and, for a value overflow, its key
 // area): a delete that merges a node into its only leaf then costs no new leaf,
 // which with one value per key is what churn and build pay for most; a longer key
-// than the class holds moves the leaf, and one that no page holds makes it a value
+// part than the class holds moves the leaf, and one that no page holds makes it a value
 // overflow.
 func TestFixedRekey(t *testing.T) {
-	key := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
+	rest := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
 	for _, tc := range []struct {
 		name         string
 		overflow     bool // the key starts as a value overflow
-		keyLen, base int
-		to           int
+		restLen      int  // the key part of the leaf
+		front        int  // the bytes that come in front of it
 		values       int
 		wantInPlace  bool
 		wantOverflow bool
 	}{
-		{"page with room", false, 20, 17, 11, 1, true, false},
-		{"page with several values and room", false, 20, 17, 11, 3, true, false},
-		{"page whose values move up a word", false, 30, 27, 13, 1, true, false},
-		{"page without room in its class", false, 40, 37, 0, 1, false, false},
-		{"page whose key no page holds", false, 600, 300, 0, 2, false, true},
-		{"value overflow with room in its key area", true, 20, 17, 6, 1, true, true},
-		{"value overflow beyond its key area", true, 20, 17, 0, 1, false, true},
-		{"value overflow up to the longest inline remainder", true, 600, 120, 102, 1, true, true},
-		{"value overflow beyond it: the key as a string", true, 600, 120, 101, 1, false, true},
+		{"page with room", false, 3, 6, 1, true, false},
+		{"page with several values and room", false, 3, 6, 4, true, false},
+		{"page without room in its class", false, 20, 3, 1, false, false},
+		{"page whose key no page holds", false, 300, 250, 2, false, true},
+		{"value overflow with room in its key area", true, 3, 6, 1, true, true},
+		{"value overflow beyond its key area", true, 20, 6, 1, false, true},
+		{"value overflow up to the longest inline remainder", true, 400, 100, 1, true, true},
+		{"value overflow beyond it: the key as a string", true, 400, 101, 1, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			k := key[:tc.keyLen]
-			l := newFixedLeaf[uint64](k, tc.base)
-			slot := singleKeyHdr(l)
-			if tc.overflow {
-				l = newValueOverflow(k, tc.base, set3.EmptyWithCapacity[uint64](4))
-				slot = singleKeyHdr(l)
-			}
+			var m Map[uint64]
+			m.decide()
+			k := rest[:tc.restLen]
+			var l *singleKeyHead
 			var want []uint64
+			if tc.overflow {
+				l = newValueOverflow(k, set3.EmptyWithCapacity[uint64](4))
+			}
+			var rests [][]byte
 			for v := range uint64(tc.values) {
-				if l.isValueOverflow() {
+				if tc.overflow {
 					overflowAdd(l, v)
-				} else {
-					addFixed(&slot, l, k, v)
-					l = asSingleKey(slot)
 				}
+				rests = append(rests, k)
 				want = append(want, v)
 			}
-			nl := rekeyFixed[uint64](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
+			if !tc.overflow {
+				l = fixedHead(page.BuildFixed(rests, want))
+			}
+			front := rest[tc.restLen : tc.restLen+tc.front]
+			nl := m.rekey(l, front, -1, 0)
 			var got []uint64
 			eachValue(nl, 1, func(v uint64) bool { got = append(got, v); return true })
 			slices.Sort(got)
 			if !slices.Equal(got, want) {
 				t.Errorf("values %v, want %v", got, want)
 			}
-			if nl.keyLen() != tc.keyLen || nl.base() > tc.to || !bytes.Equal(nl.from(tc.to), k[tc.to:]) {
-				t.Errorf("leaf holds %q from %d of a key of %d bytes, want the key from %d on", nl.stored(), nl.base(), nl.keyLen(), tc.to)
+			if !bytes.Equal(nl.stored(), append(slices.Clone(front), k...)) {
+				t.Errorf("leaf holds %d bytes, want the %d bytes of front and key part", len(nl.stored()), tc.front+tc.restLen)
 			}
 			if (nl == l) != tc.wantInPlace || nl.isValueOverflow() != tc.wantOverflow {
 				t.Errorf("in place: %v (want %v), value overflow: %v (want %v)", nl == l, tc.wantInPlace, nl.isValueOverflow(), tc.wantOverflow)

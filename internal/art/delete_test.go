@@ -2,6 +2,8 @@ package art
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -49,13 +51,14 @@ func TestTreeRemoveAbsentKeys(t *testing.T) {
 	if empty.remove([]byte("a"), nil) {
 		t.Fatal("removed a key from an empty tree")
 	}
-	m := Map[uint64]{flat: 1} // single-key pages, so that the keys make nodes
-	for _, k := range []string{"common-1", "common-2", "common-3", "other", "x"} {
+	m := Map[uint64]{flat: 1}
+	tail := strings.Repeat("t", 300) // two such keys do not fit one page, so the keys make nodes
+	present := []string{"common-1" + tail, "common-2" + tail, "common-3" + tail, "other" + tail, "x" + tail}
+	for _, k := range present {
 		m.Add([]byte(k), 1)
-		m.Add([]byte(k), 2)
 	}
 	rk := m.rekey
-	for _, k := range []string{"", "comm", "common", "common-4", "commonX", "common-1-", "zzz", "otherwise", "w"} {
+	for _, k := range []string{"", "comm", "common", "common-", "common-4" + tail, "commonX", "common-1" + tail + "-", "common-1-", "zzz", "otherwise", "w"} {
 		if m.t.remove([]byte(k), rk) {
 			t.Fatalf("removed %q, which is not in the tree", k)
 		}
@@ -70,9 +73,48 @@ func TestTreeRemoveAbsentKeys(t *testing.T) {
 	if m.Len() != 5 || p.Len() != 3 {
 		t.Fatalf("sizes %d and %d", m.Len(), p.Len())
 	}
-	for _, k := range []string{"common-1", "common-2", "common-3", "other", "x"} {
+	for _, k := range present {
 		if !m.Has([]byte(k)) {
 			t.Fatalf("lost %q", k)
 		}
+	}
+}
+
+// TestRemoveMovesWideNodeUp shows that a wide node keeps all its children when the key beside it goes
+// and its common prefix grows beyond what the node's header holds.
+//
+// A user who deletes the one key that sets a fan of keys apart from the rest finds all of them
+// again: the node that had two children goes away and the wide one takes its bytes in front of its own
+// common prefix, in a new object because the prefix needs a tail now.
+//
+// Expected: for a node of 26, 58 and 256 children, after the removal the tree passes its invariants,
+// the root is that node, and every remaining key is found.
+func TestRemoveMovesWideNodeUp(t *testing.T) {
+	for _, tc := range []struct {
+		fan int
+		typ objType
+	}{{26, kN26}, {58, kN58}, {256, kN256}} {
+		t.Run(fmt.Sprint(tc.fan, " children"), func(t *testing.T) {
+			m := Map[uint64]{flat: 1}
+			tail := strings.Repeat("t", 260) // two such keys do not fit one page, so the keys make nodes
+			other := []byte("0123456789q" + tail)
+			m.Add(other, 1)
+			var keys [][]byte
+			for b := range tc.fan {
+				k := append([]byte("0123456789pssss"), byte(b))
+				keys = append(keys, append(k, tail...))
+				m.Add(keys[b], 1)
+			}
+			m.RemoveKey(other)
+			checkInvariants(t, &m.t)
+			if m.t.root.objType != tc.typ || m.Len() != tc.fan {
+				t.Fatalf("root type %d, %d keys", m.t.root.objType, m.Len())
+			}
+			for _, k := range keys {
+				if !m.Has(k) {
+					t.Fatalf("lost a key of %d bytes", len(k))
+				}
+			}
+		})
 	}
 }

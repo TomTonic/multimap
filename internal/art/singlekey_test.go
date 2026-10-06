@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	set3 "github.com/TomTonic/Set3"
-	"github.com/TomTonic/multimap/internal/skpage"
+	"github.com/TomTonic/multimap/internal/page"
 )
 
 // inOrder returns the strings of s in order.
@@ -21,26 +21,25 @@ func isSKPage(l *singleKeyHead) bool { return !l.isValueOverflow() }
 // TestStringMapUsesPages covers what a user of multimap.Ordered with string
 // values gets for each key: one single-key page (SKMV) with the key's end and
 // its values as bytes, not a leaf with string headers. The test fills a map and
-// checks the type of every key's object and what the object statistic calls it. The map
-// has no multi-key pages (flat is set by hand, so that decide does not turn them on): they
-// take keys with a few values themselves, as TestMultiKeyPages shows.
+// checks the type of every key's object and what the object statistic calls it. The keys
+// have a remainder of 260 bytes: two of them do not fit one multi-key page, so each key keeps
+// its single-key page (short keys make multi-key pages, as TestMultiKeyPages shows).
 func TestStringMapUsesPages(t *testing.T) {
 	var m Map[string]
 	m.flat = 3
+	key := func(i int) []byte { return fmt.Appendf(nil, "%03d-%s", i, strings.Repeat("x", 260)) }
 	for i := range 300 {
-		key := []byte(fmt.Sprint("key-", i))
 		for j := range i%4 + 1 {
-			m.Add(key, fmt.Sprint("value ", j))
+			m.Add(key(i), fmt.Sprint("value ", j))
 		}
 	}
 	for i := range 300 {
-		key := []byte(fmt.Sprint("key-", i))
-		l := m.t.findLeaf(key)
-		if l == nil || !isSKPage(l) || l.cls() < 1 || int(l.cls()) > skpage.Classes {
-			t.Fatalf("key %q has no single-key page", key)
+		l := m.t.findLeaf(key(i))
+		if l == nil || !isSKPage(l) || l.cls() < 1 || int(l.cls()) > page.Classes {
+			t.Fatalf("key %d has no single-key page", i)
 		}
-		if got := inOrder(valuesOf(&m, key)); len(got) != i%4+1 {
-			t.Fatalf("key %q has values %q", key, got)
+		if got := inOrder(valuesOf(&m, key(i))); len(got) != i%4+1 {
+			t.Fatalf("key %d has values %q", i, got)
 		}
 	}
 	pages := 0
@@ -67,7 +66,7 @@ func TestStringKeyOverflow(t *testing.T) {
 	var m Map[string]
 	key := []byte("key")
 	val := func(i int) string { return fmt.Sprintf("value-%03d-%s", i, strings.Repeat("x", 20)) } // 30 bytes
-	content := func(n int) int { return skpage.Header + 3 + n*(1+len(val(0))) }
+	content := func(n int) int { return page.Header + 3 + n*(1+len(val(0))) }
 	var want []string
 	for i := range 40 {
 		m.Add(key, val(i))
@@ -85,7 +84,7 @@ func TestStringKeyOverflow(t *testing.T) {
 		want = want[:i]
 		isValueOverflow := m.t.findLeaf(key).isValueOverflow()
 		// the value overflow stays until the values take half the room of a page or less; the page, once back, until it is empty
-		if isValueOverflow && skpage.BackFits(3, i*(1+len(val(0)))) {
+		if isValueOverflow && page.BackFits(3, i*(1+len(val(0)))) {
 			t.Fatalf("with %d values (content %d) the key still has a value overflow", i, content(i))
 		}
 		if !isValueOverflow && content(i) > 512 {
@@ -133,12 +132,12 @@ func TestStringValueTooLong(t *testing.T) {
 	}
 }
 
-// TestStringKeyTooLong covers keys whose end does not fit a page: a lone key of
-// 505 bytes has a remainder of 505, a key of more than 64 KiB cannot even
-// have its length in the page's header. Both get a value overflow that holds the key
-// as a string, and keep their values, also when values go.
+// TestStringKeyTooLong covers keys whose end does not fit a page with several values: a key of
+// 508 bytes, one of 600 bytes and one of more than 64 KiB (which cannot even have its length in
+// the head of a page) get a value overflow, the last two hold their key as a string, and
+// all keep their values, also when values go.
 func TestStringKeyTooLong(t *testing.T) {
-	for _, n := range []int{505, 600, maxKeyLen + 10} {
+	for _, n := range []int{508, 600, 70000} {
 		t.Run(fmt.Sprint(n, " bytes"), func(t *testing.T) {
 			var m Map[string]
 			key := bytes.Repeat([]byte("k"), n)
@@ -154,12 +153,12 @@ func TestStringKeyTooLong(t *testing.T) {
 			}
 		})
 	}
-	t.Run("the longest remainder a page holds", func(t *testing.T) {
+	t.Run("the longest key part a page holds", func(t *testing.T) {
 		var m Map[string]
-		key := bytes.Repeat([]byte("k"), skpage.MaxRemainder-1) // and a value of one byte
+		key := bytes.Repeat([]byte("k"), 512-page.Header-2) // with its value length and a value of one byte
 		m.Add(key, "a")
 		if m.t.findLeaf(key).isValueOverflow() {
-			t.Fatal("a remainder of 504 bytes fits a page")
+			t.Fatalf("a key part of %d bytes fits a page", len(key))
 		}
 	})
 }
@@ -182,58 +181,61 @@ func TestStringValueOverflowStays(t *testing.T) {
 
 // TestStringRekey covers what happens to the object of a key when the node above
 // it goes away and its path gets shorter (see rekeyFunc): a page takes the bytes
-// in front of its remainder, in place if they fit its class, in a page of a larger
-// class, or, when the remainder would be longer than a page holds, as a
+// in front of its key part, in place if they fit its class, in a page of a larger
+// class, or, when the key part would be longer than a page holds, as a
 // value overflow; a value overflow is left to the value overflow code. The values and the key
 // stay.
 func TestStringRekey(t *testing.T) {
-	key := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
+	rest := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
+	long := strings.Repeat("L", 300)
 	for _, tc := range []struct {
 		name         string
-		keyLen, base int
-		to           int
+		overflow     bool // the key starts as a value overflow
+		restLen      int  // the key part of the leaf
+		front        int  // the bytes that come in front of it
 		values       []string
-		want         string // "in place", "page" or "set"
+		wantInPlace  bool
+		wantOverflow bool
 	}{
-		{"fits the class", 40, 37, 30, []string{"v"}, "in place"},
-		{"grows into a larger class", 40, 37, 10, []string{strings.Repeat("v", 17)}, "page"},
-		{"a remainder of 254 bytes", 280, 270, 26, []string{"v", "w"}, "page"},
-		{"a remainder of 270 bytes (nine bits of length)", 290, 280, 20, []string{"v", "w"}, "page"},
-		{"a remainder beyond what a page holds", 600, 590, 20, []string{"v", "w"}, "set"},
-		{"a value overflow", 40, 37, 30, []string{strings.Repeat("L", 300)}, "set"},
-		{"a value overflow that needs a larger key area", 100, 99, 20, []string{strings.Repeat("L", 300)}, "set"},
-		{"a value overflow in the largest key area", 200, 80, 70, []string{strings.Repeat("L", 300)}, "set"},
-		{"a value overflow in the key area of 384 bytes", 400, 100, 90, []string{strings.Repeat("L", 300)}, "set"},
-		{"a value overflow in the key area of 512 bytes", 600, 200, 190, []string{strings.Repeat("L", 300)}, "set"},
+		{"page with room", false, 3, 6, []string{"v"}, true, false},
+		{"page without room in its class", false, 20, 30, []string{strings.Repeat("v", 17)}, false, false},
+		{"page with a long key part", false, 250, 200, []string{"v", "w"}, false, false},
+		{"page whose key no page holds", false, 300, 250, []string{"v", "w"}, false, true},
+		{"value overflow with room in its key area", true, 3, 6, []string{long}, true, true},
+		{"value overflow beyond its key area", true, 20, 6, []string{long}, false, true},
+		{"value overflow up to the longest inline key part", true, 400, 100, []string{long}, true, true},
+		{"value overflow beyond it: the key as a string", true, 400, 101, []string{long}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			k := key[:tc.keyLen]
-			l := newSK(k, tc.base)
-			slot := singleKeyHdr(l)
-			for _, v := range tc.values {
-				if l.isValueOverflow() {
+			var m Map[string]
+			m.decide()
+			k := rest[:tc.restLen]
+			var l *singleKeyHead
+			if tc.overflow {
+				l = newValueOverflow(k, set3.EmptyWithCapacity[string](4))
+				for _, v := range tc.values {
 					overflowAdd(l, v)
-				} else {
-					addSK(&slot, l, k, v)
-					l = asSingleKey(slot)
 				}
-			}
-			nl := rekeySK(l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
-			var got []string
-			if nl.isValueOverflow() {
-				overflowEach(nl, func(v string) bool { got = append(got, v); return true })
 			} else {
-				asSK(nl).Strings(func(v string) bool { got = append(got, v); return true })
+				rests := make([][]byte, len(tc.values))
+				vs := make([][]byte, len(tc.values))
+				for i, v := range tc.values {
+					rests[i], vs[i] = k, view(v)
+				}
+				l = skHead(page.BuildStrings(rests, vs))
 			}
+			front := rest[tc.restLen : tc.restLen+tc.front]
+			nl := m.rekey(l, front, -1, 0)
+			var got []string
+			eachValue(nl, 3, func(v string) bool { got = append(got, v); return true })
 			if !slices.Equal(inOrder(got), inOrder(slices.Clone(tc.values))) {
 				t.Errorf("values %d, want %d", len(got), len(tc.values))
 			}
-			if nl.keyLen() != tc.keyLen || !bytes.Equal(nl.from(tc.to), k[tc.to:]) {
-				t.Errorf("leaf holds %q from %d of a key of %d bytes, want the key from %d on", nl.stored(), nl.base(), nl.keyLen(), tc.to)
+			if !bytes.Equal(nl.stored(), append(slices.Clone(front), k...)) {
+				t.Errorf("leaf holds %d bytes, want the %d bytes of front and key part", len(nl.stored()), tc.front+tc.restLen)
 			}
-			switch {
-			case tc.want == "in place" && nl != l, tc.want == "page" && (nl == l || nl.isValueOverflow()), tc.want == "set" && !nl.isValueOverflow():
-				t.Errorf("rekey gave type %d, same leaf: %v, want %s", nl.objType, nl == l, tc.want)
+			if (nl == l) != tc.wantInPlace || nl.isValueOverflow() != tc.wantOverflow {
+				t.Errorf("in place: %v (want %v), value overflow: %v (want %v)", nl == l, tc.wantInPlace, nl.isValueOverflow(), tc.wantOverflow)
 			}
 		})
 	}
@@ -249,9 +251,9 @@ func TestStringValueOverflowLayout(t *testing.T) {
 	strs.flat = 3
 	for _, tc := range []struct {
 		n, size int
-	}{{5, 32}, {18, 32}, {19, 64}, {50, 64}, {51, 128}, {114, 128}, {115, 256}, {242, 256}, {243, 384}, {370, 384}, {371, 512}, {498, 512}, {499, 32}, {600, 32}} {
+	}{{5, 32}, {20, 32}, {21, 64}, {52, 64}, {53, 128}, {116, 128}, {117, 256}, {244, 256}, {245, 384}, {372, 384}, {373, 512}, {500, 512}, {501, 32}, {600, 32}} {
 		key := bytes.Repeat([]byte("k"), tc.n)
-		l := newValueOverflow(key, 0, set3.EmptyWithCapacity[string](4))
+		l := newValueOverflow(key, set3.EmptyWithCapacity[string](4))
 		if off := int(uintptr(unsafe.Pointer(overflowSetOf[string](l))) - uintptr(unsafe.Pointer(l))); tc.n <= maxInlineOverflow && off != tc.size-8 {
 			t.Errorf("key of %d bytes: set at %d, want the last word of %d", tc.n, off, tc.size)
 		}
@@ -260,11 +262,11 @@ func TestStringValueOverflowLayout(t *testing.T) {
 			t.Errorf("key of %d bytes: %d values", tc.n, got)
 		}
 		o := strs.leafKind(l)
-		if o.Size != tc.size || int(valueOverflowSize(l.rem())) != tc.size || o.Label != "value overflow" || !o.Pointers {
+		if o.Size != tc.size || int(valueOverflowSize(l)) != tc.size || o.Label != "value overflow" || !o.Pointers {
 			t.Errorf("key of %d bytes: object %+v, want a value overflow of %d bytes", tc.n, o, tc.size)
 		}
-		if string(l.stored()) != string(key) && tc.n <= maxInlineOverflow || l.keyLen() != tc.n {
-			t.Errorf("key of %d bytes: stored %q, length %d", tc.n, l.stored(), l.keyLen())
+		if string(l.stored()) != string(key) {
+			t.Errorf("key of %d bytes: stored %d bytes", tc.n, len(l.stored()))
 		}
 	}
 }
@@ -311,7 +313,7 @@ func TestValueOverflowOfOtherValues(t *testing.T) {
 		recs[i] = &rec{i}
 	}
 	check := func(t *testing.T, name string, n int, make func(key []byte) (l *singleKeyHead, add func(i int), read func() int)) {
-		for _, klen := range []int{0, 18, 19, 50, 114, 242, 370, 498, 499} {
+		for _, klen := range []int{0, 20, 21, 52, 116, 244, 372, 500, 501} {
 			key := bytes.Repeat([]byte("k"), klen)
 			l, add, read := make(key)
 			for i := range n {
@@ -321,16 +323,16 @@ func TestValueOverflowOfOtherValues(t *testing.T) {
 			if got := read(); got != n {
 				t.Errorf("%s, key of %d bytes: %d values, want %d", name, klen, got, n)
 			}
-			if !l.isValueOverflow() || len(l.stored()) != klen || l.keyLen() != klen {
+			if !l.isValueOverflow() || len(l.stored()) != klen || (klen <= maxInlineOverflow && l.rem() != klen) {
 				t.Errorf("%s, key of %d bytes: the key is not what was given", name, klen)
 			}
-			if want := int(valueOverflowSize(l.rem())); want != 32 && want != 64 && want != 128 && want != 256 && want != 384 && want != 512 {
+			if want := int(valueOverflowSize(l)); want != 32 && want != 64 && want != 128 && want != 256 && want != 384 && want != 512 {
 				t.Errorf("%s, key of %d bytes: an object of %d bytes is off the grid", name, klen, want)
 			}
 		}
 	}
 	check(t, "uint64", 100, func(key []byte) (*singleKeyHead, func(int), func() int) {
-		l := newValueOverflow(key, 0, set3.EmptyWithCapacity[uint64](4))
+		l := newValueOverflow(key, set3.EmptyWithCapacity[uint64](4))
 		return l, func(i int) { overflowAdd(l, uint64(i)) }, func() int {
 			n := 0
 			overflowEach(l, func(uint64) bool { n++; return true })
@@ -338,7 +340,7 @@ func TestValueOverflowOfOtherValues(t *testing.T) {
 		}
 	})
 	check(t, "*rec", 100, func(key []byte) (*singleKeyHead, func(int), func() int) {
-		l := newValueOverflow(key, 0, set3.EmptyWithCapacity[*rec](4))
+		l := newValueOverflow(key, set3.EmptyWithCapacity[*rec](4))
 		return l, func(i int) { overflowAdd(l, recs[i]) }, func() int {
 			n := 0
 			overflowEach(l, func(r *rec) bool { n += min(r.id, 0) + 1; return true })

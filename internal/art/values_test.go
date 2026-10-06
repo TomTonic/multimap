@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+
+	set3 "github.com/TomTonic/Set3"
 )
 
 // TestValueTypes makes sure that multimap.Ordered keeps values of every
@@ -98,32 +100,33 @@ func roundTrip[T comparable](mk func(int) T) func(t *testing.T) int8 {
 func TestRekeyOfOverflow(t *testing.T) {
 	key := bytes.Repeat([]byte("abcdefghij"), 70) // 700 bytes
 	for _, tc := range []struct {
-		name         string
-		keyLen, base int
-		to           int
-		wantInPlace  bool
+		name        string
+		restLen     int // the key part of the value overflow
+		front       int // the bytes that come in front of it
+		wantInPlace bool
 	}{
-		{"room in its key area", 20, 17, 6, true},
-		{"beyond its key area", 20, 17, 1, false},
-		{"in the largest key area", 600, 120, 102, true},
-		{"beyond the longest inline remainder", 600, 120, 101, false},
+		{"room in its key area", 3, 6, true},
+		{"beyond its key area", 20, 6, false},
+		{"in the largest key area", 400, 100, true},
+		{"beyond the longest inline key part", 400, 101, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			k := key[:tc.keyLen]
-			l := newOverflowLeaf[string](k, tc.base)
+			k := key[:tc.restLen]
+			l := newValueOverflow(k, set3.EmptyWithCapacity[string](4))
 			want := []string{"1", "2"}
 			for _, v := range want {
 				overflowAdd(l, v)
 			}
-			nl := rekeyOverflow[string](l, k[:tc.base-1], int(k[tc.base-1]), tc.to)
+			front := key[tc.restLen : tc.restLen+tc.front]
+			nl := rekeyOverflow[string](l, front)
 			var got []string
 			overflowEach(nl, func(v string) bool { got = append(got, v); return true })
 			slices.Sort(got)
 			if !slices.Equal(got, want) {
 				t.Errorf("values %v, want %v", got, want)
 			}
-			if nl.keyLen() != tc.keyLen || !bytes.Equal(nl.from(tc.to), k[tc.to:]) || (nl == l) != tc.wantInPlace {
-				t.Errorf("object holds %q from %d of a key of %d bytes, in place: %v, want the key from %d on, in place: %v", nl.stored(), nl.base(), nl.keyLen(), nl == l, tc.to, tc.wantInPlace)
+			if !bytes.Equal(nl.stored(), append(slices.Clone(front), k...)) || (nl == l) != tc.wantInPlace {
+				t.Errorf("object holds %d bytes, in place: %v, want the %d bytes of front and key part, in place: %v", len(nl.stored()), nl == l, tc.front+tc.restLen, tc.wantInPlace)
 			}
 		})
 	}
