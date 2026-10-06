@@ -104,7 +104,7 @@ The multi-key page of strings and of `uint64` gets one zero byte (`aux`) at offs
 
 | | U3 | U4 |
 |---|---|---|
-| memory (model) | best by 0.1 to 0.2 B a key | +0.1 to 0.2 B a key; single-key pages 2 bytes smaller than today (1 to 3 bytes of the examples fit a class smaller: strings page above 64 → 32 bytes) |
+| memory (model) | best by 0.1 to 0.2 B a key | +0.1 to 0.2 B a key for the multi-key pages; single-key pages 2 bytes smaller than today (the example's strings page falls from class 64 to class 32) |
 | pointer pages (5.6) | J needs a place: variable head (3 or 4 bytes by kind) or a bit stolen from n | `aux` = J, one head for all |
 | generic code: read `type | len | n` of any page | yes | yes (and `aux`) |
 | single-key page without `kl` | yes | yes |
