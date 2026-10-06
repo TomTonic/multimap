@@ -48,4 +48,17 @@ Keys are no longer thrown out of their pages (88 % stay in pages, as fresh, agai
 
 The pages have the same classes but hold fewer values: a page that loses entries moves to a smaller class only when its content fits **half of the smaller class** (`classFor(2*content)`: the hysteresis of steps 3 and 4, so that a page at a class border does not change its object with every insert and remove), so a page in class `c` is between 25 % and 100 % full; a page built fresh gets the smallest class that holds the content, 50 % to 100 %. The bytes a value: 23.2 → 33.8 (128), 22.2 → 29.9 (256), 16.8 → 20.6 (512). The decay of step 4 (1.25) was mostly the pages that dissolved; what is left of it is this hysteresis, and the prediction of 1.05 forgot it.
 
-This is a knob with a reason, not a defect: the choice is between memory after use (shrink earlier) and moves of objects at class borders (time and garbage). It is **not changed in this step**.
+This is a knob with a reason, not a defect: the choice is between memory after use (shrink earlier) and moves of objects at class borders (time and garbage).
+
+## The knob tried (user, 2026-10-06): shrink at 171/256 of the smaller class, one threshold for all four kinds of page
+
+`ShrinkLimit(avail) = (avail*171 + 128) >> 8` (two thirds, rounded) replaces "twice the content fits" in `skpage.Page`, `skpage.Fixed` (slots), `mkpage.Page` and `mkpage.Fixed` (bytes). Prediction (mine): after / fresh 1.10, more shrink events. Raw: `bench/results-layout/step5-probe/wsl-probe-shrink23.txt`; the code is on the branch `exp-shrink-171` (tests not adapted).
+
+| case (probe) | after / fresh, half | after / fresh, two thirds | shrinks in a cycle, half → two thirds |
+|---|--:|--:|--:|
+| street natural 4,096 / 65,536 | 1.22 / 1.24 | **1.18 / 1.19** | 14 → 158 / 444 → 2,914 |
+| dirs natural 4,096 / 65,536 | 1.18 / 1.21 | 1.15 / 1.17 | 35 → 185 / 514 → 2,784 |
+| u64 natural 65,536 | 1.18 | 1.12 | 212 → 8,672 |
+| street / dirs single-value | 1.21 / 1.20 | 1.17 / 1.16 | |
+
+**The prediction is missed again (1.18, not 1.10), and so the explanation above was only a small part.** The threshold buys 3 to 4 points of memory for ten times the shrinks. The census by size shows why: even right after the build stream the pages of 128 bytes hold 4.5 values, the fresh tree's 5.5; they stay at 4.1 after the cycle. The fill is the equilibrium of a structure that is changed at random (as in any B-tree under random inserts and removes, about two thirds to 70 %), not the hysteresis: pages lose entries where they are, and a merge of neighbours is tried only when a page has `mergeBelow` keys left. The lever for it would be the merge (siblings that fit one page together), not the shrink; step 4 found that trying it more often costs a third of the time of the churn.
