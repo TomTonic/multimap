@@ -6,13 +6,13 @@ import (
 	"unsafe"
 
 	set3 "github.com/TomTonic/Set3"
-	"github.com/TomTonic/multimap/internal/mkpage"
+	"github.com/TomTonic/multimap/internal/page"
 	"github.com/TomTonic/multimap/internal/skpage"
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
 // In a map of strings or of pointer-free fixed-size values (Map.mk), entries share a
-// multi-key page (internal/mkpage, docs/redesign/step5-mkmv-design.md): the entries of a
+// multi-key page (internal/page, docs/redesign/step5-mkmv-design.md): the entries of a
 // subtree whose content fits 512 bytes, in key order, with the bytes their keys share
 // stored once, each entry with one value or several. A page hangs below a byte node like a
 // single-key page and holds its keys from the path length of its place on; when a node is
@@ -25,12 +25,10 @@ import (
 // which they differ and a subtree for each byte. An entry alone below a byte is a single-key
 // page; an entry with more values than a page of 512 bytes holds is a value overflow.
 
-func init() { mkpage.TypeBase = uint8(kMultiKey) }
-
-func asMKStr(h *header) *mkpage.Page   { return (*mkpage.Page)(unsafe.Pointer(h)) }
-func asMKFix(h *header) *mkpage.Fixed  { return (*mkpage.Fixed)(unsafe.Pointer(h)) }
-func mkStrHdr(p *mkpage.Page) *header  { return (*header)(unsafe.Pointer(p)) }
-func mkFixHdr(p *mkpage.Fixed) *header { return (*header)(unsafe.Pointer(p)) }
+func asMKStr(h *header) *page.Str      { return (*page.Str)(unsafe.Pointer(h)) }
+func asMKFix(h *header) *page.Fixed    { return (*page.Fixed)(unsafe.Pointer(h)) }
+func mkStrHdr(p *page.Str) *header     { return (*header)(unsafe.Pointer(p)) }
+func mkFixHdr(p *page.Fixed) *header   { return (*header)(unsafe.Pointer(p)) }
 func strOf[T comparable](v T) string   { return *(*string)(unsafe.Pointer(&v)) }
 func fromStr[T comparable](s string) T { return *(*T)(unsafe.Pointer(&s)) }
 func asStrSlice[T comparable](v []T) [][]byte {
@@ -108,7 +106,7 @@ func (m *Map[T]) leafFor(it *item[T], base int) *singleKeyHead {
 // do not fit, or an entry or a value is beyond a limit of the page.
 func (m *Map[T]) pageOf(items []item[T]) *header {
 	n := len(items)
-	cp := min(swar.Lcp(items[0].rest, items[n-1].rest), mkpage.MaxPrefix)
+	cp := min(swar.Lcp(items[0].rest, items[n-1].rest), page.MaxKeyPart)
 	slots, rem, vals := 0, -n*cp, 0
 	for i := range items {
 		it := &items[i]
@@ -124,10 +122,10 @@ func (m *Map[T]) pageOf(items []item[T]) *header {
 		}
 	}
 	if m.flat == 3 { // 512 bytes hold no 255 slots, so the limit of n needs no check
-		if mkpage.NeedStrings(slots, cp, rem, vals) > 512 {
+		if page.NeedStrings(slots, cp, rem, vals) > 512 {
 			return nil
 		}
-	} else if mkpage.NeedFixed[T](slots, cp, rem) > 512 {
+	} else if page.NeedFixed[T](slots, cp, rem) > 512 {
 		return nil
 	}
 	rests := m.scrRests[:0]
@@ -151,7 +149,7 @@ func (m *Map[T]) pageOf(items []item[T]) *header {
 		}
 		m.scrVals = vs
 		defer clear(vs)
-		if p := mkpage.BuildStrings(rests, vs); p != nil {
+		if p := page.BuildStrings(rests, vs); p != nil {
 			return mkStrHdr(p)
 		}
 		return nil
@@ -166,7 +164,7 @@ func (m *Map[T]) pageOf(items []item[T]) *header {
 	}
 	m.scrT = vs
 	defer clear(vs)
-	if p := mkpage.BuildFixedOf(rests, vs, m.ptr); p != nil {
+	if p := page.BuildFixedOf(rests, vs, m.ptr); p != nil {
 		return mkFixHdr(p)
 	}
 	return nil
@@ -344,7 +342,7 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 		}
 		m.scrVals = vals
 		defer clear(vals)
-		if p := mkpage.BuildStrings(rests, vals); p != nil {
+		if p := page.BuildStrings(rests, vals); p != nil {
 			ev(evPair, k+1)
 			return mkStrHdr(p)
 		}
@@ -361,7 +359,7 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 	}
 	m.scrT = vals
 	defer clear(vals)
-	if p := mkpage.BuildFixedOf(rests, vals, m.ptr); p != nil {
+	if p := page.BuildFixedOf(rests, vals, m.ptr); p != nil {
 		ev(evPair, k+1)
 		return mkFixHdr(p)
 	}
@@ -373,7 +371,7 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **header {
 	rest := key[pathLen:]
 	var q *header
-	var res mkpage.Result
+	var res page.Result
 	if m.flat == 3 {
 		p := asMKStr(n)
 		if mis := p.Match(rest); mis < p.PrefixLen() {
@@ -390,14 +388,14 @@ func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **heade
 		q, res = mkFixHdr(r), x
 	}
 	switch res {
-	case mkpage.Added:
+	case page.Added:
 		ev(evAdded, 1)
 		*loc = q
 		m.t.size++
-	case mkpage.AddedValue:
+	case page.AddedValue:
 		ev(evAddedValue, 1)
 		*loc = q
-	case mkpage.Full: // the page bursts
+	case page.Full: // the page bursts
 		fresh := !m.pageHas(n, pathLen, key)
 		items := m.itemsWithNew(n, rest)
 		ev(evBurst, len(items))
@@ -466,7 +464,7 @@ func (m *Map[T]) abovePage(loc **header, n *header, key []byte, pathLen, mis int
 	} else {
 		p := asMKFix(n)
 		b = p.CP()[mis]
-		p.Skip[T](mis + 1)
+		p.Skip(mis + 1)
 	}
 	nn := newNode(kN5, mis)
 	storePrefix(nn, rest[:mis])
@@ -507,11 +505,11 @@ func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) i
 	cur, removed := n, false
 	for {
 		q, res := m.removeFrom(cur, rest, v, all)
-		if res == mkpage.Absent {
+		if res == page.Absent {
 			break
 		}
 		removed, cur = true, q
-		if res == mkpage.Gone {
+		if res == page.Gone {
 			m.t.size--
 			break
 		}
@@ -543,14 +541,14 @@ func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) i
 
 // removeFrom removes the value v of the entry rest from multi-key page n, or, if first is set,
 // the first value of the entry, whatever it is. It returns the page that holds the rest.
-func (m *Map[T]) removeFrom(n *header, rest []byte, v T, first bool) (*header, mkpage.Removal) {
+func (m *Map[T]) removeFrom(n *header, rest []byte, v T, first bool) (*header, page.Removal) {
 	if m.flat == 3 {
 		p := asMKStr(n)
 		val := view(strOf(v))
 		if first {
 			got, ok := p.Get(rest)
 			if !ok {
-				return n, mkpage.Absent
+				return n, page.Absent
 			}
 			val = got
 		}
@@ -561,7 +559,7 @@ func (m *Map[T]) removeFrom(n *header, rest []byte, v T, first bool) (*header, m
 	if first {
 		got, ok := p.Get[T](rest)
 		if !ok {
-			return n, mkpage.Absent
+			return n, page.Absent
 		}
 		v = got
 	}
@@ -729,11 +727,11 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 	if !ok || keys < 2 {
 		return false
 	}
-	cp := min(len(pre), mkpage.MaxPrefix)
+	cp := min(len(pre), page.MaxKeyPart)
 	if m.flat == 3 {
-		return mkpage.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= 512
+		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= 512
 	}
-	return mkpage.NeedFixed[T](slots, cp, sumRest-keys*cp) <= 512
+	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= 512
 }
 
 // leafItem returns the entry of single-key page l, which is not a value overflow, with its

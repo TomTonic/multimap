@@ -285,6 +285,19 @@ func classFor(need int) int {
 	return -1
 }
 
+// NeedStrings returns the bytes a many-key Str page takes for n slots (values) whose remainders (after a key part
+// of cpl bytes) are remBytes in all (the slots with Further have none) and whose values are valBytes in all.
+// The tree calls it to decide, before it builds anything, whether the entries of a subtree fit a page (at
+// most 512).
+func NeedStrings(n, cpl, remBytes, valBytes int) int {
+	return Header + cpl + 2*n + remBytes + valBytes
+}
+
+// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths, values of the size of T.
+func NeedFixed[T comparable](n, cpl, remBytes int) int {
+	return Header + cpl + n + remBytes + n*size[T]()
+}
+
 // ShrinkLimit returns how much of the room of a smaller class the content of a page may fill for
 // the page to move into that class when it loses content: 171/256, two thirds. (The one threshold of
 // all pages of the redesign.)

@@ -182,9 +182,8 @@ func TestMultiKeyPageCannotMoveUp(t *testing.T) {
 	var m Map[string]
 	p := "0123456789"
 	val := func(n int) string { return strings.Repeat("v", n) }
-	page := func() *header { h, _ := m.t.find([]byte(p + "q1")); return h }
 	for _, k := range []string{"1", "2"} {
-		m.Add([]byte(p+"q"+k), val(240))
+		m.Add([]byte(p+"q"+k), val(237))
 	}
 	m.Add([]byte(p+"q3"), val(9)) // a page of 512 bytes: the next key does not fit it, and a node goes above
 	m.Add([]byte(p+"r"), "x")
@@ -192,8 +191,7 @@ func TestMultiKeyPageCannotMoveUp(t *testing.T) {
 	if isPage(m.t.root.objType) {
 		t.Fatal("no node above the page")
 	}
-	used := asMKStr(page()).Used()
-	m.Add([]byte(p+"q5"), val(505-used-3)) // the page is now at 505 bytes: eleven more do not fit
+	m.Add([]byte(p+"q5"), val(3)) // the page is now at 511 bytes: eleven more do not fit
 	m.RemoveKey([]byte(p + "r"))
 	checkInvariants(t, &m.t)
 	if isPage(m.t.root.objType) {
@@ -223,13 +221,12 @@ func TestMultiKeyPageShrunkBelowItsNode(t *testing.T) {
 	stuck := func() *Map[string] {
 		var m Map[string]
 		for _, k := range []string{"1", "2"} {
-			m.Add([]byte(p+"q"+k), val(240))
+			m.Add([]byte(p+"q"+k), val(237))
 		}
 		m.Add([]byte(p+"q3"), val(9))
 		m.Add([]byte(p+"r"), "x")
 		m.Add([]byte(p+"r"), "y")
-		h, _ := m.t.find([]byte(p + "q1"))
-		m.Add([]byte(p+"q5"), val(505-asMKStr(h).Used()-3))
+		m.Add([]byte(p+"q5"), val(3))
 		m.RemoveKey([]byte(p + "r")) // the page stays below the node: it is full
 		checkInvariants(t, &m.t)
 		if page, _ := m.t.find([]byte(p + "q1")); !isMultiKey(page.objType) || isPage(m.t.root.objType) {

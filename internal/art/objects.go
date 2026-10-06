@@ -1,7 +1,7 @@
 package art
 
 import (
-	"github.com/TomTonic/multimap/internal/mkpage"
+	"github.com/TomTonic/multimap/internal/page"
 	"github.com/TomTonic/multimap/internal/skpage"
 )
 
@@ -110,7 +110,7 @@ func (m *Map[T]) multiKeyObject(n *header) Object {
 		return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Keys(), Values: p.Len(), Remainder: p.PrefixLen()}
 	}
 	p := asMKFix(n)
-	return Object{Label: "multi-key page", Size: p.Size(), Pointers: mkpage.HoldsPointers[T](), Keys: p.Keys(), Values: p.Len(), Remainder: p.PrefixLen()}
+	return Object{Label: "multi-key page", Size: p.Size(), Pointers: page.HoldsPointers[T](), Keys: p.Keys(), Values: p.Len(), Remainder: p.PrefixLen()}
 }
 
 // object describes the object n, a leaf, page or node, without what is below

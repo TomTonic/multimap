@@ -455,3 +455,22 @@ func TestPageLookupsAndRemovals(t *testing.T) {
 		t.Errorf("a remainder of 255 bytes: %v", res)
 	}
 }
+
+// TestPageNeed shows that the sizes the tree computes before it builds a page are the sizes of the pages.
+//
+// The tree decides whether the entries of a subtree make a page from NeedStrings and NeedFixed, without
+// building anything; a difference to the real page would make it build pages that do not fit, or refuse
+// pages that do.
+//
+// Expected: for the six slots of the example, NeedStrings and NeedFixed are the bytes the pages use (the key area
+// and the values), 63 and 81.
+func TestPageNeed(t *testing.T) {
+	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
+	f := BuildFixed(exampleKeys, []uint64{7, 1, 2, 5, 9, 4})
+	if got := NeedStrings(6, 7, 16, 24); got != p.Used()+24 || got != 63 {
+		t.Errorf("NeedStrings = %d, page uses %d", got, p.Used()+24)
+	}
+	if got := NeedFixed[uint64](6, 7, 16); got != f.Used()+48 || got != 81 {
+		t.Errorf("NeedFixed = %d, page uses %d", got, f.Used()+48)
+	}
+}
