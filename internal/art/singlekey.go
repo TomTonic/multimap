@@ -318,31 +318,36 @@ func (m *Map[T]) backToPage(l *singleKeyHead) *singleKeyHead {
 	}
 	s := *overflowSetOf[T](l)
 	n := int(s.Size())
-	rests := make([][]byte, n)
-	for i := range rests {
-		rests[i] = l.stored()
-	}
+	// the test of the size comes first and allocates nothing: it runs at every removal from a value overflow
 	if m.flat == 1 {
 		var z T
 		if !page.BackFits(l.rem(), n*int(unsafe.Sizeof(z))) {
 			return nil
 		}
-		return fixedHead(page.BuildFixedOf(rests, s.ToArray(), m.ptr)) // a nil page is a nil head
+		return fixedHead(page.BuildFixedOf(restsOf(l, n), s.ToArray(), m.ptr)) // a nil page is a nil head
 	}
 	if 2*n > page.Room(l.rem()) { // every value takes a byte at least, and they may take half the room
 		return nil
 	}
 	valueBytes, ok := 0, true
-	vs := make([][]byte, 0, n)
 	overflowEach(l, func(x string) bool {
 		valueBytes += 1 + len(x)
-		if ok = len(x) <= page.MaxValue && page.BackFits(l.rem(), valueBytes); ok {
-			vs = append(vs, view(x))
-		}
+		ok = len(x) <= page.MaxValue && page.BackFits(l.rem(), valueBytes)
 		return ok
 	})
 	if !ok {
 		return nil
 	}
-	return skHead(page.BuildStrings(rests, vs))
+	vs := make([][]byte, 0, n)
+	overflowEach(l, func(x string) bool { vs = append(vs, view(x)); return true })
+	return skHead(page.BuildStrings(restsOf(l, n), vs))
+}
+
+// restsOf returns n times the key part of value overflow l: the keys of its n values, as the page builders take them.
+func restsOf(l *singleKeyHead, n int) [][]byte {
+	rests := make([][]byte, n)
+	for i := range rests {
+		rests[i] = l.stored()
+	}
+	return rests
 }
