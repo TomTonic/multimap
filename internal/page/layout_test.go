@@ -1,0 +1,457 @@
+package page
+
+import (
+	"bytes"
+	"encoding/binary"
+	"strings"
+	"testing"
+	"unsafe"
+)
+
+func le(b []byte, v uint64) []byte { return binary.LittleEndian.AppendUint64(b, v) }
+
+// exampleKeys are the keys of the layout example of step5-one-page.md: "Bahnhof" is the common
+// prefix, "strasse" has three values.
+var exampleKeys = bs("Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofstrasse", "Bahnhofstrasse", "Bahnhofweg")
+
+// TestPageLayout pins the bytes of the pages of the example of the design note.
+//
+// The layout is what the tree and every later change of the page rely on: the head of four bytes
+// (type, the length of the key part, the number of slots, rawWords), the key part right behind it,
+// then, as far as the page has them, the key lengths with 255 for a further value of the key before
+// it, the value lengths, the remainders, free bytes, and the values, which end with the object.
+//
+// Expected: the six slots of the example are the 63-byte page of strings (class 64) and the 128-byte
+// page of `uint64` with the bytes of the design note; a key with three values is the 32-byte page of
+// strings and the 64-byte page of `uint64` in the one-key form, without key lengths; a page of
+// pointers has rawWords of its byte area.
+func TestPageLayout(t *testing.T) {
+	// many keys, strings
+	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
+	want := []byte{TypeManyKeys + 2, 7, 6, 0} // class 64
+	want = append(want, "Bahnhof"...)
+	want = append(want, 0, 6, 7, Further, Further, 3)  // key lengths
+	want = append(want, 5, 4, 3, 4, 4, 4)              // value lengths
+	want = append(want, "sallee"+"strasse"+"weg"...)   // remainders
+	want = append(want, 0)                             // free
+	want = append(want, "MitteNordOstSuedWestRing"...) // values, ending with the object
+	if got := p.mem(); !bytes.Equal(got, want) || p.Size() != 64 || p.Used() != 39 {
+		t.Fatalf("many keys, strings:\n got %v\nwant %v (size %d, used %d)", got, want, p.Size(), p.Used())
+	}
+	if p.Len() != 6 || p.Keys() != 4 || p.PrefixLen() != 7 || p.OneKey() || p.Class() != 1 || p.RawWords() != 0 {
+		t.Errorf("Len %d Keys %d PrefixLen %d OneKey %v Class %d RawWords %d", p.Len(), p.Keys(), p.PrefixLen(), p.OneKey(), p.Class(), p.RawWords())
+	}
+
+	// many keys, uint64
+	f := BuildFixed(exampleKeys, []uint64{7, 1, 2, 5, 9, 4})
+	want = []byte{TypeManyKeys + 4, 7, 6, 0} // class 128
+	want = append(want, "Bahnhof"...)
+	want = append(want, 0, 6, 7, Further, Further, 3)
+	want = append(want, "sallee"+"strasse"+"weg"...)
+	want = append(want, make([]byte, 128-6*8-len(want))...)
+	for _, v := range []uint64{7, 1, 2, 5, 9, 4} {
+		want = le(want, v)
+	}
+	if got := f.mem(); !bytes.Equal(got, want) || f.Size() != 128 || f.Used() != 33 {
+		t.Fatalf("many keys, uint64:\n got %v\nwant %v (size %d, used %d)", got, want, f.Size(), f.Used())
+	}
+
+	// many keys, pointers: the same bytes, rawWords is the byte area in words
+	pp := BuildFixed(exampleKeys, []*uint64{&ptrPool[7], &ptrPool[1], &ptrPool[2], &ptrPool[5], &ptrPool[9], &ptrPool[4]})
+	if pp.RawWords() != 5 || pp.Used() != 33 { // 33 bytes are 5 words
+		t.Errorf("pointer page: rawWords %d, used %d", pp.RawWords(), pp.Used())
+	}
+	if got, want := pp.mem()[:4], []byte{TypeManyKeys + 4, 7, 6, 5}; !bytes.Equal(got, want) {
+		t.Errorf("pointer page head %v, want %v", got, want)
+	}
+
+	// one key, strings
+	one := BuildStrings(bs("Bahnhofstrasse", "Bahnhofstrasse", "Bahnhofstrasse"), bs("Ost", "Sued", "West"))
+	want = []byte{TypeOneKey, 14, 3, 0}
+	want = append(want, "Bahnhofstrasse"...)
+	want = append(want, 3, 4, 4)
+	want = append(want, "OstSuedWest"...)
+	if got := one.mem(); !bytes.Equal(got, want) || one.Size() != 32 || !one.OneKey() || one.Keys() != 1 || one.Used() != 21 {
+		t.Fatalf("one key, strings:\n got %v\nwant %v (size %d, used %d)", got, want, one.Size(), one.Used())
+	}
+
+	// one key, uint64
+	onef := BuildFixed(bs("Bahnhofstrasse", "Bahnhofstrasse", "Bahnhofstrasse"), []uint64{2, 5, 9})
+	want = []byte{TypeOneKey + 2, 14, 3, 0}
+	want = append(want, "Bahnhofstrasse"...)
+	want = append(want, make([]byte, 64-3*8-len(want))...)
+	want = le(le(le(want, 2), 5), 9)
+	if got := onef.mem(); !bytes.Equal(got, want) || onef.Size() != 64 || onef.Used() != 18 {
+		t.Fatalf("one key, uint64:\n got %v\nwant %v (size %d, used %d)", got, want, onef.Size(), onef.Used())
+	}
+
+	// the keys of a page are found in every form
+	for _, k := range []string{"Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofweg"} {
+		if _, ok := p.Get([]byte(k)); !ok {
+			t.Errorf("Get(%q)", k)
+		}
+	}
+	if v, ok := one.Get([]byte("Bahnhofstrasse")); !ok || string(v) != "Ost" {
+		t.Errorf("one-key Get: %q %v", v, ok)
+	}
+	if _, ok := one.Get([]byte("Bahnhofstrasse2")); ok {
+		t.Error("one-key page found another key")
+	}
+	if _, ok := p.Get([]byte("Bahnhofx")); ok {
+		t.Error("string page found a key that is not there")
+	}
+	if _, ok := f.Get[uint64]([]byte("Bahnhofx")); ok {
+		t.Error("found a key that is not there")
+	}
+	if _, ok := onef.Get[uint64]([]byte("Bahnhof")); ok {
+		t.Error("one-key page of uint64 found a key that is not there")
+	}
+	if _, ok := f.Get[uint64]([]byte("Bahn")); ok {
+		t.Error("found a key outside the common prefix")
+	}
+	_ = unsafe.Sizeof(0)
+}
+
+// TestPageLimits shows what the page refuses and where its limits are.
+//
+// The tree asks the page for entries of a subtree and must be told when they do not make a page: no
+// entry, too many slots, a remainder, a value or a key part beyond the limits, content beyond 512 bytes.
+//
+// Expected: nil for those, a page at the borders (254 bytes of remainder and of value are taken), and the
+// page of a type without a Fixed page is nil.
+func TestPageLimits(t *testing.T) {
+	big := make([][]byte, 256)
+	vals := make([][]byte, 256)
+	one := make([]uint8, 256)
+	for i := range big {
+		big[i], vals[i] = []byte{'k'}, []byte{'v'}
+	}
+	if BuildStrings(nil, nil) != nil || BuildStrings(bs("a"), nil) != nil || BuildStrings(big, vals) != nil || BuildFixed(big, one) != nil || BuildFixed[uint64](nil, nil) != nil {
+		t.Error("no entry, another number of values, or 256 slots gave a page")
+	}
+	if BuildStrings(bs("a"), bs(strings.Repeat("v", MaxValue+1))) != nil || BuildStrings(bs("a"), bs(strings.Repeat("v", MaxValue))) == nil {
+		t.Error("value of 255 or 254 bytes")
+	}
+	long := strings.Repeat("k", 600)
+	if BuildStrings(bs(long), bs("v")) != nil || BuildFixed(bs(long), []uint64{1}) != nil {
+		t.Error("one key of 600 bytes")
+	}
+	if BuildStrings(bs("a", "a"+strings.Repeat("x", MaxRemainder+1)), bs("v", "w")) != nil || BuildStrings(bs("a", "a"+strings.Repeat("x", MaxRemainder)), bs("v", "w")) == nil {
+		t.Error("remainder of 255 or 254 bytes")
+	}
+	if BuildFixed(bs("a", "a"+strings.Repeat("x", MaxRemainder+1)), []uint64{1, 2}) != nil || BuildFixed(bs("a", "a"+strings.Repeat("x", MaxRemainder)), []uint8{1, 2}) == nil {
+		t.Error("remainder of 255 or 254 bytes, fixed")
+	}
+	if BuildFixed(bs("a", "b"), []string{"x", "y"}) != nil || BuildFixed(bs("a"), [][3]uint64{{}}) != nil || BuildFixed(bs("a"), []*int{nil}) == nil {
+		t.Error("types: a string, three words, a pointer")
+	}
+	if Supported[string]() || !Supported[*int]() || HoldsPointers[uint64]() || !HoldsPointers[*int]() || !Supported[uint64]() || !Supported[[2]uint64]() || Supported[[3]uint64]() {
+		t.Error("Supported and HoldsPointers")
+	}
+	if BuildStrings(bs("a"), bs(strings.Repeat("v", 254), strings.Repeat("w", 254))) != nil {
+		t.Error("value count does not match")
+	}
+	// content beyond 512 bytes
+	many := make([][]byte, 40)
+	mv := make([][]byte, 40)
+	for i := range many {
+		many[i] = []byte{'a', byte('A' + i)}
+		mv[i] = []byte(strings.Repeat("v", 20))
+	}
+	if BuildStrings(many, mv) != nil {
+		t.Error("40 values of 20 bytes make a page of more than 512 bytes")
+	}
+	// 100 values of one key, one byte each: the one-key page of strings, class 512 refused at 255
+	hund := make([][]byte, 100)
+	hv := make([][]byte, 100)
+	for i := range hund {
+		hund[i], hv[i] = []byte("key"), []byte{byte(i)}
+	}
+	if p := BuildStrings(hund, hv); p == nil || p.Keys() != 1 || p.Len() != 100 || !p.OneKey() {
+		t.Error("100 values of one key")
+	}
+}
+
+// TestPageOneKeyBecomesMany shows the transitions between the two forms.
+//
+// A user who adds a second key near a key that has a few values gets one page for both; one who
+// removes the second key again gets the cheaper page of one key back, in place.
+//
+// Expected: Add of another key to a one-key page returns a new page of the many-key form with all the values
+// (for 12 values of the first key too, the slices of the pairing are not limited), and Remove of the second
+// key turns the page back into the one-key form in place, with the key part of the whole key and no key
+// lengths; a key that does not fit is refused.
+func TestPageOneKeyBecomesMany(t *testing.T) {
+	for _, n := range []int{1, 3, 12} {
+		var vs [][]byte
+		var ks [][]byte
+		for i := range n {
+			ks, vs = append(ks, []byte("street-1")), append(vs, []byte{byte('a' + i)})
+		}
+		p := BuildStrings(ks, vs)
+		q, res := p.Add([]byte("street-2"), []byte("z"))
+		if res != Added || q == p || q.OneKey() || q.Len() != n+1 || q.Keys() != 2 || q.PrefixLen() != 7 {
+			t.Fatalf("%d values: Add of another key: %v, %v keys %d prefix %d", n, res, q.OneKey(), q.Keys(), q.PrefixLen())
+		}
+		r, rm := q.Remove([]byte("street-2"), []byte("z"))
+		if rm != Gone || r != q || !r.OneKey() || r.Len() != n || r.Keys() != 1 || string(r.CP()) != "street-1" {
+			t.Fatalf("%d values: Remove of the second key: %v, one key %v, %d values, key part %q", n, rm, r.OneKey(), r.Len(), r.CP())
+		}
+		// the same for uint64: the one-key page of fixed values
+		fs := make([]uint64, n)
+		for i := range fs {
+			fs[i] = uint64(i)
+		}
+		f := BuildFixed(ks, fs)
+		g, res := f.Add([]byte("street-0"), uint64(99), false)
+		if res != Added || g == f || g.OneKey() || g.Len() != n+1 {
+			t.Fatalf("fixed, %d values: Add of another key: %v", n, res)
+		}
+		h, rm := g.Remove([]byte("street-0"), uint64(99), false)
+		if rm != Gone || !h.OneKey() || h.Len() != n {
+			t.Fatalf("fixed, %d values: Remove of the other key: %v", n, rm)
+		}
+	}
+	// a one-key page that gets a key that does not fit: Full
+	big := BuildStrings(bs("k", "k"), bs(strings.Repeat("v", 250), strings.Repeat("w", 250)))
+	if q, res := big.Add([]byte("j"), []byte(strings.Repeat("x", 100))); res != Full || q != big {
+		t.Errorf("another key that does not fit: %v", res)
+	}
+	bigf := BuildFixed(bs("k"), []uint64{1})
+	if q, res := bigf.Add([]byte("j"+strings.Repeat("y", 520)), uint64(2), false); res != Full || q != bigf {
+		t.Errorf("fixed, another key that does not fit: %v", res)
+	}
+}
+
+// TestPageSkipAndPrepend shows the key part changing in place when the path of the page changes.
+//
+// A byte node above a page takes the first bytes of its key part (Skip); when the node goes away the
+// page gets them back (Prepend), in place if its object holds them, else in a larger one.
+//
+// Expected: after Skip the keys are the old ones without their first bytes, with all their values; Prepend
+// restores them; Prepend into a class that is full makes a larger page; Prepend beyond 512 bytes of content is nil; for a page of pointers the byte area decides whether it is in place.
+func TestPageSkipAndPrepend(t *testing.T) {
+	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
+	p.Skip(3)
+	if string(p.CP()) != "nhof" || p.Len() != 6 {
+		t.Fatalf("after Skip: %q", p.CP())
+	}
+	if v, ok := p.Get([]byte("nhofstrasse")); !ok || string(v) != "Ost" {
+		t.Fatalf("Get after Skip: %q %v", v, ok)
+	}
+	q := p.Prepend([]byte("Bah"))
+	if q != p || string(q.CP()) != "Bahnhof" {
+		t.Fatalf("Prepend in place: %q", q.CP())
+	}
+	big := q.Prepend([]byte(strings.Repeat("P", 40)))
+	if big == nil || big == q || big.Size() <= q.Size() || len(big.CP()) != 47 {
+		t.Fatalf("Prepend of 40 bytes: %v", big)
+	}
+	if big.Prepend([]byte(strings.Repeat("P", 600))) != nil || big.Prepend([]byte(strings.Repeat("P", 470))) != nil {
+		t.Error("Prepend beyond the largest class")
+	}
+	// the one-key form
+	one := BuildStrings(bs("Bahnhofstrasse"), bs("Ost"))
+	one.Skip(8)
+	if string(one.CP()) != "trasse" {
+		t.Fatalf("one-key Skip: %q", one.CP())
+	}
+	if o := one.Prepend([]byte("Bahnhofs")); o != one || string(o.CP()) != "Bahnhofstrasse" {
+		t.Fatalf("one-key Prepend: %q", o.CP())
+	}
+	// uint64: a larger class and the limits
+	f := BuildFixed(exampleKeys, []uint64{7, 1, 2, 5, 9, 4})
+	f.Skip(7)
+	if g := f.Prepend[uint64]([]byte("Bahnhof"), false); g != f || string(g.CP()) != "Bahnhof" {
+		t.Fatalf("fixed Prepend in place: %q", g.CP())
+	}
+	g := f.Prepend[uint64]([]byte(strings.Repeat("P", 60)), false)
+	if g == nil || g == f || g.Size() <= f.Size() {
+		t.Fatalf("fixed Prepend of 60 bytes: %v", g)
+	}
+	if g.Prepend[uint64]([]byte(strings.Repeat("P", 600)), false) != nil || g.Prepend[uint64]([]byte(strings.Repeat("P", 470)), false) != nil {
+		t.Error("fixed Prepend beyond the limits")
+	}
+	// pointers: the byte area of the typed object is fixed: 33 bytes are 5 words (40 bytes), so 7 more bytes are in place
+	pp := BuildFixed(exampleKeys, []*uint64{&ptrPool[7], &ptrPool[1], &ptrPool[2], &ptrPool[5], &ptrPool[9], &ptrPool[4]})
+	if a := pp.Prepend[*uint64]([]byte("1234567"), true); a != pp || a.RawWords() != 5 {
+		t.Errorf("pointer page: Prepend of 7 bytes in place: %v", a == pp)
+	}
+	if b := pp.Prepend[*uint64]([]byte("1234567"), true); b == pp || b.RawWords() <= 5 {
+		t.Errorf("pointer page: Prepend beyond the byte area is a new object: %v, rawWords %d", b == pp, b.RawWords())
+	}
+}
+
+// TestPageKeysUpTo shows that the tree can ask whether a page has at least a few keys without counting
+// them all.
+//
+// The tree decides on a removal whether one key is left or at most two; for a page of one value each the scan
+// stops after the third slot.
+//
+// Expected: for pages of 1, 2, 3 and 5 keys, some with several values, KeysUpTo(limit) is the smaller of the
+// number of keys and limit, and Keys is the number of keys.
+func TestPageKeysUpTo(t *testing.T) {
+	for _, keys := range []int{1, 2, 3, 5} {
+		for _, per := range []int{1, 3} {
+			var rests, vals [][]byte
+			for k := range keys {
+				for v := range per {
+					rests = append(rests, []byte{byte('a' + k)})
+					vals = append(vals, []byte{byte('0' + v)})
+				}
+			}
+			p := BuildStrings(rests, vals)
+			f := BuildFixed(rests, make([]uint8, len(rests)))
+			if p.Keys() != keys || f.Keys() != keys || p.OneKey() != (keys == 1) {
+				t.Fatalf("%d keys of %d values: Keys %d and %d", keys, per, p.Keys(), f.Keys())
+			}
+			for limit := 1; limit <= 6; limit++ {
+				if got, want := p.KeysUpTo(limit), min(keys, limit); got != want || f.KeysUpTo(limit) != want {
+					t.Errorf("%d keys of %d values: KeysUpTo(%d) = %d and %d, want %d", keys, per, limit, got, f.KeysUpTo(limit), want)
+				}
+			}
+		}
+	}
+}
+
+// TestPageWidenRefusals shows when a key outside the common prefix does not join the page.
+//
+// The tree calls Widen where it would put a byte node above the page, so that a key that differs early
+// joins its neighbours when they fit one page.
+//
+// Expected: Widen takes a key that leaves the prefix after some bytes, as the first key or the last, with
+// the old prefix tail in front of the old remainders, and refuses (nil) a remainder beyond 254 bytes, a
+// longest old remainder that no longer fits after the prefix tail, content beyond 512 bytes, a value beyond
+// 254 bytes.
+func TestPageWidenRefusals(t *testing.T) {
+	p := BuildStrings(bs("abc1", "abc2"), bs("x", "y"))
+	for _, tt := range []struct {
+		key string
+		pos int // where the new key goes
+	}{{"abd", 2}, {"aaa", 0}, {"a", 0}} {
+		q := p.Widen([]byte(tt.key), []byte("n"))
+		if q == nil || q.Keys() != 3 {
+			t.Fatalf("Widen(%q) refused", tt.key)
+		}
+		var got []string
+		cp := string(q.CP())
+		q.Each(func(rem, _ []byte, _ bool) bool { got = append(got, cp+string(rem)); return true })
+		if got[tt.pos] != tt.key {
+			t.Errorf("Widen(%q): keys %v", tt.key, got)
+		}
+	}
+	if p.Widen([]byte("a"+strings.Repeat("z", 255)), []byte("n")) != nil {
+		t.Error("remainder of 256 bytes")
+	}
+	if p.Widen([]byte("abd"), []byte(strings.Repeat("n", 255))) != nil {
+		t.Error("value of 255 bytes")
+	}
+	deep := BuildStrings(bs("abcdef", "abcdef"+strings.Repeat("c", 250)), bs("x", "y"))
+	if deep.Widen([]byte("a"), []byte("n")) != nil {
+		t.Error("a remainder that grows beyond 254 bytes by the prefix tail")
+	}
+	full := BuildStrings(bs("a1", "a2"), bs(strings.Repeat("x", 250), strings.Repeat("y", 250)))
+	if full == nil || full.Widen([]byte("b"), []byte("n")) != nil {
+		t.Error("content beyond 512 bytes")
+	}
+	f := BuildFixed(bs("abc1", "abc2"), []uint64{1, 2})
+	if q := f.Widen([]byte("abd"), uint64(3), false); q == nil || q.Keys() != 3 {
+		t.Error("fixed Widen")
+	}
+	if f.Widen([]byte("a"+strings.Repeat("z", 255)), uint64(3), false) != nil {
+		t.Error("fixed Widen of a remainder of 256 bytes")
+	}
+	fdeep := BuildFixed(bs("abcdef", "abcdef"+strings.Repeat("c", 250)), []uint64{1, 2})
+	if fdeep.Widen([]byte("a"), uint64(3), false) != nil {
+		t.Error("fixed Widen: a remainder that grows beyond 254 bytes")
+	}
+	many := make([][]byte, 60)
+	mv := make([]uint64, 60)
+	for i := range many {
+		many[i], mv[i] = []byte{'a', 'b', byte('A' + i)}, uint64(i)
+	}
+	ff := BuildFixed(many[:40], mv[:40])
+	if ff.Widen([]byte("x"+strings.Repeat("y", 100)), uint64(3), false) != nil {
+		t.Error("fixed Widen beyond 512 bytes")
+	}
+}
+
+// TestPageLookupsAndRemovals covers the answers of the lookups and removals for what is not there, and the stops of
+// the iterations.
+//
+// A user asks the index for a key that is not there, for a value the key does not have, stops a scan of the
+// values early, and removes the last value of a key that is alone in its page.
+//
+// Expected: EachValue of an absent key is false and calls nothing, a stop after the first value is a stop, Each
+// stops where it is told; Remove of an absent value or key is Absent and changes nothing; Remove of the only
+// value of a page of one key makes the page nil; an Add that does not fit is Full and changes nothing.
+func TestPageLookupsAndRemovals(t *testing.T) {
+	calls := 0
+	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
+	f := BuildFixed(exampleKeys, []uint64{7, 1, 2, 5, 9, 4})
+	one := BuildStrings(bs("k", "k"), bs("a", "b"))
+	onef := BuildFixed(bs("k", "k"), []uint64{1, 2})
+	if p.EachValue([]byte("Bahn"), func([]byte) bool { calls++; return true }) || p.EachValue([]byte("Bahnhofx"), func([]byte) bool { calls++; return true }) ||
+		f.EachValue([]byte("Bahn"), func(uint64) bool { calls++; return true }) || f.EachValue([]byte("Bahnhofx"), func(uint64) bool { calls++; return true }) ||
+		one.EachValue([]byte("j"), func([]byte) bool { calls++; return true }) || onef.EachValue([]byte("j"), func(uint64) bool { calls++; return true }) || calls != 0 {
+		t.Fatalf("a key that is not there: %d calls", calls)
+	}
+	if _, ok := p.Get([]byte("Bahn")); ok {
+		t.Error("Get outside the common prefix")
+	}
+	if !p.EachValue([]byte("Bahnhofstrasse"), func([]byte) bool { calls++; return false }) || !f.EachValue([]byte("Bahnhofstrasse"), func(uint64) bool { calls++; return false }) ||
+		!one.EachValue([]byte("k"), func([]byte) bool { calls++; return false }) || !onef.EachValue([]byte("k"), func(uint64) bool { calls++; return false }) || calls != 4 {
+		t.Fatalf("a stop after the first value: %d calls", calls)
+	}
+	calls = 0
+	if p.Each(func(_, _ []byte, _ bool) bool { calls++; return calls < 3 }) || f.Each(func(_ []byte, _ uint64, _ bool) bool { calls++; return calls < 6 }) || calls != 6 {
+		t.Fatalf("Each stops where told: %d calls", calls)
+	}
+	calls = 0
+	if one.Each(func(_, _ []byte, _ bool) bool { calls++; return false }) || onef.Each(func(_ []byte, _ uint64, _ bool) bool { calls++; return false }) || calls != 2 {
+		t.Fatalf("Each of the one-key form stops where told: %d calls", calls)
+	}
+	// removals of what is not there
+	for _, c := range []struct {
+		key, val string
+	}{{"Bahnhofstrasse", "none"}, {"Bahnhofx", "Ost"}, {"Bahn", "Ost"}} {
+		if q, rm := p.Remove([]byte(c.key), []byte(c.val)); rm != Absent || q != p {
+			t.Errorf("Remove(%q, %q) took something it must not", c.key, c.val)
+		}
+	}
+	if q, rm := f.Remove([]byte("Bahnhofstrasse"), uint64(99), false); rm != Absent || q != f {
+		t.Error("fixed Remove of a value the key does not have")
+	}
+	if q, rm := f.Remove([]byte("Bahn"), uint64(1), false); rm != Absent || q != f {
+		t.Error("fixed Remove outside the prefix")
+	}
+	for _, c := range []struct {
+		key, val string
+	}{{"j", "a"}, {"k", "z"}} {
+		if q, rm := one.Remove([]byte(c.key), []byte(c.val)); rm != Absent || q != one {
+			t.Errorf("one-key Remove(%q, %q) took something it must not", c.key, c.val)
+		}
+		if q, rm := onef.Remove([]byte(c.key), fixedVal(c.val), false); rm != Absent || q != onef {
+			t.Errorf("one-key fixed Remove(%q, %q) took something it must not", c.key, c.val)
+		}
+	}
+	// the last value of a page of one key
+	last := BuildStrings(bs("k"), bs("a"))
+	lastf := BuildFixed(bs("k"), []uint64{1})
+	if q, rm := last.Remove([]byte("k"), []byte("a")); rm != Gone || q != nil {
+		t.Error("Remove of the only value of a one-key page")
+	}
+	if q, rm := lastf.Remove([]byte("k"), uint64(1), false); rm != Gone || q != nil {
+		t.Error("fixed Remove of the only value of a one-key page")
+	}
+	// an add that does not fit
+	if q, res := one.Add([]byte("k"), []byte(strings.Repeat("v", 255))); res != Full || q != one {
+		t.Errorf("a value of 255 bytes for the key of a one-key page: %v", res)
+	}
+	if q, res := p.Add([]byte("Bahnhofstrasse"), []byte(strings.Repeat("v", 255))); res != Full || q != p {
+		t.Errorf("a value of 255 bytes for a key of a many-key page: %v", res)
+	}
+	if q, res := f.Add([]byte("Bahnhof"+strings.Repeat("x", 255)), uint64(3), false); res != Full || q != f {
+		t.Errorf("a remainder of 255 bytes: %v", res)
+	}
+}
