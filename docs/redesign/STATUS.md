@@ -4,6 +4,7 @@
 
 - 5.5a (model): memory of the one page is neutral against today's pages (-0.3 to +0.2 B a key).
 - 5.5b (`internal/page`, `0c4eb26`): the one page for both flavors in both forms, tests against a model (100 %, race, lint 0, fuzz), page-level benchmarks. **Values stay at the end of the object** (the front layout is not faster when cold). Get and `Each` as `mkpage`/`skpage` (-7 to +5 %), **pages of pointers change in place (-57 to -76 % against the page of 5.3)**; **the changes of the many-key page are slower at the page level (+13 to +25 % `uint64`, +11 to +55 % strings) and the add and remove of a value of the one-key form too (+12 / +40 ns)**: tuning candidates listed, tree-level effect expected +1 to +4 % of an operation. M1 job `pg1` queued (page benchmarks). Next: 5.5c, the tree on the package, after the user's go.
+- 5.5c parts 1 to 3 (`2fd3d88`, `bbbabd7` and the backToPage fix): the tree's pages, single-key pages and value overflow are the one page (head of 4 bytes, key part from the path length, value overflow with its set offset in rawWords). Probe: single-value cells -2 to -7 % against part 1, +0 to +13 % against before 5.5c; memory ±0.3 B; pointer maps -12 to -77 % against before. Details in step5-one-page.md. Next: part 4 (delete `skpage`, `mkpage`), then 5.5d (gate).
 
 ## 2026-10-06 night: the plan for one page layout is written ([step5-one-page.md](step5-one-page.md), section 5)
 
