@@ -23,6 +23,8 @@ const (
 	evBuildPage
 	evBuildNode
 	evBuildSingleKey
+	evSplitLeaf
+	evRekeyLeaf
 	evCount
 )
 

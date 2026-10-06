@@ -24,6 +24,8 @@ const (
 	evBuildPage
 	evBuildNode
 	evBuildSingleKey
+	evSplitLeaf
+	evRekeyLeaf
 	evCount
 )
 
@@ -44,6 +46,8 @@ var eventNames = [evCount]string{
 	evBuildPage:      "build: page made",
 	evBuildNode:      "build: byte node made",
 	evBuildSingleKey: "build: single-key page made",
+	evSplitLeaf:      "split: a node is put above a single-key page (its path length grows)",
+	evRekeyLeaf:      "rekey: a node above a single-key page goes away (its path length shrinks)",
 }
 
 // EventsEnabled says whether this build counts the events of the multi-key pages.

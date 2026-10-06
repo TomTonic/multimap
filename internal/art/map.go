@@ -176,6 +176,7 @@ func (m *Map[T]) RemoveKey(key []byte) {
 // rekey is the map's rekeyFunc: the one for its type of leaf, which also moves a
 // multi-key page up.
 func (m *Map[T]) rekey(l *singleKeyHead, pre []byte, b, pathLen int) *singleKeyHead {
+	ev(evRekeyLeaf, 1)
 	switch {
 	case isMultiKey(l.objType):
 		return m.rekeyPage(l, pre, b, pathLen)

@@ -50,11 +50,43 @@ offset: 00 01 02 | 03............09 | 10 11 12 13 14 15 | 16 ............
   32: 05 00 .. 00  09 00 .. 00                              values 5, 9
 ```
 
-## 2. The three questions of the head
+## 2. What `kl` stores, and why one kind of page has it and the other does not
+
+**The problem is the same for both kinds of page:** a page hangs below a byte node, and the **path** (the bytes the descent has matched) changes while the page does not: a byte node is put above it when a new key shares a part of its path, and a byte node above it goes away when the keys that made it are removed. When that happens, bytes that the page stores as **remainder** (or, in a multi-key page, as **common prefix**) are now also in the path, or bytes that were in the path now have to be stored by the page. The page must always know **where in the key its stored bytes begin**.
+
+**Example.** The single-key page P holds the entry `Bahnhofstrasse`, made when the path length was 0. It stores the remainder `Bahnhofstrasse` (r = 14) and `kl` = 14, the length of the whole key. A new key `Bahnhofweg` arrives: a byte node with the common prefix `Bahnhof` and the branch bytes `s` / `w` is put above P. P's path is now `Bahnhofs`, path length 8. **P itself does not change**: it still stores all 14 bytes, the first 8 of which are now stored twice (in the node's common prefix and branch byte, and in P). On the next descent P must skip them. It knows how many: the path length (8, counted by the descent) minus the place in the key where its stored bytes begin, `kl − r` = 0 (this is what the code calls `base`; the glossary's word is *path length at the time the page was made*). `kl` is therefore **the position of the first stored byte, written as "length of the whole key minus length of the remainder"**.
+
+**The two kinds, side by side:**
+
+| | single-key page (today) | multi-key page (today) |
+|---|---|---|
+| where its stored bytes begin | **may begin before the path length**; the page says where (`kl − r`) | **exactly at the path length**, always |
+| a byte node is put above it | nothing happens to the page | the page drops the first k bytes of its common prefix in place (`Skip`: a `memmove` of its content, up to 512 bytes) |
+| a byte node above it goes away | page keeps its bytes if they reach back far enough, else a new page with the missing bytes (`rekey`, `Prepend`) | `Prepend`: the same, in place when the size class holds it |
+| costs | 2 bytes a page (`kl`); bytes stored twice; every use of the key goes through `from(pathLen)`, `keyLen`, `base` (76 places) | the `memmove` at the event; no field, no stored twice |
+| why it is so | historical: the leaf of step 1 held its key from where it was made, and the single-key page copied the head of the leaf so that the old code worked on it (design note step 3, "the header of 3 bytes is a later step") | new code of step 4, which started without the old |
+
+So **it is not a property of one kind of page that needs `kl` and the other not**; two ways of one solution exist, and the tree uses both. The user's impression is right: it is needed everywhere (a field that says where the stored bytes begin; for the multi-key page that would be "how many bytes of the common prefix the path already holds", 9 bits) **or nowhere** (the page always begins at the path length and pays a `memmove` when the path changes).
+
+**What the price of "nowhere" is: counted.** The events that change the path of a single-key page, in the benchmark's own streams (the probe, events per 1,000 operations; a cell that is not listed is 0; 4,096 and 65,536 keys):
+
+| | node put above a single-key page (`splitLeaf`) | node above a single-key page goes away (`rekey`) | node put above a multi-key page |
+|---|--:|--:|--:|
+| street natural | 0.1, 0.2 | 0.0, 0.0 | 0.0, 0.0 |
+| street single-value | 0 | 0.0 | 0.0 |
+| dirs natural | 0.3, 0.4 | 0.5, 0.3 | 0.2, 0.2 |
+| dirs single-value | 0 | 0.7, 0.9 | 0.5, 0.6 |
+| `u64` keys natural | 0.1, 0.7 | 0.0 | 0 |
+| `u64` keys single-value | 0 | 0 | 0 |
+
+**At most 1 in 1,000 operations changes the path of a page.** The reason is that a new key that meets a single-key page almost never makes a node above it: it makes a **multi-key page** with it (`pair`: 6 to 184 in 1,000 operations). A `memmove` of 10 to 30 ns at those events costs **0.01 to 0.03 ns an operation on average**: nothing. (My first draft of this note said that a split of a single-key page is one of the common events of a new key; that was the situation before the multi-key pages and is wrong now.) What "everywhere" would cost instead: 2 bytes a page for the single-key pages **and** 9 bits for the multi-key page, the bytes stored twice, and the code of `base`/`from(pathLen)` in all pages.
+
+**Result for the head:** the single-key page does not need `kl`; "nowhere" is the cheaper and simpler choice, and U3/U4 below have no `kl`.
+
+## 3a. The two other questions of the head
 
 1. **How wide is n?** One byte for everyone is enough: a multi-key page has at most 255 slots (a slot takes two bytes at least), a single-key page of strings at most 254 values, and a set of `uint8` values has at most 256 distinct values (the 256th would go to the value overflow). One byte lets every reader take `type | length | n` as the first three bytes of any page.
-2. **Does the single-key page keep `kl`?** Without it the single-key page also loses the bytes the path holds (`Skip`) and regains them (`Prepend`); the whole tree code that compares "the end of the key with the remainder" (76 places in `internal/art`) becomes `rest := key[pathLen:]` against the page's remainder, as for the multi-key page. The price is the work of `Skip` in place: when a node is put above a single-key page (every insert whose key meets a single-key page and does not make a page with it, `splitLeaf`), the remainder and, for strings, the values behind it move left by the bytes the node takes, and for `uint64` values the values move to their new aligned start: a `memmove` of up to the page's content, 10 to 30 ns for the usual pages. Today that insert is free for the existing page.
-3. **Is there a spare byte?** The in-place pointer page (5.6) needs the number of untyped words in front, J (6 bits), stored; the multi-key page has no spare bit (nine bits of length, eight of n). A fourth byte `aux` is that place: J for the pages of pointers, 0 for all others, and room for what we do not know yet.
+2. **Is there a spare byte?** The in-place pointer page (5.6) needs the number of untyped words in front, J (6 bits), stored; the multi-key page has no spare bit (nine bits of length, eight of n). A fourth byte `aux` is that place: J for the pages of pointers, 0 for all others, and room for what we do not know yet.
 
 ## 3. The two proposals side by side (same example)
 
@@ -110,8 +142,8 @@ The multi-key page of strings and of `uint64` gets one zero byte (`aux`) at offs
 | single-key page without `kl` | yes | yes |
 | risk | the 5.6 work needs a variable head | one byte more in the multi-key page |
 
-**Time**: the multi-key page does not change (`Header` 3 → 4: every offset moves by one). The single-key page without `kl` gains the simpler key code (no `base`, no `from(pathLen)`: `rest` against `remainder`) and pays `Skip` in place at every `splitLeaf` and `Prepend` at every collapse (today `rekey`). Prediction for the single-value cells: **±0 to +3 % in churn and build** (the split of a leaf into a node with two pages is one of five events of a new key; `Skip` is a short `memmove`; the gain: no `kl`, two checks fewer on every lookup of a single-key page); a measurement on the PC and the M1 decides, after the model (5.5a: multi-key page to 4 bytes alone; 5.5b: single-key page to the shared head with `Skip`; each its own commit and measurement).
+**Time**: the multi-key page does not change (`Header` 3 → 4: every offset moves by one). The single-key page without `kl` gains the simpler key code (no `base`, no `from(pathLen)`: `rest` against `remainder`) and pays `Skip` in place at a `splitLeaf` and `Prepend` at a collapse (today `rekey`): at most 1 event in 1,000 operations (section 2). Prediction for the single-value cells: **±0 to +1 % in churn and build** (the gain: no `kl`, a few checks fewer on every use of a single-key page); a measurement on the PC and the M1 decides, after the model (5.5a: multi-key page to 4 bytes alone; 5.5b: single-key page to the shared head with `Skip`; each its own commit and measurement).
 
 **Recommendation: U4**, in two steps (5.5a the multi-key page gets `aux`, 5.5b the single-key page and the value overflow take the head and `Skip`), because (1) the pointer page of 5.6 needs the byte and the user's priority (maps of pointers churn) makes that page important, (2) the head is then one head for every object that ends a descent, (3) the memory costs 0.1 to 0.2 B a key. What U3 gains over it (0.1 to 0.2 B a key) does not pay for a variable head.
 
-Open for the review: n as one byte (above), the cap of 255 slots and values, `kl` gone (the cost of `Skip` in place at a split), `aux`, and the value overflow, which would get the same head (`n` unused, `aux` 0) and a key area 2 bytes larger in the grid (20, 52, 116, 244, 372, 500).
+Open for the review: n as one byte, the cap of 255 slots and values, `kl` gone (section 2), `aux`, and the value overflow, which would get the same head (`n` unused, `aux` 0) and a key area 2 bytes larger in the grid (20, 52, 116, 244, 372, 500).

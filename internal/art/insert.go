@@ -77,6 +77,7 @@ func (m *Map[T]) splitLeaf(loc **header, l *singleKeyHead, key []byte, pathLen i
 		t.size++
 		return nil
 	}
+	ev(evSplitLeaf, 1)
 	p := swar.Lcp(ls, rest)
 	nn := newNode(kN5, p)
 	storePrefix(nn, rest[:p])
