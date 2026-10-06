@@ -61,3 +61,27 @@ Single value against `btree-map` (credo 1; as in m43, below 1.0 at 4,096 and 16,
 1. **The real mix is met for `uint64`, nearly for strings, and not for pointers.** Strings are 0.89 to 0.97 at 4,096 keys (m43: 0.99 to 1.07); pointers 0.73 to 0.89 up to 16,384 keys. The pointer page is the stage of 5.3 (every change of the number of values is a new object; the user's order: it is optimised at the end of step 5, 5.6); against step 3.5 it is 0.43 to 0.83 in churn and 0.46 to 0.62 in build, which the typed leaf did not lose.
 2. **The 2 to 8 % that single-value cells lost against m43 and the missing gain for build** are the open item before 5.5: they sit in code the step touched for every page, and the baseline of all later work. A profile of `churn` and `build` of `uint64` single-value (street, 4,096) against `3e1e952` is the next measurement.
 3. **The crash** (above) would have shipped: the random tests of the tree never made a page shrink to one key under a node it could not join. The new test (`TestMultiKeyPagesChurnKeepsTheStructure`) does not reproduce it either (it passes without the fix); the two tests of `TestMultiKeyPageShrunkBelowItsNode` do. Open: a random test that finds it, to be written when a way to build such a state at random is found.
+
+## The 2 to 8 % of the single-value cells: where it comes from (analysis, 2026-10-06 evening, nothing changed in the code)
+
+Method: the probe (`TestProbe`, the benchmark's own `churn` and `build` streams, single-value, 4,096 keys, WSL, medians of 11 interleaved runs, test binaries built from the commits) at five commits, plus the page-level benchmark `BenchmarkFixed` (hot, best of 6) and a CPU profile of 4,000 cycles at m43 and now.
+
+| commit (what it is) | `uint64` build / replay ns an op | street | dirs |
+|---|--|--|--|
+| `3e1e952` (m43) | 75 / 71 | 197 / 216 | 269 / 261 |
+| `70407c6` (5.1: the page format, tree unchanged) | 77 / 70 | 198 / 221 | 271 / 261 |
+| `dbbf333` (5.2: the tree with several values) | 77 / 70 | 194 / 227 | 280 / 271 |
+| `e2c912d` (5.3: pages for pointers) | **88 / 75** | 207 / 228 | 273 / 274 |
+| `54e9297` (now) | 85 / 76 | 214 / 226 | 282 / 273 |
+| now, without the `HoldsPointers` calls in `Add`/`Remove` (experiment) | 80 / 72 | 208 / 226 | 277 / 267 |
+
+Page level, one insert and one remove (n = 3 / 7 / 20, ns): `3e1e952` 51.1 / 62.8 / 83.1; 5.1 51.7 / 63.1 / 85.6 (+1 to 3 %); **5.3 61.6 / 73.5 / 94.8 (+11 to 19 %)**; 5.3 without the `HoldsPointers` calls 53.1 / 62.7 / 86.1 (back at 5.1). Get is the same at every commit (17.2 / 23.1 / 43 ns).
+
+**Findings.**
+1. The page format of 5.1 costs nothing measurable in the tree (0 to 3 %). The tree of 5.2 costs 2 to 4 % in the replay of street and dirs (221 → 227, 261 → 271), nothing for `uint64` keys. **5.3 costs the most: +10 to 13 % in the build of `uint64` keys (77 → 88) and +3 to 7 % elsewhere.**
+2. About half of that is one cause, found by removing it: **`HoldsPointers[T]()` is called in every `Add` and `Remove`** (to decide whether the page is a new object) and is reflection (`reflect.TypeFor`, `pointerFree`): about 5 ns a call, 10 ns for an insert and a remove (`internal/abi.TypeFor` and `newFixed` in the profile). Without the calls the page level is at 5.1, and the tree at 80 / 72 instead of 85 / 76 ns.
+3. The rest of the 5.3 step (typed copies of the values with `copy` on `[]T`, `newFixed` in place of `grow`) is 2 to 5 ns an operation; the 2 to 4 % of 5.2 sits in the removal (`Removal`, `removeFrom`, `KeysUpTo`) and in the merge and burst paths that walk pages with the `first` flag (`mergeFits.func1` 470 → 600 ms, `pageItems` closures 200 → 320 ms of 9.5 s in the profile). Not separated further.
+4. So of the 4 to 6 % (street, dirs) and 8 to 13 % (`uint64` keys, build) that single-value churn and build lost, **about half is the reflection check, which a flag decided once per map (`decide`, passed to the page functions) removes**; the other half is spread over 5.2 and the typed copies and is the price of the new code until a profile of those paths says more. The PC figures (churn and build 1.02 to 1.09, `u64` keys up to 1.16) agree.
+5. The real-mix build that was predicted 0.95 to 1.0 of m43 (the 32 rebuilds in 1,000 operations are gone) is 0.99 to 1.11: its gain is smaller than these costs, the cost per operation of the same code rises by the same 4 to 6 %.
+
+Options (not decided): (A) leave it, (B) pass `ptr bool` (decided once in `decide`) to `Add`, `Remove`, `Widen`, `Prepend`, `BuildFixedOf`; expected back to about 2 to 3 % over m43 for `uint64`; (C) B and then a look at the removal and the merge walk with the `first` flag.
