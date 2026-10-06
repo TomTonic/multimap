@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/TomTonic/multimap/bench/keys"
-	"github.com/TomTonic/multimap/internal/mkpage"
 )
 
 // The memory model of the multi-key page (MKSV) for the design note of step 4
@@ -38,7 +37,6 @@ type mkModel struct {
 	skHead    int    // head of a single-key page: 6 today, 4 in the one page (-onepage)
 	mkHead    int    // head of a multi-key page: 3 today, 4 in the one page
 	padSK     bool   // today's single-key page of fixed-size values pads the remainder to a word before the values; the one page has its values at the end
-	check     bool   // build the real pages of internal/mkpage and compare (only for today's layout)
 	ovKeys    int    // entries whose content is above the largest page (value overflow), and the bytes of their value sets
 	ovBytes   int
 
@@ -46,7 +44,6 @@ type mkModel struct {
 	skPages, skBytes   int
 	mkPages, mkBytes   int
 	mkEntries, mkSlack int // entries held by multi-key pages; their pages' bytes minus their content
-	realBytes, realOff int // bytes of the real pages (internal/mkpage) built for the same entries; pages the model fits and the package does not
 	shape              map[int]int
 }
 
@@ -131,9 +128,6 @@ func (m *mkModel) build(lo, hi, d int) {
 			m.mkEntries += hi - lo
 			m.mkSlack += class - size
 			m.shape[min(hi-lo, 30)]++
-			if m.check {
-				m.realPage(lo, hi, d, class)
-			}
 			return
 		}
 	}
@@ -230,7 +224,7 @@ func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 	}
 	for _, v := range variants {
 		use := v.use
-		m := &mkModel{es: es, c: c, mkClasses: grid, usePages: use, mv: v.mv, shape: map[int]int{}, skHead: headerBytes, mkHead: 3, check: !v.one && !v.todayAcc}
+		m := &mkModel{es: es, c: c, mkClasses: grid, usePages: use, mv: v.mv, shape: map[int]int{}, skHead: headerBytes, mkHead: 3}
 		switch {
 		case v.one:
 			m.skHead, m.mkHead = 4, 4
@@ -257,7 +251,7 @@ func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 		}
 		fmt.Printf("| %s | %d | %d (%.1f) | %d | %.1f | %.1f | %.1f (with value overflows %.1f; %d entries) |\n", label, m.skPages, m.mkPages, per, m.nodes, float64(m.skBytes+m.mkBytes)/n, float64(m.nodeBytes)/n, float64(m.skBytes+m.mkBytes+m.nodeBytes)/n, float64(m.skBytes+m.mkBytes+m.nodeBytes+m.ovBytes)/n, m.ovKeys)
 		if use && m.mkPages > 0 && v.mv == "" {
-			fmt.Printf("\nentries held by multi-key pages: %.1f %%; slack of those pages: %.1f B/key of all keys; the same pages built with internal/mkpage: %d B (model %d B), %d of them of another size or refused; pages by number of entries (30: 30 and more):", 100*float64(m.mkEntries)/n, float64(m.mkSlack)/n, m.realBytes, m.mkBytes, m.realOff)
+			fmt.Printf("\nentries held by multi-key pages: %.1f %%; slack of those pages: %.1f B/key of all keys; pages by number of entries (30: 30 and more):", 100*float64(m.mkEntries)/n, float64(m.mkSlack)/n)
 			var ks []int
 			for k := range m.shape {
 				ks = append(ks, k)
@@ -282,58 +276,4 @@ func u64Model() {
 	}
 	sort.Slice(es, func(i, j int) bool { return string(es[i].key) < string(es[j].key) })
 	multiModel(keys.U64, true, c, es)
-}
-
-// realPage builds the page of the model with internal/mkpage, checks every entry in it
-// and counts its real size. The model and the package must agree on what fits and on
-// the class: a difference is counted in realOff.
-func (m *mkModel) realPage(lo, hi, d, class int) {
-	rests := make([][]byte, hi-lo)
-	for i := lo; i < hi; i++ {
-		rests[i-lo] = m.es[i].key[d:]
-	}
-	var size int
-	switch *valuesF {
-	case "words", "pointers", "words-len":
-		vals := make([]uint64, hi-lo)
-		for i := lo; i < hi; i++ {
-			vals[i-lo] = m.es[i].vals[0]
-		}
-		p := mkpage.BuildFixed(rests, vals)
-		if p == nil {
-			m.realOff++
-			return
-		}
-		for i, r := range rests {
-			if v, ok := p.Get[uint64](r); !ok || v != vals[i] {
-				panic("mkpage.Fixed lost an entry")
-			}
-		}
-		size = p.Size()
-	default:
-		vals := make([][]byte, hi-lo)
-		for i := lo; i < hi; i++ {
-			v := m.es[i].vals[0]
-			if v >= 1 && v <= uint64(len(m.c.Names)) {
-				vals[i-lo] = []byte(m.c.Names[v-1])
-			} else {
-				vals[i-lo] = []byte(fmt.Sprintf("%016x", v))
-			}
-		}
-		p := mkpage.BuildStrings(rests, vals)
-		if p == nil {
-			m.realOff++
-			return
-		}
-		for i, r := range rests {
-			if v, ok := p.Get(r); !ok || string(v) != string(vals[i]) {
-				panic("mkpage.Page lost an entry")
-			}
-		}
-		size = p.Size()
-	}
-	if size != class {
-		m.realOff++
-	}
-	m.realBytes += size
 }

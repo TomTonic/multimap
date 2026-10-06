@@ -20,7 +20,7 @@
 //     makes the leaf hold its whole key as a separate string. The shared
 //     parts of the keys are stored once, in the nodes.
 //   - The values of an entry follow its key remainder in the same object, a
-//     single-key page of 32, 64, 128, 256, 384 or 512 bytes (internal/skpage),
+//     single-key page of 32, 64, 128, 256, 384 or 512 bytes (internal/page),
 //     which grows through these classes as values arrive: as bytes with a
 //     length each for strings (singlekey.go), as an array of T for small
 //     pointer-free values and for values that are one pointer (fixedkey.go). A
@@ -56,14 +56,14 @@ import (
 type objType uint8
 
 const (
-	kValueOverflow objType = (iota + 1) << 1 // value overflow; kValueOverflow+2c is a single-key page of class c (see skpage)
+	kValueOverflow objType = (iota + 1) << 1 // value overflow; kValueOverflow+2c is a single-key page of class c (see internal/page)
 	_
 	_
 	_
 	_
 	_
 	kLastSingleKey // single-key page of the largest class
-	kMultiKey      // multi-key page of the smallest class; kMultiKey+2c is that of class c (see mkpage)
+	kMultiKey      // multi-key page of the smallest class; kMultiKey+2c is that of class c (see internal/page)
 	_
 	_
 	_

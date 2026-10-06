@@ -14,7 +14,7 @@ import (
 // zero value is an empty map.
 type Map[T comparable] struct {
 	t    Tree
-	flat int8 // 1: single-key pages of fixed-size values (skpage.Fixed), 3: single-key pages of strings (skpage.Page), -1: value overflows only, 0: not decided yet
+	flat int8 // 1: single-key pages of fixed-size values (page.Fixed), 3: single-key pages of strings (page.Str), -1: value overflows only, 0: not decided yet
 	mk   bool // entries share multi-key pages (mkkey.go): strings and fixed-size values, with a pointer or none
 	ptr  bool // the values are a word with a pointer: the multi-key pages of fixed-size values are typed objects (page.Fixed)
 	cur  T    // the value of the Add in progress, for pair and reach of mkkey.go
@@ -24,7 +24,7 @@ type Map[T comparable] struct {
 }
 
 // decide settles once per map how it holds the values of an entry: in
-// single-key pages of fixed-size values if T takes them (skpage.Supported: small
+// single-key pages of fixed-size values if T takes them (page.Supported: small
 // and without pointers, or one word that is a pointer), in single-key pages of
 // strings if T is string, else in a value overflow for every entry.
 func (m *Map[T]) decide() {

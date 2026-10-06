@@ -840,6 +840,9 @@ func b2i(b bool) int {
 
 // ptrPool holds the records that the pointer values of the tests point to, so
 // that equal numbers are equal pointers.
+// rec is the pointed-to value of the maps of pointers in the tests.
+type rec struct{ id, aux uint64 }
+
 var ptrPool = func() []*rec {
 	out := make([]*rec, 1<<12)
 	for i := range out {

@@ -125,9 +125,24 @@ Every object that stores entries stores only the end of their keys. The tree spe
   for each byte value. The tree has no range nodes in step 4; *before:* a full page was split at a byte boundary, or got a range node of its own.
 - **promote** (changed 2026-10-05; **goes with step 5.2**): an entry that gets a second value leaves its multi-key page: the page's entries are built again with that entry as a single-key page
   (`build`, the function that also does the burst). In step 5 a second value is a **continuation** in the page.
-- **slot**, **continuation** (2026-10-06, `internal/mkpage`): a slot is one value of a multi-key page with its length byte; a continuation is the slot of a further value of the key before it: its length byte is `Further` (255) and it has no remainder.
+- **slot**, **continuation** (2026-10-06, `internal/page`): a slot is one value of a multi-key page with its length byte; a continuation is the slot of a further value of the key before it: its length byte is `Further` (255) and it has no remainder.
 - **merge**: after a removal, a byte node whose children are single-value pages that fit one page together becomes one page.
 - **fall back**, **split**: retired (2026-10-05). A multi-key page never holds a multi-value entry, so no subtree needs a fall back; there is no range node to split at. (Before: `settle`, `crowded`.)
+
+## The one page (2026-10-07, `internal/page`, step 5.5)
+
+The single-key page and the multi-key page are **one structure** in two forms; the value overflow is its one-key form with a pointer for the values. Every leaf of the tree has the same head. Offsets are bytes from the start of the object.
+
+- **one page**: the object that holds entries inline: head, key area, key lengths, value lengths, free zeros, values. The package is `internal/page`, with `Str` (values of variable length: strings) and `Fixed` (values of one size: words, pointers) as its two flavors.
+- **one-key form** (the *single-key page*): the page of one key. Its key part is the whole remainder of the key; it has **no key-length list**. A page with many keys left with one key turns into it in place.
+- **many-key form** (the *multi-key page*): the page of several keys. Its key part is the common prefix of the keys; behind the lists come the remainders.
+- **head** (4 bytes): `type | len | n | rawWords`. `len` has nine bits (bit 8 is the lowest bit of the type byte); `n` is the number of slots (1 to 255; 0 in a value overflow); `rawWords` is the size of the byte area in words for a page of pointers, and in a value overflow the offset of its value set in words.
+- **key part**: the `len` bytes at byte 4: the remainder in the one-key form, the common prefix in the many-key form. A page begins exactly at its path length: when the path changes, `Skip` and `Prepend` change the key part in place.
+- **key lengths**: many-key form only, one byte per slot: the length of the slot's remainder, or `Further` (255) for a further value of the key before it (the *continuation*).
+- **value lengths**: `Str` only, one byte per slot, a list of its own in front of the remainders.
+- **byte area**: the bytes of the object in front of the values (head, key part, lists, remainders, free zeros); for a page of pointers the first `rawWords` words, whose size is fixed for the life of the object.
+- **pointer area**: for a page of pointers, the words behind the byte area: the values, moved as `T` so that the garbage collector keeps its barrier. The values of every flavor end the object (`Fixed`: the array of `T` at `Size-(n-i)*w`).
+- **value overflow**: the one-key form of a key whose values do not fit one page (or whose remainder is longer than a page holds): head, key area of 20, 52, 116, 244, 372 or 500 bytes (a longer remainder is held as a string), and the pointer to the value set in the last word. Back into a page when the values fill at most half the room (`BackFits`).
 
 ## Parts of the multi-key page
 

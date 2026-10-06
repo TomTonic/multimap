@@ -3,8 +3,6 @@ package page
 import (
 	"bytes"
 	"unsafe"
-
-	"github.com/TomTonic/multimap/internal/skpage"
 )
 
 // Fixed is the page of values of one size, see the package comment: for the maps whose values are small
@@ -12,7 +10,7 @@ import (
 // end of the object, one for each slot in the order of the slots, and compared as T (a == b), not as
 // bytes. Between the key area and the values the bytes are zero.
 //
-// A page of a T with a pointer is a typed object (skpage.AllocPtr): the first rawWords words are
+// A page of a T with a pointer is a typed object (allocPtr): the first rawWords words are
 // the byte area (head, key part, key lengths, remainders: no pointer in them), the rest are slots that hold
 // a value or nil. The type of an object cannot change, so the byte area of such a page is fixed for
 // its life: a key that does not fit it makes a new object, a value that has a free slot does not.
@@ -26,13 +24,6 @@ import (
 // The methods are generic in T and do not carry it: the tree holds untyped *Fixed pointers, and the map that
 // owns the page names T in every call. T must be the type the page was made with.
 type Fixed struct{ head }
-
-// Supported reports whether values of type T go into a Fixed page: T of 1 to 16 bytes without a
-// pointer, or one word that is a pointer.
-func Supported[T comparable]() bool { return skpage.Supported[T]() }
-
-// HoldsPointers reports whether the page of T is a typed object with pointers.
-func HoldsPointers[T comparable]() bool { return skpage.HoldsPointers[T]() }
 
 func size[T comparable]() int {
 	var z T
@@ -52,7 +43,7 @@ func newFixed[T comparable](many bool, c, n, l, e int, ptr bool) *Fixed {
 	raw := 0
 	if ptr {
 		raw = (e + 7) / 8
-		p = (*Fixed)(skpage.AllocPtr[T](c, raw))
+		p = (*Fixed)(allocPtr[T](c, raw))
 	} else {
 		p = (*Fixed)(allocRaw(c))
 	}
