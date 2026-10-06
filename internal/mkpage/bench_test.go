@@ -139,3 +139,50 @@ func BenchmarkFixed(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkFixedScan measures what a range scan asks of a page of one-word values per value:
+// Each, which calls a function with every remainder and value (what the tree's scanPage does),
+// and a loop over the same arrays without a call per entry, the floor a tuned scan can reach
+// (docs/redesign/step5-mkmv-design.md).
+func BenchmarkFixedScan(b *testing.B) {
+	for _, n := range []int{7, 20} {
+		keys, _ := pageSet(n)
+		pages := make([]*Fixed, len(keys))
+		for i := range pages {
+			vs := make([]uint64, len(keys[i]))
+			for j := range vs {
+				vs[j] = uint64(j)
+			}
+			pages[i] = BuildFixed(keys[i], vs)
+		}
+		b.Run(fmt.Sprintf("n=%d/Each", n), func(b *testing.B) {
+			var sum uint64
+			values := 0
+			for i := range b.N {
+				p := pages[i&255]
+				p.Each(func(rem []byte, v uint64) bool { sum += v + uint64(len(rem)); return true })
+				values += int(p.n)
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(values), "ns/value")
+			sink = sum
+		})
+		b.Run(fmt.Sprintf("n=%d/loop", n), func(b *testing.B) {
+			var sum uint64
+			values := 0
+			for i := range b.N {
+				p := pages[i&255]
+				m := p.mem()
+				cnt := int(p.n)
+				vs := valuesAt[uint64](p.Used())
+				for j := range cnt {
+					sum += *valueAt[uint64](m, vs, j) + uint64(m[Header+j])
+				}
+				values += cnt
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(values), "ns/value")
+			sink = sum
+		})
+	}
+}
+
+var sink uint64

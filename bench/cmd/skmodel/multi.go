@@ -24,6 +24,8 @@ import (
 
 var multiF = flag.Bool("multi", false, "model the multi-key page: the tree with multi-key pages against the tree with single-key pages only")
 var mkMaxN = flag.Int("mkmaxn", 255, "most entries of a multi-key page (the model bursts a page that has more)")
+var mkMVF = flag.String("mkmv", "", "also model pages that hold entries with several values (step 5): marker (a further value is an entry of its own with the length byte 255, no key bytes), count (a count byte per entry), repeat (a further value repeats the key)")
+var mkMVCap = flag.Int("mkmvcap", 255, "most values an entry may have to live in a page (with -mkmv)")
 var mkGridF = flag.String("mkgrid", "128,256,384,512", "size classes of the multi-key page")
 
 type mkModel struct {
@@ -31,6 +33,9 @@ type mkModel struct {
 	c         keys.Corpus
 	mkClasses []int
 	usePages  bool
+	mv        string // "" (entries with one value), marker, count or repeat
+	ovKeys    int    // entries whose content is above the largest page (value overflow), and the bytes of their value sets
+	ovBytes   int
 
 	nodes, nodeBytes   int
 	skPages, skBytes   int
@@ -76,17 +81,32 @@ func (m *mkModel) mkSize(lo, hi, d int) (size, cp int) {
 	n := hi - lo
 	rems := 0
 	vals := 0
+	pairs := 0 // entries of the page, a further value being one in the layouts marker and repeat
 	for i := lo; i < hi; i++ {
-		rems += len(m.es[i].key) - d - cp
+		r := len(m.es[i].key) - d - cp
+		v := len(m.es[i].vals)
+		rems += r
 		vals += m.valueBytes(i)
+		pairs++
+		switch m.mv {
+		case "marker":
+			pairs += v - 1
+		case "repeat":
+			pairs += v - 1
+			rems += (v - 1) * r
+		}
+	}
+	lens := pairs
+	if m.mv == "count" {
+		lens = pairs + n
 	}
 	switch *valuesF {
 	case "words", "pointers", "words-len":
-		size = 3 + n + cp + rems
+		size = 3 + lens + cp + rems
 		size = (size + 7) &^ 7
 		size += vals
 	default:
-		size = 3 + n + cp + rems + vals // vals counts the value length byte of each entry
+		size = 3 + lens + cp + rems + vals // vals counts the value length byte of each value
 	}
 	return size, cp
 }
@@ -96,7 +116,7 @@ func (m *mkModel) build(lo, hi, d int) {
 		m.single(lo, len(m.es[lo].key)-d)
 		return
 	}
-	if m.usePages && hi-lo <= *mkMaxN && m.allSingle(lo, hi) {
+	if m.usePages && hi-lo <= *mkMaxN && m.allFit(lo, hi) {
 		if size, _ := m.mkSize(lo, hi, d); size <= m.mkClasses[len(m.mkClasses)-1] {
 			class := classFor(m.mkClasses, size)
 			m.mkPages++
@@ -131,9 +151,15 @@ func (m *mkModel) build(lo, hi, d int) {
 	m.nodeBytes += t.bytes
 }
 
-func (m *mkModel) allSingle(lo, hi int) bool {
+// allFit says whether every entry of lo..hi-1 may live in a page: one value, or with -mkmv at most
+// -mkmvcap values.
+func (m *mkModel) allFit(lo, hi int) bool {
+	most := 1
+	if m.mv != "" {
+		most = *mkMVCap
+	}
 	for i := lo; i < hi; i++ {
-		if len(m.es[i].vals) != 1 {
+		if len(m.es[i].vals) > most {
 			return false
 		}
 	}
@@ -141,8 +167,24 @@ func (m *mkModel) allSingle(lo, hi int) bool {
 }
 
 func (m *mkModel) single(i, rem int) {
+	size := m.skSize(i, rem)
+	if size > 512 { // a value overflow of 64 bytes and a value set (24 B a value up to 64 values, 40 beyond; the estimate of wholeTree)
+		n := len(m.es[i].vals)
+		m.ovKeys++
+		m.skPages++
+		m.skBytes += 64
+		switch {
+		case *ovBytesF > 0:
+			m.ovBytes += int(*ovBytesF * float64(n))
+		case n <= 64:
+			m.ovBytes += 24 * n
+		default:
+			m.ovBytes += 40 * n
+		}
+		return
+	}
 	m.skPages++
-	m.skBytes += classFor(pageGrid, min(m.skSize(i, rem), 512))
+	m.skBytes += classFor(pageGrid, size)
 }
 
 func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
@@ -164,19 +206,31 @@ func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 	fmt.Printf("\n%s, %s, values %s, multi-key page classes %v: the tree of byte nodes with and without multi-key pages\n\n", kind, name, *valuesF, grid)
 	fmt.Println("| tree | single-key pages | multi-key pages (entries a page) | nodes | page B/key | node B/key | total B/key |")
 	fmt.Println("|---|--:|--:|--:|--:|--:|--:|")
-	for _, use := range []bool{false, true} {
-		m := &mkModel{es: es, c: c, mkClasses: grid, usePages: use, shape: map[int]int{}}
+	type variant struct {
+		use bool
+		mv  string
+	}
+	variants := []variant{{false, ""}, {true, ""}}
+	if *mkMVF != "" {
+		variants = append(variants, variant{true, *mkMVF})
+	}
+	for _, v := range variants {
+		use := v.use
+		m := &mkModel{es: es, c: c, mkClasses: grid, usePages: use, mv: v.mv, shape: map[int]int{}}
 		m.build(0, len(es), 0)
 		label := "single-key pages only"
 		if use {
 			label = "with multi-key pages"
 		}
+		if v.mv != "" {
+			label = fmt.Sprintf("with multi-key pages, several values: %s, at most %d", v.mv, *mkMVCap)
+		}
 		per := 0.0
 		if m.mkPages > 0 {
 			per = float64(m.mkEntries) / float64(m.mkPages)
 		}
-		fmt.Printf("| %s | %d | %d (%.1f) | %d | %.1f | %.1f | %.1f |\n", label, m.skPages, m.mkPages, per, m.nodes, float64(m.skBytes+m.mkBytes)/n, float64(m.nodeBytes)/n, float64(m.skBytes+m.mkBytes+m.nodeBytes)/n)
-		if use && m.mkPages > 0 {
+		fmt.Printf("| %s | %d | %d (%.1f) | %d | %.1f | %.1f | %.1f (with value overflows %.1f; %d entries) |\n", label, m.skPages, m.mkPages, per, m.nodes, float64(m.skBytes+m.mkBytes)/n, float64(m.nodeBytes)/n, float64(m.skBytes+m.mkBytes+m.nodeBytes)/n, float64(m.skBytes+m.mkBytes+m.nodeBytes+m.ovBytes)/n, m.ovKeys)
+		if use && m.mkPages > 0 && v.mv == "" {
 			fmt.Printf("\nentries held by multi-key pages: %.1f %%; slack of those pages: %.1f B/key of all keys; the same pages built with internal/mkpage: %d B (model %d B), %d of them of another size or refused; pages by number of entries (30: 30 and more):", 100*float64(m.mkEntries)/n, float64(m.mkSlack)/n, m.realBytes, m.mkBytes, m.realOff)
 			var ks []int
 			for k := range m.shape {

@@ -259,6 +259,8 @@ at most `btree-map`), and no cell of the natural mix below step 3 beyond noise.
 
 ## Step 5: multi-value entries in multi-key pages (MKMV), last
 
+**Design note written 2026-10-06** ([step5-mkmv-design.md](step5-mkmv-design.md)), waiting for the user's approval: a further value is an entry of the length list with the byte 255 (no new object type, single-value pages unchanged), no limit on values per entry, the pointer pages (4.3) built in this step. Prediction: memory of the real mix -15 to -27 % and no decay by use.
+
 Decided by the user on 2026-10-04 to be the last of the three: it makes the code much more complex.
 Starting point: the parked branch `mkmv-experiment` (`internal/artstr` with `Map.Pairs`, layout B with
 entries that repeat the key before them) and its measurements in step3-tree-pages.md. If it works,

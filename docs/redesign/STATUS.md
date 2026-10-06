@@ -1,5 +1,10 @@
 # Status
 
+## 2026-10-06: step 5 (MKMV) design note written, waiting for the user's approval ([step5-mkmv-design.md](step5-mkmv-design.md))
+
+- Proposal: a further value of a key is an entry of the length list with the byte 255 and no remainder (a page of single-value entries stays byte-identical, so `single-value` must not move); no limit on values per entry; the old 4.3 (pointer pages) built in this format as 5.3. Model: `street`/`dirs` real mix 52.9 / 72.6 bytes a key (measured now 73 / 96), no decay after use, promote gone.
+- `skmodel -multi -mkmv marker|count|repeat -mkmvcap N` and `BenchmarkFixedScan` (page-level scan 2.3 ns a value, a plain loop 1.0: the scan's 8.2 ns is mostly glue, so option B does not depend on the format).
+
 ## 2026-10-05 night: probe of the benchmark's streams ([step4-probe.md](step4-probe.md)); option A chosen by the user, with "profiling or statistics to learn for step 5"
 
 - The step-4.2 hypothesis was wrong for `single-value` (no promote there): the cost was the merge tried after every removal of a key (28 % of the time, 4 % success). Now tried only when the page is nearly empty (`mergeBelow = 2`): a third off the time of `churn`, 3.5 % more memory after a mass removal.
