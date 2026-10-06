@@ -1,5 +1,10 @@
 # Status
 
+## 2026-10-06: step 5.2 built: the tree with several values in a page ([results](step5-tree-results.md)); stopped at one missed prediction
+
+- Promote and `Insert`/`Differs` gone; `reach`, `pair`, `build`, merge, `pageRemove`/`RemoveKey` and the scans take entries with several values; `Remove` of the pages says `Removed`/`Gone`/`Absent`, `KeysUpTo` counts keys cheaply. 100 % (race), lint 0; commit `dbbf333`.
+- Probe: 88 % of the keys stay in pages after a cycle (17 % before), fresh memory -31 % (street) / -24 % (dirs) in the census, the six `single-value` cases identical to step 4 in every count, burst 2.3 to 4.8 in 1000 operations. **Missed: after one cycle the tree is 1.18 to 1.24 times a fresh one (predicted 1.05)**: the pages are less full (shrink only at half of the smaller class). Not changed; decision for the user. PC and M1 runs not started.
+
 ## 2026-10-06: step 5.1 built: the page with several values a key ([results](step5-mkpage-results.md)); option B built too (values of `Fixed` at the end); waiting for the go for 5.2
 
 - `internal/mkpage` (both flavors): the head `type | cpl (9 bits) | n`, the prefix behind it, `Further` (255) for a further value; `Add`, `Remove`, `EachValue`, `Keys`, `Each` with a flag; 100 % (race), fuzz 40 s, lint 0; the tree compiles on it unchanged in behaviour (`maxPageByte`, 255-byte-prefix pages possible now).

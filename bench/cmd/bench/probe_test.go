@@ -306,6 +306,7 @@ func census(what string, m *art.Map[V]) {
 	rows := map[string]*row{}
 	var pageEntries []int
 	var skValues [4]int // single-key pages by number of values: 1, 2, 3-4, 5+
+	var bySize [513]row // multi-key pages by the size of the object
 	total, blocks := 0, 0
 	m.Objects(func(o art.Object) {
 		r := rows[o.Label]
@@ -323,6 +324,9 @@ func census(what string, m *art.Map[V]) {
 		switch o.Label {
 		case "multi-key page":
 			pageEntries = append(pageEntries, o.Keys)
+			bySize[o.Size].n++
+			bySize[o.Size].keys += o.Keys
+			bySize[o.Size].values += o.Values
 		case "single-key page":
 			skValues[valueBucket(o.Values)]++
 		}
@@ -347,6 +351,15 @@ func census(what string, m *art.Map[V]) {
 		fmt.Printf("multi-key pages: %d, entries per page: mean %.1f, median %d, 10th percentile %d, 90th percentile %d, largest %d\n\n",
 			len(pageEntries), float64(sum)/float64(len(pageEntries)), pageEntries[len(pageEntries)/2],
 			pageEntries[len(pageEntries)/10], pageEntries[len(pageEntries)*9/10], pageEntries[len(pageEntries)-1])
+	}
+	if len(pageEntries) > 0 {
+		fmt.Printf("multi-key pages by size (count, keys and values a page, bytes a value):")
+		for size := range bySize {
+			if r := bySize[size]; r.n > 0 {
+				fmt.Printf(" %d: %d, %.1f, %.1f, %.1f;", size, r.n, float64(r.keys)/float64(r.n), float64(r.values)/float64(r.n), float64(size*r.n)/float64(max(1, r.values)))
+			}
+		}
+		fmt.Print("\n\n")
 	}
 	fmt.Printf("single-key pages by number of values: 1: %d, 2: %d, 3-4: %d, 5+: %d\n\n", skValues[0], skValues[1], skValues[2], skValues[3])
 }
