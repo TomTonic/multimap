@@ -103,7 +103,7 @@ So **it is not a property of one kind of page that needs `kl` and the other not*
 
 **Single-key page, strings, U4** (the same key and values; **32 bytes: it fits the class 32 where today's page takes the class 64**):
 ```
-   0: 06 0E 03 00 42 61 68 6E 68 6F 66 73 74 72 61 73     type, r=14, n=3, aux=0, "Bahnhofstras"
+   0: 04 0E 03 00 42 61 68 6E 68 6F 66 73 74 72 61 73     type (class 32: 04), r=14, n=3, aux=0, "Bahnhofstras"
   16: 73 65 03 4F 73 74 04 53 75 65 64 04 57 65 73 74     "se", 03 "Ost", 04 "Sued", 04 "West"
 ```
 (U3: 31 bytes, the same class 32.)
