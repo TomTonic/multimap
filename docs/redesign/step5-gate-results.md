@@ -137,3 +137,20 @@ An allocation profile (`-test.memprofile`) agrees: 5.2 allocates 8 % more object
 3. Not found (to be settled with counters per event if the user wants it): how the rest splits between `reach` (page `Add`, 10 ns an operation) and the removal in the page (`removeFrom`, 6 ns).
 
 Options (not decided): (A) leave it (the memory of these keys is 12 to 20 % better); (B) convert without `pageItems` (read the one entry from the page, build the single-key page from it, and the slot from the descent that `Remove` has made already) and let `pageItems` make `multi` slices from one backing array: expected -5 to -8 ns an operation, i.e. back to +5 to +9 ns over m43 for this case; (C) B and a cheaper path for the page of two entries (a sorted pair compared without the length-list walk).
+
+### Option B done: the conversion to a single-key page without `pageItems` (user, 2026-10-06)
+
+`onlyItem` reads the one entry of a page that is about to become a single-key page (one slice for its key, one for its values if it has several), and `pageItems` makes the `multi` slices of its items from one array (`append` into a slice with room for the whole page) instead of one slice for every key with several values. Tests, race, lint and the 100 % unchanged. Prediction: -5 to -8 ns an operation for `u64` keys with the real mix at 4,096 keys (build 99 → about 92, replay 83 → about 77).
+
+**Prediction missed.** Objects allocated in a cycle fall by 17 % (allocation profile: 114,991 → 95,737; `pageItems` and `appendValue` nearly gone), but the time falls only a little (probe, medians of 15 interleaved runs, build / replay ns an operation, before → after):
+
+| case | before B | with B |
+|---|--|--|
+| `u64` natural 4,096 | 99 / 84 | 98 / 83 |
+| `u64` natural 65,536 | 178 / 190 | 170 / 180 |
+| street natural 4,096 | 191 / 176 | 188 / 172 |
+| dirs natural 4,096 | 244 / 229 | 237 / 222 |
+| `u64` single-value 4,096 | 81 / 73 | 79 / 71 |
+| street single-value 4,096 | 201 / 223 | 196 / 221 |
+
+So -1 to -4 % (-1 ns for `u64` natural at 4,096, where -5 to -8 was predicted). **The explanation of the analysis was too strong:** the timing of the functions that put 30 to 50 % of the loss into `pageItems` was inclusive and carried its own cost of about 25 ns a call, and allocations in this tree are cheap (a few ns of the cycle); what is left of the 12 to 17 ns an operation is in the page operations themselves (`reach`, `removeFrom`), which no refactoring of the conversion touches. The kept change is still right (17 % fewer allocations, 1 to 5 % less time in five of six cells, simpler conversion).

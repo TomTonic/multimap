@@ -223,41 +223,82 @@ func (m *Map[T]) build(items []item[T], pathLen int) *header {
 
 // pageItems returns the entries of multi-key page n, with their whole keys from the
 // path length of the page on, in key order, and room for one more. An entry with several
-// values is one item with its values in multi.
+// values is one item with its values in multi: slices of one array, which has room for
+// the values of the whole page.
 func (m *Map[T]) pageItems(n *header) []item[T] {
 	var items []item[T]
+	var vals []T // the values of all entries, an entry's own next to each other
+	lo := 0      // where the values of the last item begin in vals
+	add := func(cp, rem []byte, buf *[]byte, v T, first bool) {
+		if !first {
+			vals = append(vals, v)
+			items[len(items)-1].multi = vals[lo:len(vals):len(vals)]
+			return
+		}
+		at := len(*buf)
+		*buf = append(append(*buf, cp...), rem...)
+		lo = len(vals)
+		vals = append(vals, v)
+		items = append(items, item[T]{rest: (*buf)[at:len(*buf):len(*buf)], val: v})
+	}
 	if m.flat == 3 {
 		p := asMKStr(n)
-		items = make([]item[T], 0, p.Len()+1)
+		items, vals = make([]item[T], 0, p.Len()+1), make([]T, 0, p.Len())
 		cp := p.CP()
 		buf := make([]byte, 0, p.Len()*len(cp)+p.Used()) // room for every key: the keys are not longer than the page
 		p.Each(func(rem, val []byte, first bool) bool {
-			if !first {
-				items = appendValue(items, fromStr[T](string(val)), len(items)-1)
-				return true
-			}
-			at := len(buf)
-			buf = append(append(buf, cp...), rem...)
-			items = append(items, item[T]{rest: buf[at:len(buf):len(buf)], val: fromStr[T](string(val))})
+			add(cp, rem, &buf, fromStr[T](string(val)), first)
 			return true
 		})
 		return items
 	}
 	p := asMKFix(n)
-	items = make([]item[T], 0, p.Len()+1)
+	items, vals = make([]item[T], 0, p.Len()+1), make([]T, 0, p.Len())
 	cp := p.CP()
 	buf := make([]byte, 0, p.Len()*len(cp)+p.Used())
 	p.Each(func(rem []byte, v T, first bool) bool {
-		if !first {
-			items = appendValue(items, v, len(items)-1)
-			return true
-		}
-		at := len(buf)
-		buf = append(append(buf, cp...), rem...)
-		items = append(items, item[T]{rest: buf[at:len(buf):len(buf)], val: v})
+		add(cp, rem, &buf, v, first)
 		return true
 	})
 	return items
+}
+
+// onlyItem returns the entry of multi-key page n, which holds one key, as pageItems(n)[0]
+// does but without the slices for the entries that are not there: the page is about to
+// become a single-key page, and this is the one thing it needs.
+func (m *Map[T]) onlyItem(n *header) item[T] {
+	var it item[T]
+	if m.flat == 3 {
+		p := asMKStr(n)
+		cp := p.CP()
+		p.Each(func(rem, val []byte, first bool) bool {
+			v := fromStr[T](string(val))
+			if first {
+				it.rest, it.val = append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), v
+				return true
+			}
+			if it.multi == nil {
+				it.multi = append(make([]T, 0, p.Len()), it.val)
+			}
+			it.multi = append(it.multi, v)
+			return true
+		})
+		return it
+	}
+	p := asMKFix(n)
+	cp := p.CP()
+	p.Each(func(rem []byte, v T, first bool) bool {
+		if first {
+			it.rest, it.val = append(append(make([]byte, 0, len(cp)+len(rem)), cp...), rem...), v
+			return true
+		}
+		if it.multi == nil {
+			it.multi = append(make([]T, 0, p.Len()), it.val)
+		}
+		it.multi = append(it.multi, v)
+		return true
+	})
+	return it
 }
 
 // appendValue gives items[i] a further value v.
@@ -491,7 +532,8 @@ func (m *Map[T]) pageRemove(n *header, pathLen int, key []byte, v T, all bool) i
 	switch {
 	case left == 1:
 		ev(evToSingleKey, 1)
-		*m.t.findSlot(key) = singleKeyHdr(m.leafFor(&m.pageItems(cur)[0], pathLen))
+		it := m.onlyItem(cur)
+		*m.t.findSlot(key) = singleKeyHdr(m.leafFor(&it, pathLen))
 	case cur != n:
 		ev(evShrink, left)
 		*m.t.findSlot(key) = cur
