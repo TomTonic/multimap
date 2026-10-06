@@ -153,3 +153,23 @@ Extend `bench/cmd/skmodel` with `-onepage`: the pages as in section 1 (one-key p
 ### Working rules for this plan (unchanged)
 
 A design note with a prediction before code; stop at a surprise and ask; the vocabulary of the glossary; one measurement at a time (duration and end time said before); the M1 only through the queue; every step its own commit with tests (100 %, race, lint 0) and its own measurement; push with `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push`.
+
+## 6. Results
+
+### 5.5a The model (memory), 2026-10-06
+
+`skmodel -multi -onepage -mkmv marker -mkgrid 32,64,128,256,384,512 -values string|words|pointers -ovbytes 16.3`: the tree of byte nodes with the pages of today (single-key head 6 with the padding of the remainder to a word before fixed-size values, multi-key head 3, several values in the many-key pages: marker) against the one page (head 4 for both, one-key pages without key lengths and without padding). Bytes a key, whole tree, with the value overflows' value sets:
+
+| values | data | today | one page | difference |
+|---|---|--:|--:|--:|
+| strings | street natural | 44.5 | 44.6 | +0.1 |
+| strings | street single-value | 31.0 | 31.1 | +0.1 |
+| strings | dirs natural | 80.3 | 80.0 | **-0.3** |
+| strings | dirs single-value | 50.7 | 50.7 | 0.0 |
+| `uint64` and `*X` | street natural | 38.0 | 38.1 | +0.1 |
+| `uint64` and `*X` | street single-value | 26.9 | 27.1 | +0.2 |
+| `uint64` and `*X` | dirs natural | 57.6 | 57.7 | +0.1 |
+| `uint64` and `*X` | dirs single-value | 39.7 | 39.7 | 0.0 |
+| all | random `u64` keys, one value | 36.5 (strings), 24.0 (words, pointers) | the same | 0.0 |
+
+**Prediction** (real mix -0.1 to -0.5 B a key, single-value ±0.1, nothing worse than +0.3): **partly missed in the sign**: the real mix is -0.3 to +0.1 and street single-value `uint64` +0.2. The single-key pages lose `kl` (two bytes, 7 to 14 % of the keys) but the multi-key pages (86 to 93 % of the keys in the single-value cases) gain a head byte (`aux`/`rawWords`), a page more or less crosses a class border (the single-key pages of the grid are coarse), and a many-key page one byte fuller bursts a little earlier (pages +59 in street single-value). **Memory is neutral: -0.3 to +0.2 B a key**; no stop condition of the plan (worse than +0.5 or better than -1.0) is met. The memory is therefore no argument for or against the one page; the arguments are the code (one structure, no `kl`/`base`, conversions in place) and the speed of the pages with a pointer (5.6), which the next steps measure.

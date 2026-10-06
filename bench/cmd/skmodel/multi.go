@@ -27,6 +27,7 @@ var mkMaxN = flag.Int("mkmaxn", 255, "most entries of a multi-key page (the mode
 var mkMVF = flag.String("mkmv", "", "also model pages that hold entries with several values (step 5): marker (a further value is an entry of its own with the length byte 255, no key bytes), count (a count byte per entry), repeat (a further value repeats the key)")
 var mkMVCap = flag.Int("mkmvcap", 255, "most values an entry may have to live in a page (with -mkmv)")
 var mkGridF = flag.String("mkgrid", "128,256,384,512", "size classes of the multi-key page")
+var onePageF = flag.Bool("onepage", false, "also model step 5.5 (docs/redesign/step5-one-page.md): one page layout with a head of 4 bytes, one-key pages without key lengths and padding, next to the pages of today (single-key head 6 with padding, multi-key head 3), both with several values in the many-key pages (marker)")
 
 type mkModel struct {
 	es        []entry
@@ -34,6 +35,10 @@ type mkModel struct {
 	mkClasses []int
 	usePages  bool
 	mv        string // "" (entries with one value), marker, count or repeat
+	skHead    int    // head of a single-key page: 6 today, 4 in the one page (-onepage)
+	mkHead    int    // head of a multi-key page: 3 today, 4 in the one page
+	padSK     bool   // today's single-key page of fixed-size values pads the remainder to a word before the values; the one page has its values at the end
+	check     bool   // build the real pages of internal/mkpage and compare (only for today's layout)
 	ovKeys    int    // entries whose content is above the largest page (value overflow), and the bytes of their value sets
 	ovBytes   int
 
@@ -64,8 +69,8 @@ func (m *mkModel) valueBytes(i int) int {
 
 // skSize is the content of a single-key page for entry i whose remainder is rem bytes.
 func (m *mkModel) skSize(i, rem int) int {
-	size := headerBytes + rem
-	if *valuesF == "pointers" {
+	size := m.skHead + rem
+	if *valuesF == "pointers" || (m.padSK && *valuesF != "string") {
 		size = (size + 7) &^ 7
 	}
 	return size + m.valueBytes(i)
@@ -102,13 +107,13 @@ func (m *mkModel) mkSize(lo, hi, d int) (size, cp int) {
 	}
 	switch *valuesF {
 	case "words", "words-len": // the values end with the object: no padding
-		size = 3 + lens + cp + rems + vals
+		size = m.mkHead + lens + cp + rems + vals
 	case "pointers": // the typed object holds the keys in whole words
-		size = 3 + lens + cp + rems
+		size = m.mkHead + lens + cp + rems
 		size = (size + 7) &^ 7
 		size += vals
 	default:
-		size = 3 + lens + cp + rems + vals // vals counts the value length byte of each value
+		size = m.mkHead + lens + cp + rems + vals // vals counts the value length byte of each value
 	}
 	return size, cp
 }
@@ -126,7 +131,9 @@ func (m *mkModel) build(lo, hi, d int) {
 			m.mkEntries += hi - lo
 			m.mkSlack += class - size
 			m.shape[min(hi-lo, 30)]++
-			m.realPage(lo, hi, d, class)
+			if m.check {
+				m.realPage(lo, hi, d, class)
+			}
 			return
 		}
 	}
@@ -209,16 +216,27 @@ func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 	fmt.Println("| tree | single-key pages | multi-key pages (entries a page) | nodes | page B/key | node B/key | total B/key |")
 	fmt.Println("|---|--:|--:|--:|--:|--:|--:|")
 	type variant struct {
-		use bool
-		mv  string
+		use      bool
+		mv       string
+		one      bool // the one page of step 5.5
+		todayAcc bool // today's pages, with the padding of the single-key page of fixed-size values counted
 	}
-	variants := []variant{{false, ""}, {true, ""}}
+	variants := []variant{{false, "", false, false}, {true, "", false, false}}
 	if *mkMVF != "" {
-		variants = append(variants, variant{true, *mkMVF})
+		variants = append(variants, variant{true, *mkMVF, false, false})
+	}
+	if *onePageF {
+		variants = append(variants, variant{true, "marker", false, true}, variant{true, "marker", true, false})
 	}
 	for _, v := range variants {
 		use := v.use
-		m := &mkModel{es: es, c: c, mkClasses: grid, usePages: use, mv: v.mv, shape: map[int]int{}}
+		m := &mkModel{es: es, c: c, mkClasses: grid, usePages: use, mv: v.mv, shape: map[int]int{}, skHead: headerBytes, mkHead: 3, check: !v.one && !v.todayAcc}
+		switch {
+		case v.one:
+			m.skHead, m.mkHead = 4, 4
+		case v.todayAcc:
+			m.skHead, m.padSK = 6, true
+		}
 		m.build(0, len(es), 0)
 		label := "single-key pages only"
 		if use {
@@ -226,6 +244,12 @@ func multiModel(kind keys.Kind, singleValue bool, c keys.Corpus, es []entry) {
 		}
 		if v.mv != "" {
 			label = fmt.Sprintf("with multi-key pages, several values: %s, at most %d", v.mv, *mkMVCap)
+		}
+		switch {
+		case v.one:
+			label = "**one page** (head 4, one-key pages without key lengths, values at the end)"
+		case v.todayAcc:
+			label = "**today** (single-key head 6 with padding, multi-key head 3), several values: marker"
 		}
 		per := 0.0
 		if m.mkPages > 0 {
