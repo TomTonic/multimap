@@ -3,6 +3,7 @@ package art
 import (
 	"bytes"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -203,6 +204,65 @@ func TestMultiKeyPageCannotMoveUp(t *testing.T) {
 			t.Fatalf("lost key %q", k)
 		}
 	}
+}
+
+// TestMultiKeyPageShrunkBelowItsNode makes sure that a page that could not move up and shrinks to
+// one key leaves no node with a single leaf behind, and that the last key can be removed.
+//
+// A user who deletes most of an index must not crash on the last keys of a subtree (it once did,
+// at the end of removing half the keys of a directory listing): the page below a node that it could
+// not join becomes a single-key page when one key is left, and the node, which then has one
+// child that can move up, goes away.
+//
+// Expected: the page is brought down to one key without the merge that a removal would try (so
+// the node is left with one single-key page); the merge of the removal then takes the node away and
+// the tree passes its invariants; the same state, left as it is, still lets the last key be removed.
+func TestMultiKeyPageShrunkBelowItsNode(t *testing.T) {
+	p := "0123456789"
+	val := func(n int) string { return strings.Repeat("v", n) }
+	stuck := func() *Map[string] {
+		var m Map[string]
+		for _, k := range []string{"1", "2"} {
+			m.Add([]byte(p+"q"+k), val(240))
+		}
+		m.Add([]byte(p+"q3"), val(9))
+		m.Add([]byte(p+"r"), "x")
+		m.Add([]byte(p+"r"), "y")
+		h, _ := m.t.find([]byte(p + "q1"))
+		m.Add([]byte(p+"q5"), val(505-asMKStr(h).Used()-3))
+		m.RemoveKey([]byte(p + "r")) // the page stays below the node: it is full
+		checkInvariants(t, &m.t)
+		if page, _ := m.t.find([]byte(p + "q1")); !isMultiKey(page.objType) || isPage(m.t.root.objType) {
+			t.Fatal("the page is not below a node")
+		}
+		for _, k := range []string{"3", "2", "1"} { // the removals of Remove without its merge
+			key := []byte(p + "q" + k)
+			page, pathLen := m.t.find(key)
+			m.pageRemove(page, pathLen, key, "", true)
+		}
+		if h, _ := m.t.find([]byte(p + "q5")); !isSingleKey(h.objType) || m.t.root.count != 1 {
+			t.Fatal("the page did not become a single-key page below the node")
+		}
+		return &m
+	}
+	t.Run("the merge of a removal takes the node away", func(t *testing.T) {
+		m := stuck()
+		m.mergeUp(&m.t.root, []byte(p+"q1"), 0)
+		if !isPage(m.t.root.objType) {
+			t.Fatal("the node with one single-key page is still there")
+		}
+		checkInvariants(t, &m.t)
+		if got := valuesOf(m, []byte(p+"q5")); len(got) != 1 || m.Len() != 1 {
+			t.Fatalf("the key is lost: %v, Len %d", got, m.Len())
+		}
+	})
+	t.Run("the last key can be removed from the state before the merge", func(t *testing.T) {
+		m := stuck()
+		m.t.remove([]byte(p+"q5"), m.rekey)
+		if m.t.root != nil || m.t.size != 0 {
+			t.Fatalf("tree not empty: %d keys", m.t.size)
+		}
+	})
 }
 
 // TestMultiKeyPageRefusals shows what keeps an entry out of a multi-key page: a value or a
@@ -472,5 +532,67 @@ func runLongPrefix[T comparable](t *testing.T, val func(i int) T) {
 	check()
 	if pages, inPages := pageCount(&m); pages != 1 || inPages != 3 || prefix() < 255 {
 		t.Fatalf("after the other key is gone: %d pages with %d keys and a prefix of %d bytes", pages, inPages, prefix())
+	}
+}
+
+// TestMultiKeyPagesChurnKeepsTheStructure makes sure that adding and removing keys and values
+// of a map with long shared paths, in any order, never leaves the tree in a state the next
+// removal cannot handle.
+//
+// A user whose keys are file paths (long common starts, a few keys below each directory) adds and
+// removes keys all the time; a page that shrinks to one key below a node that it could not join must
+// not leave a node with a single leaf behind (the removal of that leaf once crashed).
+//
+// Expected: after every operation of a long random sequence, for strings and for uint64 values, the
+// tree passes its invariants and the map agrees with a model of the keys and values it should hold.
+func TestMultiKeyPagesChurnKeepsTheStructure(t *testing.T) {
+	t.Run("strings", func(t *testing.T) { runStructureChurn(t, func(i int) string { return fmt.Sprint("v", i) }) })
+	t.Run("uint64", func(t *testing.T) { runStructureChurn(t, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runStructureChurn(t, recPool()) })
+}
+
+func runStructureChurn[T comparable](t *testing.T, val func(i int) T) {
+	for seed := range uint64(12) {
+		r := rand.New(rand.NewPCG(seed, 9))
+		var m Map[T]
+		model := map[string][]int{}
+		dirs := []string{"/usr/share/doc/libtss2-dev/html/", "/usr/share/doc/libtss2-mu0/", "/usr/share/doc/libtss2-esys0/", "/usr/lib/x86_64-linux-gnu/", "/etc/"}
+		key := func() []byte {
+			d := dirs[r.IntN(len(dirs))]
+			return fmt.Appendf(nil, "%s%s%d", d, strings.Repeat("n", r.IntN(30)), r.IntN(40))
+		}
+		for step := range 1500 {
+			k := key()
+			switch op := r.IntN(10); {
+			case op < 5:
+				v := r.IntN(6)
+				m.Add(k, val(v))
+				if !slices.Contains(model[string(k)], v) {
+					model[string(k)] = append(model[string(k)], v)
+				}
+			case op < 7:
+				m.RemoveKey(k)
+				delete(model, string(k))
+			default:
+				v := r.IntN(6)
+				m.Remove(k, val(v))
+				if vs := model[string(k)]; slices.Contains(vs, v) {
+					if vs = slices.DeleteFunc(vs, func(x int) bool { return x == v }); len(vs) == 0 {
+						delete(model, string(k))
+					} else {
+						model[string(k)] = vs
+					}
+				}
+			}
+			checkInvariants(t, &m.t)
+			if m.Len() != len(model) {
+				t.Fatalf("seed %d step %d: Len %d, model %d", seed, step, m.Len(), len(model))
+			}
+		}
+		for k, vs := range model {
+			if got := valuesOf(&m, []byte(k)); len(got) != len(vs) {
+				t.Fatalf("seed %d: key %q holds %d values, want %d", seed, k, len(got), len(vs))
+			}
+		}
 	}
 }

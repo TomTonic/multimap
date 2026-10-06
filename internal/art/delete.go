@@ -71,9 +71,15 @@ func del(loc **header, key []byte, pathLen int, rk rekeyFunc) bool {
 func collapse(n *header, key []byte, pathLen, d int, rk rekeyFunc) *header {
 	switch c := int(n.count); {
 	case c == 0:
-		// The node held only its end page. A node without one never gets here:
-		// it collapsed when it fell to one child.
-		return singleKeyHdr(lift(endPageOf(n), key[:d], pathLen, rk))
+		// The node held only its end page, or one child that was a multi-key page that could
+		// not move up and has shrunk to one key (the tree makes it a single-key page): then the
+		// child is the key just deleted, and nothing is left. A node with a single child and no
+		// end page otherwise collapsed when it fell to one child.
+		e := endPageOf(n)
+		if e == nil {
+			return nil
+		}
+		return singleKeyHdr(lift(e, key[:d], pathLen, rk))
 	case c > 1 || endPageOf(n) != nil:
 		return n
 	}

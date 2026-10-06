@@ -788,5 +788,12 @@ func (m *Map[T]) mergeUp(loc **header, key []byte, pathLen int) bool {
 	if c != nil && *c != nil && !m.mergeUp(c, key, d+1) {
 		return false
 	}
+	if n.count == 1 && endPageOf(n) == nil {
+		if _, only := onlyChild(n); isSingleKey(only.objType) {
+			// a page that could not move up shrank to one key: the single-key page can
+			*loc = collapse(n, key, pathLen, d, m.rekey)
+			return isPage((*loc).objType)
+		}
+	}
 	return m.tryMerge(loc, pathLen)
 }
