@@ -139,3 +139,13 @@ A map of `*X` (or any `T` that is one word with a pointer) gets multi-key pages 
 - The object statistic reports such a page as an object with pointers (scanned by the collector).
 
 **Prediction.** Memory a key equals that of `uint64` (same bytes; `*T` map and `uint64` map built from the same keys differ by at most 0.5 B a key, rounding of the classes). Get and scans as for `uint64`. An insert or remove in a page costs one allocation of the page's class more than for `uint64`: +60 to 120 ns for pages of 128 to 512 bytes, so `churn` and `build` of a `*T` map with the real mix +20 to 40 % over the map of `uint64`; `single-value` maps +10 to 25 % on inserts. Values survive the collector under stress (`GOGC` 1, model test with `*T`). The scannable bytes of the collector fall with the pages' share: only the value words of a page are scanned (today a typed leaf per key).
+
+## 5.6: the pointer page changes in place (user, 2026-10-06; after gate 5 and 5.5)
+
+The assumption that maps of pointers rarely churn is **invalid** (user): the page of 5.3, where every change of `n` is a new object, is a stage, not the end. Proposal for the end of step 5, in the shared head of 5.5:
+
+- The type of the object is (class, J): J untyped words in front (head, prefix, length list, remainders), the rest typed slots. **J is stored** (6 bits; a byte in the head, which 5.5 decides for all kinds of page), not derived from `keyEnd` (a sum on every read) or from `n`.
+- Removal is always in place (the vacated slot and the key bytes become zero); adding a value or a key is in place if the key bytes still fit 8·J and a typed slot is free, else a new object with a J that leaves room.
+- Open: the values at the end of the object (`Size - 8n`, reads as now) or at the start of the typed words (the prefetcher meets them with the keys); a measurement decides.
+- **Not possible in Go: key bytes growing into typed slots** (the type of an object is fixed when it is allocated; bytes in a pointer slot are read by the collector as pointers). A key that no longer fits 8·J is a new object.
+- Measure in gate 5 with `-tags ptrvals`; the figures of 5.3 (churn 1.4 to 2.2 times `uint64`) are the baseline.

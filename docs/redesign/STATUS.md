@@ -4,6 +4,7 @@
 
 - `mkpage.Fixed` for a `T` with a pointer: typed object of `skpage` (N = n), values moved as `T`; `art` uses pages for `*T` maps. Gates green (100 %, race, lint 0), collector tests; commit `e2c912d`.
 - Memory as predicted (equal to the `uint64` map: -45 % street, -33 % dirs against before). **Time missed**: churn/build of a `*T` map 1.4 to 2.2 times that of `uint64` (predicted 1.2 to 1.4), every change of `n` allocates a page. Decision for the user: accept, or spare slots (grid of 4 values: in place for three changes in four, about 1.5 B a key more). PC and M1 runs not started.
+- **Decided with the user:** maps of pointers do churn a lot (the assumption "rarely" is invalid), so the page of 5.3 is a stage: the in-place pointer page (J stored in the head, see step5-mkmv-design.md 5.6) is built at the end of step 5, after gate 5 and 5.5; gate 5 measures `ptrvals` too.
 
 ## 2026-10-06: step 5.2 built: the tree with several values in a page ([results](step5-tree-results.md)); stopped at one missed prediction
 
