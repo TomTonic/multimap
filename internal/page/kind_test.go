@@ -11,6 +11,14 @@ type onePtr struct{ p *rec }
 
 type twoPtrs [2]*rec
 
+type nested struct {
+	a [2]uint8
+	b struct{ f float32 }
+}
+
+// The types above are only named by the tests; this uses their fields, as the linter wants.
+var _ = [...]any{rec{id: 1, aux: 2}, onePtr{p: nil}, nested{a: [2]uint8{1, 2}, b: struct{ f float32 }{f: 1}}}
+
 // TestSupportedTypes covers which values a Fixed page takes, as a user of the map sees it: small values
 // without pointers, and one word that is a pointer; not an empty value, a string, an interface or a
 // struct of two words.
@@ -21,10 +29,6 @@ type twoPtrs [2]*rec
 // Expected: Supported and HoldsPointers answer as listed, for plain numbers, arrays and structs of
 // them (also empty arrays and nested ones), and for a pointer, a struct of one pointer and unsafe.Pointer.
 func TestSupportedTypes(t *testing.T) {
-	type nested struct {
-		a [2]uint8
-		b struct{ f float32 }
-	}
 	for _, tc := range []struct {
 		name string
 		got  bool
