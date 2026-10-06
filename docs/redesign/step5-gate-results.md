@@ -106,3 +106,34 @@ What is left of the single-value gap is 0 to 8 %, mostly in `uint64` keys. **A s
 ### The `pager` interface is gone (user, 2026-10-06)
 
 `Tree.upsert` and `Tree.splitLeaf` are methods of `Map[T]` now (`insert.go`); `reach` and `pair` are called directly, and the interface `pager` (an itab call for every `Add` that reached a page or met a single-key page) is deleted. Prediction: 2 to 3 ns an `Add` that reaches a page. Measured with a new benchmark, `BenchmarkMapAddPresent` (`Add` of a value that is there already: the descent, `upsert`, `reach`, `Page.Add` that answers `Present`; best of 8): **pages 32.1 → 30.0 ns (-2.0 ns, -6 %)**, single-key pages 24.4 → 24.9 (no change: they never called `reach`; `pair` is called only for a new key). In the probe at tree level (15 rounds, build / replay ns an operation, before → after) the change is below the noise: `uint64` single-value 77 / 70 → 77 / 72, street 211 / 221 → 201 / 219, dirs 271 / 267 → 265 / 268, `uint64` natural 100 / 84 → 99 / 77: two nanoseconds are 1 % of 200 and 3 % of 70.
+
+## Random `uint64` keys, real mix: the build that is 20 to 40 % slower than m43 (analysis, 2026-10-06 evening, nothing changed in the code)
+
+Cases: `u64` keys, natural values, 4,096 keys (the probe at `3e1e952`, `70407c6` = 5.1, `dbbf333` = 5.2, `e2c912d` = 5.3, `3b94663` = now; medians of 11 interleaved runs).
+
+**Where it enters:** build / replay ns an operation `3e1e952` 73 / 67 → 5.1 72 / 68 → **5.2 99 / 87** → 5.3 102 / 86 → now 99 / 83. It is the step of 5.2 (the tree puts several values into a page), and only for few keys: at 65,536 keys the build is unchanged (184 → 180) and the replay +5 %. The PC says the same (`u64` keys real: build 1.11 to 1.40, churn 1.00 to 1.15 of m43's time; the memory is 12 to 20 % smaller: 72.4 → 64.4 B a key fresh at 4,096, 77.2 → 62.6 at 65,536).
+
+**What changes in the tree** (events a cycle of 69,746 operations; 5.1 → 5.2): keys in pages after the cycle 0.2 % → 14 %; page changes (entries removed from a page) 118 → **4,196**, values added to a key in a page in place 0 → 3,113, keys added to a page 0 → 719; pairs of a single-key page and a new key 224 → 438 (a single-key page with several values may pair now), page with one entry left becomes a single-key page 118 → 439; bursts 0 → 31; promotes 106 → 0. So 11.5 % of the operations are now operations in a page (before: nearly none: with random keys a key with several values was a single-key page of its own).
+
+**Cost by kind of operation** (the probe's table, ns, 3 runs, 5.1 → 5.2): insert of a new key 101 → **131**; insert into a key with 1 / 2 / 3+ values 62 / 91 / 63 → 66 / 101 / 67; delete of the last value 96 → **142**; delete from a key with 2 / 3+ values 68 / 60 → 72 / 66; all 72 → 84. The new key and the last value are 20 % of the operations and carry about 60 % of the loss (+30 and +46 ns); the others lose 5 to 11 %.
+
+**Where the time goes** (a temporary timing of the functions, inclusive, with its own cost of about 25 ns a call; per operation of the cycle, mkstats build, nothing committed):
+
+| function | calls a cycle | ns a call | ns an operation |
+|---|--:|--:|--:|
+| `reach` (an `Add` that reaches a page) | 3,863 | 185 to 204 | 10.3 to 11.3 |
+| `pageRemove` | 4,196 | 212 to 247 | 12.7 to 14.9 |
+| of it `removeFrom` (the page's `Remove`) | 4,196 | 102 to 108 | 6.1 to 6.5 |
+| of it the conversion to a single-key page | 439 | 379 to 762 | 2.4 to 4.8 |
+| `pageItems` (burst and conversion) | 499 | **608 to 1,090** | **4.3 to 7.8** |
+| `pair` | 446 | 179 to 241 | 1.1 to 1.5 |
+| `build` | 459 | 239 to 323 | 1.6 to 2.1 |
+
+An allocation profile (`-test.memprofile`) agrees: 5.2 allocates 8 % more objects, 21 % of them in `pageItems` (the `items` slice of 56 bytes an entry, the key buffer, and `appendValue`'s slice for every key with several values), against 20 % fewer single-key pages.
+
+**Findings.**
+1. Most of the loss is **page operations that replace cheap single-key page operations** for keys that do not share bytes (random keys: a page holds 2 to 4 entries, 14 % of the keys): about 11.5 % of the operations now cost 100 to 140 ns more (a page `Add` or `Remove` that walks the length list and compares the remainder, cold in the cache like the single-key page it replaces) where the single-key page was one load.
+2. **The conversion of a page with one entry left to a single-key page is wasteful:** it calls `pageItems`, which builds the slice of all entries, a buffer and a slice for every key with several values, to read one entry (500 to 1,100 ns a call, 439 times in 69,746 operations: 4 to 8 ns an operation, 30 to 50 % of the 12 to 17 ns that the real mix of random keys lost), and then walks the tree a second time (`findSlot`).
+3. Not found (to be settled with counters per event if the user wants it): how the rest splits between `reach` (page `Add`, 10 ns an operation) and the removal in the page (`removeFrom`, 6 ns).
+
+Options (not decided): (A) leave it (the memory of these keys is 12 to 20 % better); (B) convert without `pageItems` (read the one entry from the page, build the single-key page from it, and the slot from the descent that `Remove` has made already) and let `pageItems` make `multi` slices from one backing array: expected -5 to -8 ns an operation, i.e. back to +5 to +9 ns over m43 for this case; (C) B and a cheaper path for the page of two entries (a sorted pair compared without the length-list walk).
