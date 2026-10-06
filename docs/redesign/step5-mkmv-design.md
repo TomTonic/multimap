@@ -36,9 +36,14 @@ The count byte costs a byte for every entry (+5.6 % with one value per entry, +1
 `MaxRemainder` goes from 255 to 254 (a remainder of 255 bytes stays a single-key page); `n`, the number of length bytes, is at most 255 as before, so a page has at most 255 values.
 
 ```
-strings:  type | n | cpl | rl1 rl2 ... rln | cp ... cp | r1 vl1 v1 | vl v (a further value of entry 1: rl = 255) | r2 vl2 v2 | ...
-fixed T:  type | n | cpl | rl1 rl2 ... rln | cp ... cp | the remainders of the entries with rl != 255 | padding to a word | v1 v2 ... vn  (one slot a length byte, the entry's values side by side)
+head (3 bytes, as the single-key page's first two, user 2026-10-06): type (bit 0 = bit 8 of the next byte) | cpl (low 8 bits: the length of the common prefix, 9 bits in all) | n (number of length bytes)
+strings:  head | cp ... cp | rl1 rl2 ... rln | r1 vl1 v1 | vl v (a further value of entry 1: rl = 255) | r2 vl2 v2 | ...
+fixed T:  head | cp ... cp | rl1 rl2 ... rln | the remainders of the entries with rl != 255 | padding to a word | v1 v2 ... vn  (one slot a length byte, the entry's values side by side)
 ```
+
+**The head is the single-key page's first two bytes in meaning and place:** `type` with its lowest bit as bit 8, then the nine-bit length of the stored key part (`klen`) - for the single-key page its remainder, for this page the common prefix. Code that
+compares the stored key part with the search key reads them the same way for both, while it still looks at the type. `n` moves from byte 1 to byte 2 (it is the second byte of the single-key page's count). The common prefix now sits directly behind the head,
+the length list behind it (at `3 + cpl`); nothing else changes in size. Whether the stored part also sits at the same offset (3 in this page, 6 in the single-key page) is the question of step 5.5.
 
 The values of a key sit next to each other, in the order they came in; inserting a value appends it to the key's run. Lookup of a key finds its first entry as today (the walk skips the 255 entries) and its values are the entry and the 255
 entries that follow. The type bytes, the size classes and the pointer pages (`ptrObject[T, [J]uint64, [N]T]` with N = n) stay: **no new object type, no new node**. Removing a value takes out its length byte and slot; the first value of a key with
@@ -93,7 +98,9 @@ at most 5 in 1000 operations on the real mix (0.1 now; pages fill with values), 
 - **5.1** `internal/mkpage` for strings and `uint64`: further values (insert into the run, remove, Get of the run, Each with the run), tests with the model of pairs, fuzz, microbenchmark (`BenchmarkFixedScan` and the two Get benchmarks against the figures above). **Stop for the user.**
 - **5.2** In the tree for strings and `uint64`: promote gone, `pair`/`build`/`pageOf`/merge with several values, scans; probe (census after a cycle, events) and measurement against m43 (single-value must not move; the real mix as predicted). **Stop.**
 - **5.3** Pointer pages (`*T`, `uint64 -> *T`), the old 4.3, in this format. **Stop.**
-- **5.4** Gate 5 on the PC and the M1 (job in the queue), the report against this prediction; then the decision about option B (scan glue and allocation-free changes), which this step does not touch.
+- **5.4** Gate 5 on the PC and the M1 (job in the queue), the report against this prediction.
+- **5.5** The shared head (user, 2026-10-06): the single-key page was meant to have the 3-byte head too; it has the leaf's 6 bytes (`type | klen | n (2) | kl (2)`) since step 3.3 only for the code that holds a key from its `base` and compares its *end* (no `Skip` when a node comes in above). That code is the single-key page itself (76 places in `internal/art`, and the value overflow shares the head), not old code that has gone. Once MKMV stands, the single-key page and the value overflow move to `Skip` in place, as the multi-key page does, and the head size for all of them (3, 4, 5 or 6 bytes: the fields are type, nine-bit key length, count; `kl` only if it pays) is found by measurement with a prediction, not decided now.
+- Then the decision about option B (scan glue and allocation-free changes), which this step does not touch.
 
 ## Glossary changes this note proposes (made after approval)
 
@@ -106,3 +113,5 @@ at most 5 in 1000 operations on the real mix (0.1 now; pages fill with values), 
 2. D2: no limit on the values of an entry in a page.
 3. D4: the pointer pages are built in this step (5.3), not before it.
 4. Option B (scan glue, allocation-free change) after gate 5, not inside it.
+
+Decided with the user on 2026-10-06: the head of this page has `cpl` as its nine-bit byte 1 and `n` at byte 2 (as above); the shared head of all page kinds is step 5.5.
