@@ -57,3 +57,8 @@ m43 3e1e952 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-
 #   m44p <ref> fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 # (m43 took 1h40 for the same cases as m44, not the 150 minutes estimated.) In between, short jobs on the M1 for the page level
 # (BenchmarkFixed / BenchmarkFixedPointers) when 5.5 or 5.6 need the 128-byte cache lines.
+
+# Step 5.5b (docs/redesign/step5-one-page.md): the page-level benchmarks of the one page (internal/page) and its placement
+# benchmark (values at the end of the object or behind the byte area; cold: 64 MiB of pages, 128-byte cache lines here).
+# A few minutes; the machine must be at rest.
+pg1 d8c0001 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
