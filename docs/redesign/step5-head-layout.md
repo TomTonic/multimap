@@ -147,3 +147,81 @@ The multi-key page of strings and of `uint64` gets one zero byte (`aux`) at offs
 **Recommendation: U4**, in two steps (5.5a the multi-key page gets `aux`, 5.5b the single-key page and the value overflow take the head and `Skip`), because (1) the pointer page of 5.6 needs the byte and the user's priority (maps of pointers churn) makes that page important, (2) the head is then one head for every object that ends a descent, (3) the memory costs 0.1 to 0.2 B a key. What U3 gains over it (0.1 to 0.2 B a key) does not pay for a variable head.
 
 Open for the review: n as one byte, the cap of 255 slots and values, `kl` gone (section 2), `aux`, and the value overflow, which would get the same head (`n` unused, `aux` 0) and a key area 2 bytes larger in the grid (20, 52, 116, 244, 372, 500).
+
+## 5. The planned layout of every page type (U4; for review, not built)
+
+**Head, the same in every page type (bytes 0 to 3):**
+
+```
+Byte 0   type      TypeBase + 2·class (32, 64, 128, 256, 384, 512 bytes); bit 0 = bit 8 of len
+Byte 1   len       bits 0 to 7 of len: the length of the key part that starts at byte 4 (0 to 511)
+Byte 2   n         single-key page: number of values; multi-key page: number of slots (1 to 255); value overflow: 0
+Byte 3   rawWords  pages with a pointer area: size of the byte area in 8-byte words (the pointer area begins there);
+                   all other pages: 0
+Byte 4…  key part  len bytes: single-key page and value overflow: the remainder; multi-key page: the common prefix
+```
+Type bytes: single-key page `4 + 2·c` (4, 6, 8, 10, 12, 14), value overflow `2`, multi-key page `16 + 2·c` (16 to 26), nodes from 28. The key part is compared first in every page (`rest[:len]` against bytes 4 to 4+len−1); a single-key page needs equality, a multi-key page a matching prefix. What follows depends on the page type.
+
+### Single-key page, string values (key `Bahnhofstrasse`, values `Ost`, `Sued`, `West`: 32 bytes, class 32)
+```
+Byte 0        type (06 in class 64; here the object is class 32: 04)
+Byte 1        len = r = 14 (0E)
+Byte 2        n = 3
+Byte 3        rawWords = 0
+Byte 4..17    remainder "Bahnhofstrasse"
+Byte 18       value length 03        Byte 19..21   "Ost"
+Byte 22       value length 04        Byte 23..26   "Sued"
+Byte 27       value length 04        Byte 28..31   "West"
+(bytes behind the last value: zero; n values in the order they came in; a value of 0 to 254 bytes)
+```
+### Single-key page, `uint64` values (same key, values 2, 5, 9: 48 bytes used, class 64)
+```
+Byte 0        type (06)             Byte 1  len = r = 14      Byte 2  n = 3      Byte 3  rawWords = 0
+Byte 4..17    remainder "Bahnhofstrasse"
+Byte 18..23   padding (zero) to the next multiple of 8
+Byte 24..31   value 2          Byte 32..39   value 5          Byte 40..47   value 9
+Byte 48..63   free slots (zero): a further value goes to byte 48, in place; unsorted, a == b as T
+```
+*With a pointer value (`*X`):* the object is the typed object of `skpage`; `rawWords = 3` (bytes 0 to 23 are the byte area, from byte 24 every word is a slot that holds a value or nil); the rest as above.
+
+### Multi-key page, string values (the six slots of the example: 63 bytes used, class 64)
+```
+Byte 0        type (12)             Byte 1  len = cpl = 7     Byte 2  n = 6 (slots)     Byte 3  rawWords = 0
+Byte 4..10    common prefix "Bahnhof"
+Byte 11..16   length list: 00 06 07 FF FF 03     (n bytes: the length of the remainder of slot i; FF = a further value of the key before it, no remainder)
+Byte 17       slot 0:  (remainder "" ) value length 05, "Mitte"
+              slot 1:  remainder "sallee" (6), value length 04, "Nord"
+              slot 2:  remainder "strasse" (7), value length 03, "Ost"
+              slot 3:  value length 04, "Sued"           (no remainder: FF)
+              slot 4:  value length 04, "West"           (no remainder: FF)
+              slot 5:  remainder "weg" (3), value length 04, "Ring"
+Byte 63       free (zero), as far as the object goes
+```
+### Multi-key page, `uint64` values (the same six slots: 33 bytes of keys + 48 of values, class 128)
+```
+Byte 0        type (14)             Byte 1  len = cpl = 7     Byte 2  n = 6     Byte 3  rawWords = 0
+Byte 4..10    common prefix "Bahnhof"
+Byte 11..16   length list: 00 06 07 FF FF 03
+Byte 17..32   remainders, one behind the other, no values between: "sallee" "strasse" "weg"
+Byte 33..79   free (zero): keys and values grow into it from both sides
+Byte 80..127  values, slot i at (128 − (6 − i)·8): 7, 1, 2, 5, 9, 4  (slot 3 and 4 are the further values of slot 2's key)
+```
+*With a pointer value (`*X`):* the same bytes; `rawWords = 10` (bytes 0 to 79 are the byte area, words 10 to 15 are slots: the six values at the end, free typed slots before them are nil). A change of n is a new object in the stage of 5.3; the in-place page of 5.6 keeps `rawWords` for the life of the object and a key or value that does not fit it is a new object.
+
+### Value overflow (key `Bahnhofstrasse`, inline: 32 bytes)
+```
+Byte 0        type = 2 (bit 0 = bit 8 of len)     Byte 1  len = r = 14     Byte 2  n = 0     Byte 3  rawWords = 0
+Byte 4..23    key area (20 bytes: the grid is 20, 52, 116, 244, 372, 500): remainder "Bahnhofstrasse", then zero
+Byte 24..31   pointer to the value set (Set3 of the values); the object has a pointer, so it is a typed object
+```
+*A remainder of more than 500 bytes* (len = 511 marks it): bytes 4 to 7 zero, the key as a string (pointer and length) at bytes 8 to 23, the pointer to the value set at 24 to 31.
+
+### What is the same, what is not
+
+| | single-key, strings | single-key, `uint64` | multi-key, strings | multi-key, `uint64` | value overflow |
+|---|---|---|---|---|---|
+| bytes 0 to 3 | head | head | head | head | head |
+| byte 4 | remainder | remainder | common prefix | common prefix | key area |
+| next | value length, value … | padding, values | length list | length list | pointer to the set |
+| values | after the remainder, each with its length byte | an array of T after the padding, spare slots behind it | each behind its remainder | an array of T at the end of the object | in the value set |
+| `rawWords` | 0 | 0 (pointer: derivable) | 0 | 0 (pointer: the byte area) | 0 |
