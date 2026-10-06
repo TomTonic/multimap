@@ -355,10 +355,10 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 	removeSlot(m, &la, e, slot, ro, remLen)
 	p.n--
 	e -= b2i(la.many) + remLen
-	if la.many && res == Gone && p.KeysUpTo(2) == 1 {
+	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.n)) {
 		e = toOneKey(&p.head, m, p.lay(false), e)
 	}
-	if c := shrinkClass(e + int(p.n)*w); c >= 0 && c < p.class() {
+	if c := shrinkClass(p.class(), e+int(p.n)*w); c < p.class() {
 		return regrow[T](p, c, e, e, ptr), res
 	}
 	return p, res

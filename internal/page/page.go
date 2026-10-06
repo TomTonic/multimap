@@ -290,14 +290,38 @@ func classFor(need int) int {
 // all pages of the redesign.)
 func ShrinkLimit(avail int) int { return (avail*171 + 128) >> 8 }
 
-// shrinkClass returns the smallest class whose size holds used bytes within ShrinkLimit, or -1.
-func shrinkClass(used int) int {
-	for c, size := range sizes {
-		if used <= ShrinkLimit(size) {
-			return c
+// shrinkAt[c] is the most content a page of class c may have for a page of the class below to take it
+// (ShrinkLimit of that class's size; -1 for the smallest class, which has no class below).
+var shrinkAt = func() (t [Classes]int) {
+	t[0] = -1
+	for c := 1; c < Classes; c++ {
+		t[c] = ShrinkLimit(sizes[c-1])
+	}
+	return t
+}()
+
+// shrinkClass returns the class a page of class c with used bytes of content moves to after a removal: the
+// smallest class whose size holds used bytes within ShrinkLimit, or c if it stays.
+func shrinkClass(c, used int) int {
+	if used > shrinkAt[c] {
+		return c
+	}
+	for k := 0; ; k++ { // it ends at k = c-1 at the latest: used <= ShrinkLimit(sizes[c-1])
+		if used <= ShrinkLimit(sizes[k]) {
+			return k
 		}
 	}
-	return -1
+}
+
+// oneKeyLeft reports, for the many-key page of the object m whose key lengths begin at kl and which has n slots,
+// whether all its slots belong to one key: no slot but the first has a key length other than Further.
+func oneKeyLeft(m []byte, kl, n int) bool {
+	for _, rl := range m[kl+1 : kl+n] {
+		if rl != Further {
+			return false
+		}
+	}
+	return true
 }
 
 // allocRaw returns a zeroed object of class c that holds no pointer: an array of words, which the

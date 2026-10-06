@@ -143,7 +143,7 @@ func (la *lay) hasValue(m []byte, pos, end int, val []byte) int {
 	s := la.valueStart(m, pos)
 	for i := pos; i < end; i++ {
 		l := int(m[la.vl+i])
-		if string(m[s:s+l]) == string(val) {
+		if l == len(val) && string(m[s:s+l]) == string(val) {
 			return i
 		}
 		s += l
@@ -313,10 +313,10 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 	p.n--
 	e -= b2i(la.many) + 1 + remLen
 	vb -= vlen
-	if la.many && res == Gone && p.KeysUpTo(2) == 1 {
+	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.n)) {
 		e = toOneKey(&p.head, m, p.lay(true), e)
 	}
-	if c := shrinkClass(e + vb); c >= 0 && c < p.class() {
+	if c := shrinkClass(p.class(), e+vb); c < p.class() {
 		return p.regrow(c, e, vb), res
 	}
 	return p, res

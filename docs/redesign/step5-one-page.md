@@ -184,20 +184,20 @@ A design note with a prediction before code; stop at a surprise and ask; the voc
 
 | | n = 3 | n = 7 | n = 20 |
 |---|--:|--:|--:|
-| many keys, `uint64`: Get hit | 17.1 → 16.2 (-5 %) | 23.1 → 22.5 (-3 %) | 42.8 → 42.2 (-1 %) |
+| many keys, `uint64`: Get hit | 17.1 → 16.3 (-4 %) | 23.1 → 22.7 (-1 %) | 42.8 → 41.3 (-3 %) |
 | many keys, `uint64`: Get miss | 9.7 → 9.2 (-5 %) | 15.8 → 14.0 (-11 %) | 35.1 → 29.5 (-16 %) |
-| many keys, `uint64`: add and remove a key | 52.7 → 65.7 (**+25 %**) | 63.1 → 75.3 (**+19 %**) | 86.9 → 98.6 (+13 %) |
-| many keys, `uint64`: `Each` (a value) | | 18.3 → 19.2 (+5 %) | 46.6 → 44.5 (-4 %) |
-| many keys, strings: Get hit | 17.5 → 17.1 (-3 %) | 24.6 → 22.9 (-7 %) | 45.9 → 42.6 (-7 %) |
-| many keys, strings: Get miss | 10.4 → 9.1 (-12 %) | 17.6 → 14.0 (-21 %) | 41.5 → 30.4 (-27 %) |
-| many keys, strings: add and remove a key | 51.4 → 79.8 (**+55 %**) | 66.3 → 92.8 (**+40 %**) | 116.5 → 129.8 (+11 %) |
-| many keys, strings: build | 75.8 → 88.4 (+17 %) | 140 → 158 (+13 %) | 303 → 322 (+6 %) |
-| pointers: Get hit | 17.1 → 16.1 (-6 %) | 23.0 → 22.2 (-4 %) | 42.4 → 42.1 (-1 %) |
-| **pointers: add and remove a key** | 158.6 → 68.0 (**-57 %**) | 266 → 77.0 (**-71 %**) | 417 → 101.5 (**-76 %**) |
+| many keys, `uint64`: add and remove a key | 52.7 → 61.1 (**+16 %**) | 63.1 → 70.0 (**+11 %**) | 86.9 → 92.9 (+7 %) |
+| many keys, `uint64`: `Each` (a value) | | 18.3 → 19.2 (+5 %) | 46.6 → 44.9 (-4 %) |
+| many keys, strings: Get hit | 17.5 → 17.0 (-3 %) | 24.6 → 22.6 (-8 %) | 45.9 → 41.0 (-11 %) |
+| many keys, strings: Get miss | 10.4 → 9.2 (-11 %) | 17.6 → 14.2 (-19 %) | 41.5 → 30.1 (-27 %) |
+| many keys, strings: add and remove a key | 51.4 → 76.3 (**+48 %**) | 66.3 → 87.4 (**+32 %**) | 116.5 → 123.4 (+6 %) |
+| many keys, strings: build | 75.8 → 83.2 (+10 %) | 140 → 154 (+10 %) | 303 → 326 (+8 %) |
+| pointers: Get hit | 17.1 → 16.4 (-4 %) | 23.0 → 22.5 (-2 %) | 42.4 → 41.5 (-2 %) |
+| **pointers: add and remove a key** | 158.6 → 64.1 (**-60 %**) | 266 → 72.7 (**-73 %**) | 417 → 96.2 (**-77 %**) |
 | one key, strings (3 values): Get hit | 7.0 (match and has) → 5.6 | | |
-| one key, strings: add and remove a value | 28.5 → **68.9** | | |
+| one key, strings: add and remove a value | 28.5 → **68.1** | | |
 | one key, `uint64`: Get hit | 3.7 (match and has) → 4.8 | | |
-| one key, `uint64`: add and remove a value | 8.6 → **32.4** | | |
+| one key, `uint64`: add and remove a value | 8.6 → **30.9** | | |
 
 **Against the prediction** (many keys `uint64` ±3 %; many keys strings Get 0 to +5 %, `Each` ±5 %; one key Get ±3 %, add a value strings +0 to +10 %, fixed ±3 %; pointers -50 to -70 %):
 - **Met:** Get of both flavors and of pointers (-1 to -7 %, a miss -5 to -27 %), `Each` (-4 to +5 %), pointers' changes (**-57 to -76 %: the page of pointers changes in place, which is what 5.6 wanted**).
@@ -205,3 +205,7 @@ A design note with a prediction before code; stop at a surprise and ask; the voc
 - Cost, as far as measured: `p.lay` and the `lay` struct 13 % of an `Add`, three memmoves for the key area (one more than the entry insert of `mkpage` for strings), `KeysUpTo(2)` in `Remove` of a key; after the changes already made (the constants for the type bytes, the scalar `locate`, one block move of the lists) the many-key changes cost 7 ns more than `mkpage` in `uint64`. **At the level of the tree the changes are about 10 to 20 % of an operation and the page change in it one half: expected +1 to +4 % of an operation for the many-key page of strings, ±1 % for `uint64`, which 5.5c measures.** Tuning candidates, not done: scalar locals in `Add`/`Remove` instead of the `lay` struct, a fast path for the in-place `Add` and `Remove` of a value of a one-key page, the value lengths of strings next to the values.
 
 **Stop** for the user: the page is built, measured and tested alone; the tree is not touched.
+
+### 5.5b tuned before the tree (user: "first tune, so that the comparison in the tree is cleaner")
+
+What was done (commit after `0c4eb26`): the type bytes as constants, `locate` with scalars and one `compare`, the lists and remainders moved as one block (three copies), `oneKeyLeft` (a scan that stops at the second key) instead of counting keys on a removal, `shrinkClass` with a table (one comparison when the page stays), the value comparison of strings after the length. The profile of what is left (`Add`/`Remove` of a many-key page of strings, n = 3): 37 % of `Add` and 31 % of `Remove` are the three `memmove` calls of the key area (the lists and the remainders are four regions where `mkpage` had one entry to move), 8 % each the first touch of the page (a cache miss, as in `mkpage`), `locate` 20 %, `hasValue` 20 % of the one-key `Add` (the compare of the values, as the single-key page did). **Tuned page against today's, hot:** Get -1 to -11 % (a miss -11 to -27 %), `Each` -4 to +5 %, pointers' changes **-60 to -77 %**, many keys `uint64` changes **+7 to +16 %** (were +13 to +25), strings **+6 to +48 %** (were +11 to +55: n = 3 +48 %, n = 7 +32 %, n = 20 +6 %), the one-key add and remove of a value +40 ns (strings) and +22 ns (`uint64`). What is left is structural, the price of the layout chosen with the user (value lengths as a list of their own, values at the end): more regions to shift on a change of a short page; the tree-level cost is measured in 5.5c (at most a few percent of an operation). 100 %, race, lint 0.
