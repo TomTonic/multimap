@@ -209,3 +209,21 @@ A design note with a prediction before code; stop at a surprise and ask; the voc
 ### 5.5b tuned before the tree (user: "first tune, so that the comparison in the tree is cleaner")
 
 What was done (commit after `0c4eb26`): the type bytes as constants, `locate` with scalars and one `compare`, the lists and remainders moved as one block (three copies), `oneKeyLeft` (a scan that stops at the second key) instead of counting keys on a removal, `shrinkClass` with a table (one comparison when the page stays), the value comparison of strings after the length. The profile of what is left (`Add`/`Remove` of a many-key page of strings, n = 3): 37 % of `Add` and 31 % of `Remove` are the three `memmove` calls of the key area (the lists and the remainders are four regions where `mkpage` had one entry to move), 8 % each the first touch of the page (a cache miss, as in `mkpage`), `locate` 20 %, `hasValue` 20 % of the one-key `Add` (the compare of the values, as the single-key page did). **Tuned page against today's, hot:** Get -1 to -11 % (a miss -11 to -27 %), `Each` -4 to +5 %, pointers' changes **-60 to -77 %**, many keys `uint64` changes **+7 to +16 %** (were +13 to +25), strings **+6 to +48 %** (were +11 to +55: n = 3 +48 %, n = 7 +32 %, n = 20 +6 %), the one-key add and remove of a value +40 ns (strings) and +22 ns (`uint64`). What is left is structural, the price of the layout chosen with the user (value lengths as a list of their own, values at the end): more regions to shift on a change of a short page; the tree-level cost is measured in 5.5c (at most a few percent of an operation). 100 %, race, lint 0.
+
+### 5.5c part 1: the multi-key pages of the tree on `internal/page` (2026-10-07, probe, WSL, medians of 11, against `2d5d08b`)
+
+The tree holds many-key pages of the one page; single-key pages are still `skpage`; a many-key page left with one key is converted at once by the tree (`onlyItem`, `leafFor`: transitional work that step 2 removes, since the page does it in place). Tests adapted to the new sizes (two tests of full pages: 237-byte values), a test pins the type bytes (`TestPageTypesAreThoseOfTheTree`), 100 % everywhere, race, lint 0.
+
+**Prediction** (single-value cells ±3 %, real mix ±3 %, strings at most +4 %): **missed.** Build / replay ns an operation, before → after the tuning of the page (inlined key-area moves, no `lay` wrapper for `locate`):
+
+| case | before | now |
+|---|--|--|
+| `uint64` single-value 4,096 | 79 / 70 | 87 / 79 (+10 % / +13 %) |
+| street single-value 4,096 | 205 / 219 | 217 / 229 (+6 % / +5 %) |
+| dirs single-value 4,096 | 266 / 264 | 280 / 275 (+5 % / +4 %) |
+| `uint64` natural 4,096 | 100 / 82 | 103 / 88 (+3 % / +7 %) |
+| street natural 4,096 / 65,536 | 191 / 175, 261 / 298 | 200 / 183, 275 / 290 (+5 % / +5 %, +5 % / -3 %) |
+| dirs natural 4,096 | 238 / 221 | 245 / 228 (+3 % / +3 %) |
+| `uint64` natural 65,536 | 176 / 189 | 194 / 196 (+10 % / +4 %) |
+
+**Cause** (profile of `uint64` single-value, 4,096 keys, where nearly every operation is an operation in a page): the page's `Add` and `Remove` cost 1.21 and 1.26 s where `mkpage` took 1.08 and 1.06 s of 3.1 s: **+10 to +20 % in the tree**, the page level's +0 to +6 % (after inlining the key-area moves of the page of fixed-size values, which took the changes from +7 to +16 % to +0 to +6 %, and of strings from +12 to +48 % to +1 to +39 %). In the tree the pages are colder than in the benchmark and every instruction counts as much as a cache miss; what is left is the structure's cost (the `lay` set-up with the first touch of the page, the form check, one more branch in every step). Part of the loss is **transitional** (the conversion of a page with one key left, done twice: in the page and in the tree) and not measurable here (6 conversions in 1,000 operations).

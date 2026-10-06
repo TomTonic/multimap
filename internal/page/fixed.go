@@ -133,7 +133,7 @@ func (p *Fixed) slotOf(m []byte, la lay, rest []byte) (int, bool) {
 	if p.Match(rest) < la.l {
 		return 0, false
 	}
-	pos, _, found := la.locate(m, rest[la.l:])
+	pos, _, found := locate(m, la.kl, la.n, la.rem, rest[la.l:])
 	return pos, found
 }
 
@@ -240,7 +240,7 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := la.locate(m, r)
+		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
 		ro, slot = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
@@ -270,7 +270,13 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 	nv := valuesIn[T](m, la.n+1)
 	copy(nv[:slot], nv[1:slot+1])
 	nv[slot] = v
-	insertSlot(m, &la, e, slot, ro, kl, 0, r)
+	if la.many { // insertSlot of the page without value lengths, written out: the key lengths and the head of the remainders move together
+		rlen := len(r)
+		copy(m[la.rem+ro+1+rlen:e+1+rlen], m[la.rem+ro:e])
+		copy(m[la.kl+slot+1:la.rem+ro+1], m[la.kl+slot:la.rem+ro])
+		m[la.kl+slot] = kl
+		copy(m[la.rem+1+ro:], r)
+	}
 	q.n++
 	return q, res
 }
@@ -330,7 +336,7 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := la.locate(m, r)
+		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
 		if !found {
 			return p, Absent
 		}
@@ -352,7 +358,11 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 	var zero T
 	copy(vs[1:slot+1], vs[:slot])
 	vs[0] = zero
-	removeSlot(m, &la, e, slot, ro, remLen)
+	if la.many { // removeSlot of the page without value lengths, written out
+		copy(m[la.kl+slot:la.rem+ro-1], m[la.kl+slot+1:la.rem+ro])
+		copy(m[la.rem-1+ro:e-1-remLen], m[la.rem+ro+remLen:e])
+		clear(m[e-1-remLen : e])
+	}
 	p.n--
 	e -= b2i(la.many) + remLen
 	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.n)) {

@@ -79,7 +79,7 @@ func (p *Str) slotOf(m []byte, la lay, rest []byte) (int, bool) {
 	if p.Match(rest) < la.l {
 		return 0, false
 	}
-	pos, _, found := la.locate(m, rest[la.l:])
+	pos, _, found := locate(m, la.kl, la.n, la.rem, rest[la.l:])
 	return pos, found
 }
 
@@ -179,7 +179,7 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := la.locate(m, r)
+		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
 		ro, slot = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
@@ -215,7 +215,17 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 	front := len(m) - vb
 	copy(m[front-len(val):len(m)-tail-len(val)], m[front:len(m)-tail])
 	copy(m[len(m)-tail-len(val):], val)
-	insertSlot(m, &la, e, slot, ro, kl, uint8(len(val)), r)
+	if la.many { // insertSlot of the many-key form, written out
+		rlen := len(r)
+		copy(m[la.rem+ro+2+rlen:e+2+rlen], m[la.rem+ro:e])
+		copy(m[la.vl+slot+2:la.rem+ro+2], m[la.vl+slot:la.rem+ro])
+		copy(m[la.kl+slot+1:la.vl+slot+1], m[la.kl+slot:la.vl+slot])
+		m[la.kl+slot] = kl
+		m[la.vl+1+slot] = uint8(len(val))
+		copy(m[la.rem+2+ro:], r)
+	} else { // the one-key form: the value length goes to the end of the list
+		m[la.vl+slot] = uint8(len(val))
+	}
 	q.n++
 	return q, res
 }
@@ -285,7 +295,7 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := la.locate(m, r)
+		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
 		if !found {
 			return p, Absent
 		}
@@ -309,7 +319,15 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 	front := len(m) - vb
 	copy(m[front+vlen:start+vlen], m[front:start])
 	clear(m[front : front+vlen])
-	removeSlot(m, &la, e, slot, ro, remLen)
+	if la.many { // removeSlot of the many-key form, written out
+		copy(m[la.kl+slot:la.vl+slot-1], m[la.kl+slot+1:la.vl+slot])
+		copy(m[la.vl-1+slot:la.rem+ro-2], m[la.vl+slot+1:la.rem+ro])
+		copy(m[la.rem-2+ro:e-2-remLen], m[la.rem+ro+remLen:e])
+		clear(m[e-2-remLen : e])
+	} else { // the one-key form: the value lengths close up
+		copy(m[la.vl+slot:la.rem-1], m[la.vl+slot+1:la.rem])
+		clear(m[e-1 : e])
+	}
 	p.n--
 	e -= b2i(la.many) + 1 + remLen
 	vb -= vlen

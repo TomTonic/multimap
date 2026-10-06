@@ -232,10 +232,6 @@ func locate(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
 	return pos, off, found
 }
 
-func (la *lay) locate(m []byte, r []byte) (pos, off int, found bool) {
-	return locate(m, la.kl, la.n, la.rem, r)
-}
-
 // runEnd returns the slot after the last value of the key whose first slot is pos.
 func (la *lay) runEnd(m []byte, pos int) int {
 	i := pos + 1
@@ -364,58 +360,6 @@ func (p *head) setHead(many bool, c, n, l, raw int) {
 	}
 	p.objType, p.n, p.raw = base+uint8(c)<<1, uint8(n), uint8(raw)
 	p.setCpl(l)
-}
-
-// insertSlot makes room for one more slot at position pos in the key area of the object m, whose key area ends
-// at e, and writes its entries: kl in the key lengths (many-key form), vlb in the value lengths (Str), and
-// rest, the remainder of a new key, at offset ro of the remainders (nothing for a further value). The values
-// area is the caller's, and so is the count n. The lists and the remainders are one block, so the move is three
-// copies at most: the tail of the remainders, the tail of the value lengths with the head of the remainders,
-// and the tail of the key lengths with the head of the value lengths.
-func insertSlot(m []byte, la *lay, e, pos, ro int, kl, vlb byte, rest []byte) {
-	dk, dv := b2i(la.many), b2i(la.str)
-	d := dk + dv
-	rlen := len(rest)
-	if la.many {
-		copy(m[la.rem+ro+d+rlen:e+d+rlen], m[la.rem+ro:e])
-	}
-	switch {
-	case la.str:
-		copy(m[la.vl+pos+d:la.rem+ro+d], m[la.vl+pos:la.rem+ro])
-		if la.many {
-			copy(m[la.kl+pos+dk:la.vl+pos+dk], m[la.kl+pos:la.vl+pos])
-		}
-	case la.many:
-		copy(m[la.kl+pos+dk:la.rem+ro+dk], m[la.kl+pos:la.rem+ro])
-	}
-	if la.many {
-		m[la.kl+pos] = kl
-	}
-	if la.str {
-		m[la.vl+dk+pos] = vlb
-	}
-	copy(m[la.rem+d+ro:], rest)
-}
-
-// removeSlot takes slot `slot` out of the key area of the object m, whose key area ends at e: its key length and
-// value length, and remLen bytes of remainder at offset ro of the remainders (none if the key keeps other
-// values). The values area and the count are the caller's. Three copies at most, as insertSlot.
-func removeSlot(m []byte, la *lay, e, slot, ro, remLen int) {
-	dk, dv := b2i(la.many), b2i(la.str)
-	d := dk + dv
-	switch {
-	case la.str:
-		if la.many {
-			copy(m[la.kl+slot:la.vl+slot-dk], m[la.kl+slot+dk:la.vl+slot])
-		}
-		copy(m[la.vl-dk+slot:la.rem+ro-d], m[la.vl+slot+1:la.rem+ro])
-	case la.many:
-		copy(m[la.kl+slot:la.rem+ro-dk], m[la.kl+slot+1:la.rem+ro])
-	}
-	if la.many {
-		copy(m[la.rem-d+ro:e-d-remLen], m[la.rem+ro+remLen:e])
-	}
-	clear(m[e-d-remLen : e])
 }
 
 // toOneKey turns the many-key form of the object m with one key into the one-key form in place: the
