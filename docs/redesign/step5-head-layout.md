@@ -86,7 +86,7 @@ So **it is not a property of one kind of page that needs `kl` and the other not*
 ## 3a. The two other questions of the head
 
 1. **How wide is n?** One byte for everyone is enough: a multi-key page has at most 255 slots (a slot takes two bytes at least), a single-key page of strings at most 254 values, and a set of `uint8` values has at most 256 distinct values (the 256th would go to the value overflow). One byte lets every reader take `type | length | n` as the first three bytes of any page.
-2. **Is there a spare byte?** The in-place pointer page (5.6) needs the number of untyped words in front, J (6 bits), stored; the multi-key page has no spare bit (nine bits of length, eight of n). A fourth byte `aux` is that place: J for the pages of pointers, 0 for all others, and room for what we do not know yet.
+2. **Is there a spare byte, and what would it hold?** The page of pointers (a typed object: the garbage collector reads some of its words as pointers and must not read the others) needs to say **where its pointer area begins**. Names (proposed for the glossary): **byte area** = the words at the start of the object that hold bytes (head, common prefix, length list, remainders; the collector must not read them as pointers), **pointer area** = the words behind it that hold the values (`*X`, nil when free). The byte of the head is then **`byteWords`: the size of the byte area in 8-byte words** (formerly "J" in the notes: the number of untyped words in front of the typed ones in `ptrObject[T, [J]uint64, [N]T]`); 0 for every page that has no pointer area. It is **needed only by the multi-key page of pointers**: (a) for a page without pointers there is no boundary (the whole object is bytes; the collector never reads it); (b) the single-key page of pointers has a boundary too, but it follows from its head (`byteWords = ceil((head + r) / 8)`, the remainder length r is in the head and does not change while the page lives; at the rare `Skip`/`Prepend` the page is a new object, as today); (c) in the multi-key page the boundary cannot follow from the head, because the byte area and the number of values change independently while the entries come and go, and an object cannot change its type: today it is derived from n (every change of n is a new object, the stage of 5.3), and the in-place page of 5.6 needs it **stored**, fixed for the life of the object. Example (the pointer page of section 3): object of 128 bytes = 16 words, byte area words 0 to 9 (80 bytes: head, `Bahnhof`, lengths, remainders, zeros), pointer area words 10 to 15 (the six values): `byteWords = 10`.
 
 ## 3. The two proposals side by side (same example)
 
@@ -95,7 +95,7 @@ So **it is not a property of one kind of page that needs `kl` and the other not*
 | 0 | type | type | type | type |
 | 1 | cpl | r | len (cpl or r) | len (cpl or r) |
 | 2 | n (1 byte) | n (low) | n (1 byte) | n (1 byte) |
-| 3 | prefix starts | n (high) | prefix / remainder starts | **aux** (J for pointer pages, else 0) |
+| 3 | prefix starts | n (high) | prefix / remainder starts | **`byteWords`** (size of the byte area in words for pages of pointers, else 0; the spare byte, called `aux` before) |
 | 4 | | kl (low) | | prefix / remainder starts |
 | 5 | | kl (high) | | |
 | head size | 3 | 6 | 3 | 4 |
