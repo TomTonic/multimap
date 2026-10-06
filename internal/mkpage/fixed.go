@@ -44,11 +44,11 @@ func NeedFixed[T comparable](n, cpl, remBytes int) int {
 	return valuesAt[T](Header+n+cpl+remBytes) + n*w
 }
 
-// BuildFixed returns a page for the entries with the keys rests (the keys from the
-// end of the path on, in key order, all different) and the values vals, or nil if
-// T has no page (see Supported) or they do not fit: no entry, more than MaxEntries, a
-// remainder beyond MaxRemainder or content beyond the largest class. The common
-// prefix of the page is the longest one all keys share (up to MaxPrefix).
+// BuildFixed returns a page for the values vals of the keys rests (the keys from the
+// end of the path on, in key order: a key with several values appears once for each, one
+// after the other), or nil if T has no page (see Supported) or they do not fit: no value, more
+// than MaxEntries, a remainder beyond MaxRemainder or content beyond the largest class. The
+// common prefix of the page is the longest one all keys share (up to MaxPrefix).
 func BuildFixed[T comparable](rests [][]byte, vals []T) *Fixed {
 	if !Supported[T]() {
 		return nil
@@ -65,7 +65,10 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 	}
 	cp := prefixOf(rests)
 	keyEnd := Header + n + cp
-	for _, r := range rests {
+	for i, r := range rests {
+		if further(rests, i) {
+			continue
+		}
 		if len(r)-cp > MaxRemainder {
 			return nil
 		}
@@ -78,40 +81,50 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 		return nil
 	}
 	p := (*Fixed)(allocRaw(c))
-	p.objType, p.n, p.cpl = TypeBase+uint8(c)<<1, uint8(n), uint8(cp)
+	newHead(&p.head, c, n, cp)
 	m := p.mem()
-	off := Header + n
-	off += copy(m[off:], rests[0][:cp])
+	lo := Header + cp
+	off := lo + n
+	copy(m[Header:], rests[0][:cp])
 	for i, r := range rests {
-		m[Header+i] = uint8(len(r) - cp)
-		off += copy(m[off:], r[cp:])
+		if further(rests, i) {
+			m[lo+i] = Further
+		} else {
+			m[lo+i] = uint8(len(r) - cp)
+			off += copy(m[off:], r[cp:])
+		}
 		*(*T)(unsafe.Pointer(&m[vs+i*w])) = vals[i]
 	}
 	return p
 }
 
-// locate returns the position of the entry with the remainder r, or where it would
-// go, with the offset of its remainder in the object, and the offset where the
-// remainders end.
+// locate returns the position (slot) of the first value of the key with the remainder r, or
+// of the key that would follow it, with the offset of its remainder in the object, and the
+// offset where the remainders end.
 func (p *Fixed) locate(r []byte) (pos, off, keyEnd int, found bool) {
 	m := p.mem()
 	n := int(p.n)
-	off = Header + n + int(p.cpl)
+	lo := Header + p.cpl()
+	lens := m[lo : lo+n]
+	off = lo + n
 	pos = n
-	for i := range n {
-		rl := int(m[Header+i])
-		c := compare(m[off:off+rl], r)
+	for i, rl := range lens {
+		if rl == Further {
+			continue
+		}
+		c := compare(m[off:off+int(rl)], r)
 		if c >= 0 {
 			pos, found = i, c == 0
 			break
 		}
-		off += rl
+		off += int(rl)
 	}
-	keyEnd = off
-	for _, rl := range m[Header+pos : Header+n] {
-		keyEnd += int(rl)
+	sum, further := 0, 0
+	for _, rl := range lens[pos:] {
+		sum += int(rl)
+		further += (int(rl) + 1) >> 8 // 1 for Further
 	}
-	return pos, off, keyEnd, found
+	return pos, off, off + sum - Further*further, found
 }
 
 func valueAt[T comparable](m []byte, vs, i int) *T {
@@ -122,45 +135,89 @@ func valueAt[T comparable](m []byte, vs, i int) *T {
 // Used returns the bytes of the page that hold something.
 func (p *Fixed) Used() int {
 	m := p.mem()
-	keyEnd := Header + int(p.n) + int(p.cpl)
-	for _, rl := range m[Header : Header+int(p.n)] {
-		keyEnd += int(rl)
+	lo := Header + p.cpl()
+	sum, further := 0, 0
+	for _, rl := range m[lo : lo+int(p.n)] {
+		sum += int(rl)
+		further += (int(rl) + 1) >> 8 // 1 for Further
 	}
-	return keyEnd
+	return lo + int(p.n) + sum - Further*further
 }
 
-// Get returns the value of the key rest (the key from the end of the path on), or
+// Get returns the first value of the key rest (the key from the end of the path on), or
 // false if the page does not hold it.
 func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 	var zero T
-	if p.Match(rest) < int(p.cpl) {
+	if p.Match(rest) < p.cpl() {
 		return zero, false
 	}
-	pos, _, keyEnd, found := p.locate(rest[p.cpl:])
+	pos, _, keyEnd, found := p.locate(rest[p.cpl():])
 	if !found {
 		return zero, false
 	}
 	return *valueAt[T](p.mem(), valuesAt[T](keyEnd), pos), true
 }
 
-// Insert adds the entry rest -> v and returns the page that holds the result, which is
-// p itself unless the content no longer fits p's class, and says what happened (see
-// Result).
-func (p *Fixed) Insert[T comparable](rest []byte, v T) (*Fixed, Result) {
-	if p.Match(rest) < int(p.cpl) {
+// EachValue calls fn with every value of the key rest, in the order they came in, until fn
+// returns false, and reports whether the page holds the key.
+func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
+	if p.Match(rest) < p.cpl() {
+		return false
+	}
+	pos, _, keyEnd, found := p.locate(rest[p.cpl():])
+	if !found {
+		return false
+	}
+	m := p.mem()
+	n := int(p.n)
+	lo := Header + p.cpl()
+	vs := valuesAt[T](keyEnd)
+	for i := pos; ; {
+		if !fn(*valueAt[T](m, vs, i)) {
+			return true
+		}
+		if i++; i >= n || m[lo+i] != Further {
+			return true
+		}
+	}
+}
+
+// Insert is Add for a page whose keys have one value each: a key that is there with another
+// value is left alone, and the answer is Differs (the tree builds it again). Add replaces it
+// once the tree holds several values in a page.
+func (p *Fixed) Insert[T comparable](rest []byte, v T) (*Fixed, Result) { return p.add(rest, v, false) }
+
+// Add adds the value v to the key rest and returns the page that holds the result, which is
+// p itself unless the content no longer fits p's class, and says what happened (see Result).
+// A key that is there gets the value behind its others.
+func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) { return p.add(rest, v, true) }
+
+func (p *Fixed) add[T comparable](rest []byte, v T, multi bool) (*Fixed, Result) {
+	cpl := p.cpl()
+	if p.Match(rest) < cpl {
 		return p, Outside
 	}
-	r := rest[p.cpl:]
+	r := rest[cpl:]
 	pos, off, keyEnd, found := p.locate(r)
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
 	vs := valuesAt[T](keyEnd)
 	m := p.mem()
+	lo := Header + cpl
+	rl, slot, at := uint8(len(r)), pos, off
 	if found {
-		if *valueAt[T](m, vs, pos) == v {
-			return p, Present
+		for {
+			if *valueAt[T](m, vs, slot) == v {
+				return p, Present
+			}
+			if slot++; slot >= n || m[lo+slot] != Further {
+				break
+			}
 		}
-		return p, Differs
+		if !multi {
+			return p, Differs
+		}
+		rl, r, at = Further, nil, off+len(r)
 	}
 	if len(r) > MaxRemainder {
 		return p, Full
@@ -176,25 +233,26 @@ func (p *Fixed) Insert[T comparable](rest []byte, v T) (*Fixed, Result) {
 		q = (*Fixed)(grow(&p.head, c, vs+n*w))
 		m = q.mem()
 	}
-	copy(m[nvs+(pos+1)*w:nvs+(n+1)*w], m[vs+pos*w:vs+n*w])
-	copy(m[nvs:nvs+pos*w], m[vs:vs+pos*w])
-	a := Header + pos
-	copy(m[off+1+len(r):nk], m[off:keyEnd])
-	copy(m[a+1:off+1], m[a:off])
-	m[a] = uint8(len(r))
-	copy(m[off+1:], r)
+	copy(m[nvs+(slot+1)*w:nvs+(n+1)*w], m[vs+slot*w:vs+n*w])
+	copy(m[nvs:nvs+slot*w], m[vs:vs+slot*w])
+	a := lo + slot
+	copy(m[at+1+len(r):nk], m[at:keyEnd])
+	copy(m[a+1:at+1], m[a:at])
+	m[a] = rl
+	copy(m[at+1:], r)
 	clear(m[nk:nvs])
-	*valueAt[T](m, nvs, pos) = v
+	*valueAt[T](m, nvs, slot) = v
 	q.n++
-	return q, Added
+	return q, Added + Result(b2i(found))
 }
 
 // Widen is Page.Widen for values of one size: it adds the entry rest -> v, a key that leaves
 // the common prefix after mis = Match(rest) < PrefixLen() bytes, and shortens the prefix to those
 // bytes. It returns the new page, or nil if the entry does not go in.
 func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
+	cpl := p.cpl()
 	mis := p.Match(rest)
-	d := int(p.cpl) - mis
+	d := cpl - mis
 	n := int(p.n)
 	newRem := rest[mis:]
 	if len(newRem) > MaxRemainder {
@@ -202,12 +260,20 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	}
 	w, _ := sizeAlign[T]()
 	m := p.mem()
+	lo := Header + cpl
 	keyEnd := p.Used()
 	vs := valuesAt[T](keyEnd)
-	nk := keyEnd + 1 - d + n*d + len(newRem)
+	heads, longest := 0, 0
+	for _, rl := range m[lo : lo+n] {
+		if rl != Further {
+			heads++
+			longest = max(longest, int(rl))
+		}
+	}
+	nk := keyEnd + 1 - d + heads*d + len(newRem)
 	nvs := valuesAt[T](nk)
 	c := classFor(nvs + (n+1)*w)
-	if c < 0 {
+	if c < 0 || longest+d > MaxRemainder {
 		return nil
 	}
 	first := len(newRem) == 0 || newRem[0] < p.CP()[mis]
@@ -216,24 +282,30 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 		at = n
 	}
 	q := (*Fixed)(allocRaw(c))
-	q.objType, q.n, q.cpl = TypeBase+uint8(c)<<1, p.n+1, uint8(mis)
+	newHead(&q.head, c, n+1, mis)
 	out := q.mem()
-	for i := range n { // an old remainder cannot exceed 255 bytes: the content would exceed 512
-		out[Header+i+b2i(i >= at)] = m[Header+i] + uint8(d)
+	nlo := Header + mis
+	for i := range n {
+		rl := m[lo+i]
+		if rl != Further {
+			rl += uint8(d)
+		}
+		out[nlo+i+b2i(i >= at)] = rl
 	}
-	out[Header+at] = uint8(len(newRem))
-	off := Header + n + 1
-	off += copy(out[off:], p.CP()[:mis])
-	src := Header + n + int(p.cpl)
+	out[nlo+at] = uint8(len(newRem))
+	off := nlo + n + 1
+	copy(out[Header:], p.CP()[:mis])
+	src := lo + n
 	extra := p.CP()[mis:]
 	if first {
 		off += copy(out[off:], newRem)
 	}
 	for i := range n {
-		rl := int(m[Header+i])
-		off += copy(out[off:], extra)
-		off += copy(out[off:], m[src:src+rl])
-		src += rl
+		if rl := int(m[lo+i]); rl != Further {
+			off += copy(out[off:], extra)
+			off += copy(out[off:], m[src:src+rl])
+			src += rl
+		}
 	}
 	if !first {
 		copy(out[off:], newRem)
@@ -243,33 +315,50 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	return q
 }
 
-// Remove removes the entry rest -> v and reports whether it was there. It returns the
-// page that holds the rest: p itself, a page of a smaller class once the content
-// fills at most half of it, or nil if the entry was the only one (the page is
-// gone); see Page.Remove.
+// Remove removes the value v of the key rest and reports whether it was there; a key that has
+// no value left is gone. It returns the page that holds the rest: p itself, a page of a smaller
+// class once the content fills at most half of it, or nil if the value was the only one (the
+// page is gone); see Page.Remove.
 func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
-	if p.Match(rest) < int(p.cpl) {
+	cpl := p.cpl()
+	if p.Match(rest) < cpl {
 		return p, false
 	}
-	r := rest[p.cpl:]
+	r := rest[cpl:]
 	pos, off, keyEnd, found := p.locate(r)
+	if !found {
+		return p, false
+	}
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
 	vs := valuesAt[T](keyEnd)
 	m := p.mem()
-	if !found || *valueAt[T](m, vs, pos) != v {
-		return p, false
+	lo := Header + cpl
+	slot := pos
+	for *valueAt[T](m, vs, slot) != v {
+		if slot++; slot >= n || m[lo+slot] != Further {
+			return p, false
+		}
 	}
-	if n == 1 {
-		return nil, true
+	more := slot+1 < n && m[lo+slot+1] == Further
+	remOff, remLen := off+len(r), 0 // the remainder goes only with the last value of its key
+	if slot == pos {
+		if more { // the next value takes the key's place: its slot becomes the key's
+			m[lo+slot+1] = uint8(len(r))
+		} else {
+			if n == 1 {
+				return nil, true
+			}
+			remOff, remLen = off, len(r)
+		}
 	}
-	nk := keyEnd - 1 - len(r)
+	nk := keyEnd - 1 - remLen
 	nvs := valuesAt[T](nk)
-	a := Header + pos
-	copy(m[a:], m[a+1:off])
-	copy(m[off-1:], m[off+len(r):keyEnd])
-	copy(m[nvs:nvs+pos*w], m[vs:vs+pos*w])
-	copy(m[nvs+pos*w:], m[vs+(pos+1)*w:vs+n*w])
+	a := lo + slot
+	copy(m[a:], m[a+1:remOff])
+	copy(m[remOff-1:], m[remOff+remLen:keyEnd])
+	copy(m[nvs:nvs+slot*w], m[vs:vs+slot*w])
+	copy(m[nvs+slot*w:], m[vs+(slot+1)*w:vs+n*w])
 	end := nvs + (n-1)*w
 	clear(m[end : vs+n*w])
 	clear(m[nk:nvs])
@@ -280,20 +369,26 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
 	return p, true
 }
 
-// Each calls fn with the remainder (after the common prefix) and the value of every
-// entry in key order until fn returns false, and reports whether it ran to
-// completion. The remainders alias the page.
-func (p *Fixed) Each[T comparable](fn func(rem []byte, v T) bool) bool {
+// Each calls fn with the remainder (after the common prefix), the value and whether it is the
+// first value of its key, for every value in key order until fn returns false, and reports
+// whether it ran to completion. The remainders alias the page; that of a further value is its
+// key's.
+func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bool {
 	m := p.mem()
 	n := int(p.n)
-	off := Header + n + int(p.cpl)
+	lo := Header + p.cpl()
+	off := lo + n
 	vs := valuesAt[T](p.Used())
-	for i := range n {
-		rl := int(m[Header+i])
-		if !fn(m[off:off+rl], *valueAt[T](m, vs, i)) {
+	var rem []byte
+	for i, rl := range m[lo : lo+n] {
+		first := rl != Further
+		if first {
+			rem = m[off : off+int(rl)]
+			off += int(rl)
+		}
+		if !fn(rem, *valueAt[T](m, vs, i), first) {
 			return false
 		}
-		off += rl
 	}
 	return true
 }
@@ -308,12 +403,11 @@ func (p *Fixed) Skip[T comparable](k int) {
 	vs := valuesAt[T](keyEnd)
 	nk := keyEnd - k
 	nvs := valuesAt[T](nk)
-	at := Header + n
-	copy(m[at:], m[at+k:keyEnd])
+	copy(m[Header:], m[Header+k:keyEnd])
 	copy(m[nvs:nvs+n*w], m[vs:vs+n*w])
 	clear(m[nk:nvs])
 	clear(m[nvs+n*w : vs+n*w])
-	p.cpl -= uint8(k)
+	p.setCpl(p.cpl() - k)
 }
 
 // Prepend returns the page with pre in front of the common prefix: the page moves up
@@ -328,7 +422,7 @@ func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
 	nk := keyEnd + len(pre)
 	nvs := valuesAt[T](nk)
 	c := classFor(nvs + n*w)
-	if int(p.cpl)+len(pre) > MaxPrefix || c < 0 {
+	if p.cpl()+len(pre) > MaxPrefix || c < 0 {
 		return nil
 	}
 	q := p
@@ -337,10 +431,9 @@ func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
 	}
 	m := q.mem()
 	copy(m[nvs:nvs+n*w], m[vs:vs+n*w])
-	at := Header + n
-	copy(m[at+len(pre):nk], m[at:keyEnd])
-	copy(m[at:], pre)
+	copy(m[Header+len(pre):nk], m[Header:keyEnd])
+	copy(m[Header:], pre)
 	clear(m[nk:nvs])
-	q.cpl += uint8(len(pre))
+	q.setCpl(q.cpl() + len(pre))
 	return q
 }

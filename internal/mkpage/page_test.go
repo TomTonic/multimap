@@ -53,7 +53,7 @@ func checkPage(t *testing.T, p *Page, m model, prefix string) {
 	}
 	i := 0
 	cp := string(p.CP())
-	p.Each(func(rem, val []byte) bool {
+	p.Each(func(rem, val []byte, _ bool) bool {
 		if got := cp + string(rem); got != m[i].key || string(val) != m[i].val {
 			t.Fatalf("entry %d: %q -> %q, model %q -> %q", i, got, val, m[i].key, m[i].val)
 		}
@@ -219,8 +219,8 @@ func TestPageLimits(t *testing.T) {
 		{"values and keys differ in number", b("a", "b"), b("x"), false},
 		{"256 entries", many, manyV, false},
 		{"255 entries of one byte each", many[:255], manyV[:255], false}, // 3+255+255+255 = 768 bytes
-		{"a remainder of 256 bytes", b("a", "a"+strings.Repeat("x", 256)), b("1", "2"), false},
-		{"a remainder of 255 bytes", b("a", "a"+strings.Repeat("x", 255)), b("1", "2"), true},
+		{"a remainder of 255 bytes (the length of a further value)", b("a", "a"+strings.Repeat("x", 255)), b("1", "2"), false},
+		{"a remainder of 254 bytes", b("a", "a"+strings.Repeat("x", 254)), b("1", "2"), true},
 		{"a value of 255 bytes", b("a", "b"), b("1", strings.Repeat("v", 255)), false},
 		{"a value of 254 bytes", b("a", "b"), b("1", strings.Repeat("v", 254)), true},
 		{"content of 513 bytes", b("a", "b"), b(strings.Repeat("v", 254), strings.Repeat("v", 250)), false},
@@ -446,7 +446,7 @@ func TestPageEachAndEqual(t *testing.T) {
 	}
 	a := build([]string{"ab", "ac"}, "1", "2")
 	n := 0
-	if a.Each(func(rem, val []byte) bool { n++; return false }) || n != 1 {
+	if a.Each(func(rem, val []byte, _ bool) bool { n++; return false }) || n != 1 {
 		t.Errorf("Each did not stop: %d", n)
 	}
 	tests := []struct {

@@ -45,7 +45,7 @@ func checkFixed[T comparable](t *testing.T, p *Fixed, m fixedModel[T]) {
 	}
 	i := 0
 	cp := string(p.CP())
-	p.Each(func(rem []byte, v T) bool {
+	p.Each(func(rem []byte, v T, _ bool) bool {
 		if got := cp + string(rem); got != m[i].key || v != m[i].val {
 			t.Fatalf("entry %d: %q -> %v, model %q -> %v", i, got, v, m[i].key, m[i].val)
 		}
@@ -220,8 +220,8 @@ func TestFixedLimits(t *testing.T) {
 	if BuildFixed(many, manyV) != nil || BuildFixed(many[:100], manyV[:100]) == nil {
 		t.Error("256 entries or 100 entries of one byte")
 	}
-	if BuildFixed(b("a", "a"+strings.Repeat("x", 256)), []uint8{1, 2}) != nil || BuildFixed(b("a", "a"+strings.Repeat("x", 255)), []uint8{1, 2}) == nil {
-		t.Error("remainder of 256 or 255 bytes")
+	if BuildFixed(b("a", "a"+strings.Repeat("x", 255)), []uint8{1, 2}) != nil || BuildFixed(b("a", "a"+strings.Repeat("x", 254)), []uint8{1, 2}) == nil {
+		t.Error("remainder of 255 or 254 bytes")
 	}
 	if p := BuildFixed(b("a", "a"+strings.Repeat("x", 100)), []uint64{1, 2}); p == nil || p.Size() != 128 {
 		t.Errorf("two entries of 101 bytes: %v", p)
@@ -419,7 +419,7 @@ func TestFixedSkipAndPrepend(t *testing.T) {
 func TestFixedEach(t *testing.T) {
 	p := BuildFixed([][]byte{[]byte("a"), []byte("b")}, []uint64{1, 2})
 	n := 0
-	if p.Each(func(rem []byte, v uint64) bool { n++; return false }) || n != 1 {
+	if p.Each(func(rem []byte, v uint64, _ bool) bool { n++; return false }) || n != 1 {
 		t.Errorf("Each did not stop: %d", n)
 	}
 }

@@ -216,7 +216,7 @@ func (m *Map[T]) pageItems(n *header) []item[T] {
 		items = make([]item[T], 0, p.Len()+1)
 		cp := p.CP()
 		buf := make([]byte, 0, p.Len()*len(cp)+p.Used()) // room for every key: the keys are not longer than the page
-		p.Each(func(rem, val []byte) bool {
+		p.Each(func(rem, val []byte, _ bool) bool {
 			at := len(buf)
 			buf = append(append(buf, cp...), rem...)
 			items = append(items, item[T]{rest: buf[at:len(buf):len(buf)], val: fromStr[T](string(val))})
@@ -228,7 +228,7 @@ func (m *Map[T]) pageItems(n *header) []item[T] {
 	items = make([]item[T], 0, p.Len()+1)
 	cp := p.CP()
 	buf := make([]byte, 0, p.Len()*len(cp)+p.Used())
-	p.Each(func(rem []byte, v T) bool {
+	p.Each(func(rem []byte, v T, _ bool) bool {
 		at := len(buf)
 		buf = append(append(buf, cp...), rem...)
 		items = append(items, item[T]{rest: buf[at:len(buf):len(buf)], val: v})
@@ -517,7 +517,7 @@ func (m *Map[T]) scanPage(n *header, pathLen int, b *Bounds, lo, hi bool, kb *ke
 	if m.flat == 3 {
 		p := asMKStr(n)
 		cp := p.CP()
-		done = p.Each(func(rem, val []byte) bool {
+		done = p.Each(func(rem, val []byte, _ bool) bool {
 			var v T
 			if fn == nil {
 				v = fromStr[T](string(val))
@@ -527,7 +527,7 @@ func (m *Map[T]) scanPage(n *header, pathLen int, b *Bounds, lo, hi bool, kb *ke
 	} else {
 		p := asMKFix(n)
 		cp := p.CP()
-		done = p.Each(func(rem []byte, v T) bool { return visit(cp, rem, v) })
+		done = p.Each(func(rem []byte, v T, _ bool) bool { return visit(cp, rem, v) })
 	}
 	return done && !over
 }
@@ -565,7 +565,7 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 			if m.flat == 3 {
 				p := asMKStr(c)
 				cp := p.PrefixLen()
-				p.Each(func(rem, val []byte) bool {
+				p.Each(func(rem, val []byte, _ bool) bool {
 					sumRest += len(pre) + extra + cp + len(rem)
 					sumVal += len(val)
 					return true
@@ -574,7 +574,7 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 			} else {
 				p := asMKFix(c)
 				cp := p.PrefixLen()
-				p.Each(func(rem []byte, _ T) bool {
+				p.Each(func(rem []byte, _ T, _ bool) bool {
 					sumRest += len(pre) + extra + cp + len(rem)
 					return true
 				})

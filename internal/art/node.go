@@ -78,10 +78,13 @@ const (
 
 // A descent ends at an object of a type byte up to kLastMultiKey: the pages
 // come first, so that one comparison detects them: single-key pages first (up to
-// maxSingleKeyByte), then multi-key pages. The byte of a single-key page may have
-// its lowest bit set (a long remainder), so the largest byte of a class is its
-// largest type plus one; a multi-key page has no such bit.
-const maxSingleKeyByte = kLastSingleKey | 1
+// maxSingleKeyByte), then multi-key pages. The byte of a page may have its lowest bit set
+// (a single-key page: a long remainder, a multi-key page: a common prefix of 256 bytes or more),
+// so the largest byte of a class is its largest type plus one.
+const (
+	maxSingleKeyByte = kLastSingleKey | 1
+	maxPageByte      = kLastMultiKey | 1
+)
 
 // objTypeMask maps a type to an index of the tables below, which hold every type.
 const objTypeMask = 63
@@ -134,7 +137,7 @@ func isSingleKey(k objType) bool { return k <= maxSingleKeyByte }
 
 // isPage reports whether an object of type k is a page of either kind, which ends a
 // descent; isMultiKey tells a multi-key page among them.
-func isPage(k objType) bool { return k <= kLastMultiKey }
+func isPage(k objType) bool { return k <= maxPageByte }
 
 // isMultiKey reports whether an object of type k is a multi-key page, given that it is
 // a page.

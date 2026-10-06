@@ -160,7 +160,7 @@ func BenchmarkFixedScan(b *testing.B) {
 			values := 0
 			for i := range b.N {
 				p := pages[i&255]
-				p.Each(func(rem []byte, v uint64) bool { sum += v + uint64(len(rem)); return true })
+				p.Each(func(rem []byte, v uint64, _ bool) bool { sum += v + uint64(len(rem)); return true })
 				values += int(p.n)
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(values), "ns/value")
@@ -174,8 +174,9 @@ func BenchmarkFixedScan(b *testing.B) {
 				m := p.mem()
 				cnt := int(p.n)
 				vs := valuesAt[uint64](p.Used())
+				lo := Header + p.cpl()
 				for j := range cnt {
-					sum += *valueAt[uint64](m, vs, j) + uint64(m[Header+j])
+					sum += *valueAt[uint64](m, vs, j) + uint64(m[lo+j])
 				}
 				values += cnt
 			}

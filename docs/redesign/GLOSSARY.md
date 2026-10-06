@@ -80,7 +80,7 @@ Every object that stores entries stores only the end of their keys. The tree spe
   - **single-key page** *(planned, step 3)*: exactly one entry with all its values inline, as many as
     fit (not a number fixed by the header). (Before: *flat leaf*, *typed leaf*, and the inline part
     of the *set leaf*. SKMV; SKSV is the case of one value.)
-  - **multi-key page**: many entries with one value each, in key order. Two layouts exist as
+  - **multi-key page** (changed 2026-10-06, step 5): many entries, each with one or more values, in key order; a page whose entries have one value each is the case of step 4. Two layouts existed as
     prototypes: **layout A** (`internal/vpage`, a directory of tags; in the tree since step 2) and
     **layout B** (`internal/lpage`, a header of lengths, the user's sketch). (Before: `vpage`, `page`,
     leaf-page, U8 page. MKSV.)
@@ -123,8 +123,9 @@ Every object that stores entries stores only the end of their keys. The tree spe
 - **grow**, **shrink**: a page moves to the next larger or smaller size class (a new object).
 - **burst** (changed 2026-10-05, step 4): a full multi-key page is replaced by a byte node on the next byte in which its keys differ, with a page (or, for one entry, a single-key page)
   for each byte value. The tree has no range nodes in step 4; *before:* a full page was split at a byte boundary, or got a range node of its own.
-- **promote** (changed 2026-10-05): an entry that gets a second value leaves its multi-key page: the page's entries are built again with that entry as a single-key page
-  (`build`, the function that also does the burst).
+- **promote** (changed 2026-10-05; **goes with step 5.2**): an entry that gets a second value leaves its multi-key page: the page's entries are built again with that entry as a single-key page
+  (`build`, the function that also does the burst). In step 5 a second value is a **continuation** in the page.
+- **slot**, **continuation** (2026-10-06, `internal/mkpage`): a slot is one value of a multi-key page with its length byte; a continuation is the slot of a further value of the key before it: its length byte is `Further` (255) and it has no remainder.
 - **merge**: after a removal, a byte node whose children are single-value pages that fit one page together becomes one page.
 - **fall back**, **split**: retired (2026-10-05). A multi-key page never holds a multi-value entry, so no subtree needs a fall back; there is no range node to split at. (Before: `settle`, `crowded`.)
 

@@ -412,3 +412,61 @@ func TestMultiKeyPageMergeWaitsForNearlyEmptyPage(t *testing.T) {
 	}
 	checkInvariants(t, &m.t)
 }
+
+// TestMultiKeyPageLongPrefix makes sure that keys which share 300 bytes below the last byte
+// node still share one page: the common prefix of a page has nine bits (the lowest bit of the
+// type byte is the ninth), and the page keeps it through the byte nodes that come and go above it.
+//
+// A user whose keys are long paths or URLs with a long common start, a few of them below one
+// branch, gets one object for them and not a node and a single-key page each.
+//
+// Expected: three keys with a 300-byte common start are one page with that prefix; a key that
+// leaves the prefix after 100 bytes puts a node above the page, which then holds 199 bytes of
+// prefix; when that key goes the page has 300 again; every key is found all the time.
+func TestMultiKeyPageLongPrefix(t *testing.T) {
+	t.Run("strings", func(t *testing.T) { runLongPrefix(t, func(i int) string { return fmt.Sprint("v", i) }) })
+	t.Run("uint64", func(t *testing.T) { runLongPrefix(t, func(i int) uint64 { return uint64(i) }) })
+}
+
+func runLongPrefix[T comparable](t *testing.T, val func(i int) T) {
+	var m Map[T]
+	long := strings.Repeat("p", 300)
+	var keys [][]byte
+	for i := range 3 {
+		keys = append(keys, fmt.Appendf(nil, "%s%c", long, 'A'+i))
+		m.Add(keys[i], val(i))
+	}
+	prefix := func() (n int) {
+		m.Objects(func(o Object) {
+			if o.Label == "multi-key page" {
+				n = o.Remainder
+			}
+		})
+		return n
+	}
+	if pages, inPages := pageCount(&m); pages != 1 || inPages != 3 || prefix() < 255 {
+		t.Fatalf("%d pages with %d keys and a prefix of %d bytes, want one with 3 and 300 or so", pages, inPages, prefix())
+	}
+	check := func() {
+		t.Helper()
+		checkInvariants(t, &m.t)
+		for i, k := range keys {
+			if got := valuesOf(&m, k); !slices.Equal(got, []T{val(i)}) {
+				t.Fatalf("key %d holds %v", i, got)
+			}
+		}
+	}
+	check()
+	other := []byte(long[:100] + "X")
+	m.Add(other, val(9))
+	m.Add(other, val(10)) // two values: a single-key page, which stays when the others go
+	check()
+	if p := prefix(); p >= 255 {
+		t.Fatalf("with a node above, the page's prefix is %d bytes", p)
+	}
+	m.RemoveKey(other)
+	check()
+	if pages, inPages := pageCount(&m); pages != 1 || inPages != 3 || prefix() < 255 {
+		t.Fatalf("after the other key is gone: %d pages with %d keys and a prefix of %d bytes", pages, inPages, prefix())
+	}
+}
