@@ -131,3 +131,13 @@ GC per cycle +2 to +6 ms (`single-value`), +8 to +22 ms (real).
 What is left of the gap is, from the probe: the scan of a page (two closures per entry, 8.2 ns a value against `btree-map`'s fewer ns; `valuesBetween` in a page-heavy tree), and at 4,096 and 16,384 keys the remaining cost of
 the removal of a key (a page copy, the merge tries at pages with one or two entries). Neither is a question of the design; they are the options B of the step-4.2 report (scan, allocation-free page change).
 
+
+## The same commit on the M1 Pro (job `m43`, finished before 2026-10-06 06:00)
+
+Raw: `bench/results-layout/step4-probe/m1-m43/` (M1 Pro, 4 to 8 processes, 12 of 307 rows imprecise; sizes 4,096, 16,384, 65,536; memory at 262,144 / 212,449 / 86,215). Ratios as above.
+
+- **Memory** is the PC's to the byte: 24, 27, 40 (`single-value`), 123, 73, 95 (real), against 45, 55, 96 (`btree-map`) and 352, 285, 336 (`btree-sets`); after removing half 20, 20, 30 against 27, 28, 49.
+- **Real mix, against `btree-sets`:** `churn` 1.10 to 2.78, `build` 1.09 to 2.88, ranges 1.63 to 2.39, `valuesFor` 1.55 to 4.03: credo 1 and 2 are met in every cell. Against step 3.5: `churn` 0.74 to 0.96, `build` 0.72 to 0.95 (slower than step 3.5, faster than the competitor).
+- **`single-value` against `btree-map`:** `churn` 0.73 to 1.14 for the string keys (0.73 `dirs` 4,096, 1.04 to 1.14 at 65,536), 1.93 to 2.49 for `uint64`; `build` 0.72 to 1.11 and 1.87 to 2.23. Against step 3.5: `churn` 0.80 to 1.11, `build` 0.82 to 1.01.
+- **Not met, as on the PC and worse:** the ranges of `single-value` against `btree-map`: `valuesBetween` 0.28 to 0.55, `prefix` 0.32 to 0.71 (PC: 0.30 to 0.68 and 0.40 to 0.65). `valuesFor` of `uint64` at 4,096 is 0.51 of step 3.5 (PC: 0.53), at 65,536 0.75.
+- The M1 has 128-byte cache lines; the pages are 32 to 512 bytes in a 64-byte-line design, and nothing here is specific to one machine: the order of the cases is the PC's.
