@@ -49,10 +49,11 @@ l4 c4dc4b6 - 40 tags=strvals -suite dev -keys dirs -values multi -sizes 4096,163
 # are the worst case of the memory (docs/redesign/step4-probe.md).
 m43 3e1e952 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 
-# Gate 5 of step 5 on the M1 Pro (2026-10-06): the tree with several values in the multi-key pages (5.2) and with the
-# pointer pages (5.3), commit 54e9297 (7929687 and the fix of the crash that the PC run m44 found: dirs, natural values), against step 3.5 (fe120f5); the same cases as m43. The PC runs the same
-# commit (m44, three builds: u64, strings, pointers). m44 uint64 values, m44s strings (street, dirs), m44p pointers
-# (tags=ptrvals; maps of pointers churn a lot, the page of 5.3 is a stage: step5-mkmv-design.md 5.6). The machine must be at rest.
-m44  54e9297 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-m44s 54e9297 fe120f5 100 tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-m44p 54e9297 fe120f5 150 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+# Gate 5 of step 5 on the M1 Pro: DEFERRED (user, 2026-10-06) to the end of step 5, after 5.5 (shared head) and 5.6 (the
+# in-place pointer page), so that the M1 measures the code that ships and not a stage (the page of pointers of 5.3 is
+# known to be slow: PC run m44). The jobs are written again then with the commit of that day; sketch of the cases:
+#   m44  <ref> fe120f5 100 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+#   m44s <ref> fe120f5 65  tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+#   m44p <ref> fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+# (m43 took 1h40 for the same cases as m44, not the 150 minutes estimated.) In between, short jobs on the M1 for the page level
+# (BenchmarkFixed / BenchmarkFixedPointers) when 5.5 or 5.6 need the 128-byte cache lines.
