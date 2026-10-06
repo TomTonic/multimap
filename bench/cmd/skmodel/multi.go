@@ -101,7 +101,9 @@ func (m *mkModel) mkSize(lo, hi, d int) (size, cp int) {
 		lens = pairs + n
 	}
 	switch *valuesF {
-	case "words", "pointers", "words-len":
+	case "words", "words-len": // the values end with the object: no padding
+		size = 3 + lens + cp + rems + vals
+	case "pointers": // the typed object holds the keys in whole words
 		size = 3 + lens + cp + rems
 		size = (size + 7) &^ 7
 		size += vals

@@ -173,7 +173,7 @@ func BenchmarkFixedScan(b *testing.B) {
 				p := pages[i&255]
 				m := p.mem()
 				cnt := int(p.n)
-				vs := valuesAt[uint64](p.Used())
+				vs := p.vs(8)
 				lo := Header + p.cpl()
 				for j := range cnt {
 					sum += *valueAt[uint64](m, vs, j) + uint64(m[lo+j])

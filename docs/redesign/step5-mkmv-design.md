@@ -38,7 +38,7 @@ The count byte costs a byte for every entry (+5.6 % with one value per entry, +1
 ```
 head (3 bytes, as the single-key page's first two, user 2026-10-06): type (bit 0 = bit 8 of the next byte) | cpl (low 8 bits: the length of the common prefix, 9 bits in all) | n (number of length bytes)
 strings:  head | cp ... cp | rl1 rl2 ... rln | r1 vl1 v1 | vl v (a further value of entry 1: rl = 255) | r2 vl2 v2 | ...
-fixed T:  head | cp ... cp | rl1 rl2 ... rln | the remainders of the entries with rl != 255 | padding to a word | v1 v2 ... vn  (one slot a length byte, the entry's values side by side)
+fixed T:  head | cp ... cp | rl1 rl2 ... rln | the remainders of the entries with rl != 255 | zeros | v1 v2 ... vn  (one slot a length byte, the entry's values side by side; the array ends with the object, decided 2026-10-06 after 5.1: a reader finds it without adding up the length list)
 ```
 
 **The head is the single-key page's first two bytes in meaning and place:** `type` with its lowest bit as bit 8, then the nine-bit length of the stored key part (`klen`) - for the single-key page its remainder, for this page the common prefix. Code that

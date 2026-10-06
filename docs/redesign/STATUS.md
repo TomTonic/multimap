@@ -1,9 +1,9 @@
 # Status
 
-## 2026-10-06: step 5.1 built: the page with several values a key ([results](step5-mkpage-results.md)); stopped for the user: page-level speed misses the prediction
+## 2026-10-06: step 5.1 built: the page with several values a key ([results](step5-mkpage-results.md)); option B built too (values of `Fixed` at the end); waiting for the go for 5.2
 
 - `internal/mkpage` (both flavors): the head `type | cpl (9 bits) | n`, the prefix behind it, `Further` (255) for a further value; `Add`, `Remove`, `EachValue`, `Keys`, `Each` with a flag; 100 % (race), fuzz 40 s, lint 0; the tree compiles on it unchanged in behaviour (`maxPageByte`, 255-byte-prefix pages possible now).
-- **Surprise:** Get +3 to 12 %, insert/remove +9 to 17 %, `Each` +36 to 45 % against the page of step 4: the sum of the length list that finds the values now skips the 255s. Option B (the values of `Fixed` at the end of the object, which also matches the pointer pages) in the report.
+- **Surprise:** Get +3 to 12 %, insert/remove +9 to 17 %, `Each` +36 to 45 % against the page of step 4: the sum of the length list that finds the values now skips the 255s. Option B (the values of `Fixed` at the end of the object, which also matches the pointer pages) was built the same day: Get and changes back at the page of step 4 (1.00 to 1.03; one miss: Get of an absent key in 20 entries +21 %), `Each` +15 %, memory unchanged.
 
 ## 2026-10-06: step 5 (MKMV) design note written, approved ([step5-mkmv-design.md](step5-mkmv-design.md))
 

@@ -41,11 +41,28 @@ no such sum (its values are behind their keys), and its Get is 3 to 5 % slower o
 ## Options (for the user; none is built)
 
 - **A. Accept and measure in the tree** (5.2). A page is one object in a descent of three or four; 3 to 12 % at the page may be 1 to 3 % of an operation. The risk is the scans, where the page is most of the work.
-- **B. Values at the end of the object** (`Fixed` only). The array of values sits at `Size - n*w`, not behind the remainders: **no sum is needed to read** (Get and `Each` read `m[Size-(n-pos)*w]`); only a change of the page adds up the lengths. It is also what the typed
+- **B. Values at the end of the object (built, see below)** (`Fixed` only). The array of values sits at `Size - n*w`, not behind the remainders: **no sum is needed to read** (Get and `Each` read `m[Size-(n-pos)*w]`); only a change of the page adds up the lengths. It is also what the typed
   pointer pages of 5.3 are anyway (`ptrObject[T, [J]uint64, [N]T]` has its `N` slots at the end), so both flavors would have one layout. It costs nothing in bytes (the padding before the values becomes a gap of zeros, and a page needs `keyEnd + n*w`,
   not `align(keyEnd) + n*w`: on average a little less, some pages one class smaller). Prediction: Get and `Each` as before the change or better (`Each` 2.0 ns a value or less, the loop 0.9), insert and remove as now (the values array moves
   by one slot at an insert at the front, as it moved before); memory unchanged to a few tenths of a byte an entry.
 - **C. Cache the end of the keys in the head**: a fourth byte (nine bits do not fit the one) for both flavors; it belongs to the question of the shared head (step 5.5) and costs a byte a page (+0.15 B an entry).
 - **D. The 8-byte sum with SWAR** (eight length bytes at a time): helps `n` above 8, costs a page-edge case at the end of the object; not before B or C show they are not enough.
 
-My proposal is **B** (a change of `Fixed` only, in the test suite's model the same), then 5.2 with the tree. Waiting for your decision.
+My proposal was **B**; the user agreed (2026-10-06). Built the same day, results below.
+
+## Option B built: the values of `Fixed` at the end of the object
+
+`Fixed.vs() = Size - n*w`; reads (`Get`, `EachValue`, `Each`) never add up the length list, only changes do (`keyEndFrom`). The class of a page needs `keyEnd + n*w` (no padding to the alignment of `T`: the object's size and the array's size are multiples of
+what `T` needs). All 100 % tests pass, race, fuzz; the one bug of the change was found by the model test at once (the end of the keys must be measured before a slot is turned into the key's). Page level against the page of step 4 (WSL, median of 4):
+
+| `Fixed` | n=3 | n=7 | n=20 |
+|---|--:|--:|--:|
+| Get hit | 1.01 | 0.96 | 1.00 |
+| Get miss | 1.00 | 1.09 | 1.21 |
+| insert and remove | 1.00 | 1.00 | 1.03 |
+| scan with `Each`, ns a value | | 2.3 → 2.6 | 2.0 → 2.3 |
+| scan, loop without a function per entry, ns a value | | 1.04 → 0.97 | 0.85 → 0.65 |
+
+**Gets and changes are back at the page of step 4 (the prediction); the scan with `Each` is 15 % slower (2.3 ns a value for 20 entries, within the 2.5 of the prediction; for 7 entries 2.6); the plain loop is faster than before. The one miss is `Get` of an absent key in a page of 20 entries
+(+21 %: one more compare of the length byte against `Further` for every slot).** Memory is unchanged to the byte (model 26.9 / 39.5 / 24.0; `objstat` 28.1, 41.0, 24.0 at the sizes that match). The pages of strings (no sum to find their values) are as in the first table: Get +3 to 12 %,
+insert and remove +9 to 17 % (not changed in this step).

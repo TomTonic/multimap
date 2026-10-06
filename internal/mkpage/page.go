@@ -10,7 +10,7 @@
 //
 // and the page of values of one size (a pointer-free T), Fixed:
 //
-//	type | cpl | n | common prefix | rl 1 ... rl n | remainders | padding to the alignment of T | value 1 ... value n
+//	type | cpl | n | common prefix | rl 1 ... rl n | remainders | zeros | value 1 ... value n (the values end with the object)
 //
 // type is the size class (plus TypeBase, in steps of two); its lowest bit is bit 8 of
 // the next byte, so that cpl, the length of the common prefix (the bytes that all keys of

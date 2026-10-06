@@ -8,9 +8,12 @@ import (
 
 // Fixed is the multi-key page of values of one size, see the package comment: for
 // the maps whose values are small and hold no pointer (a uint64). The values are
-// an array of T behind the remainders, in the order of the entries, and compared as
-// T (a == b), not as bytes. The pointer page (a T that is a word with a pointer,
-// the typed objects of skpage) is step 4.3.
+// an array of T at the end of the object, one for each slot in the order of the slots,
+// and compared as T (a == b), not as bytes: the array does not move when the keys grow or
+// shrink in front of it, and a reader finds it without adding up the length list (it ends
+// with the object, as the slots of the typed objects of a pointer page do). Between the
+// remainders and the values the bytes are zero. The pointer page (a T that is a word with
+// a pointer, the typed objects of skpage) is step 5.3.
 //
 // The methods are generic in T and do not carry it: the tree holds untyped *Fixed
 // pointers, as it holds *Page, and the map that owns the page names T in every
@@ -28,21 +31,18 @@ func sizeAlign[T comparable]() (w, a int) {
 	return int(unsafe.Sizeof(z)), int(unsafe.Alignof(z))
 }
 
-// valuesAt returns the offset of the values of a page whose keys end at keyEnd:
-// the next multiple of the alignment of T.
-func valuesAt[T comparable](keyEnd int) int {
-	_, a := sizeAlign[T]()
-	return (keyEnd + a - 1) &^ (a - 1)
-}
-
-// NeedFixed returns the bytes a Fixed page of T takes for n entries whose
-// remainders (after a common prefix of cpl bytes) are remBytes in all. The tree
-// calls it to decide, before it builds anything, whether the entries of a subtree
+// NeedFixed returns the bytes a Fixed page of T takes for n slots whose remainders
+// (after a common prefix of cpl bytes) are remBytes in all (the slots with Further have none).
+// The tree calls it to decide, before it builds anything, whether the entries of a subtree
 // fit a page (at most 512).
 func NeedFixed[T comparable](n, cpl, remBytes int) int {
 	w, _ := sizeAlign[T]()
-	return valuesAt[T](Header+n+cpl+remBytes) + n*w
+	return Header + n + cpl + remBytes + n*w
 }
+
+// vs returns where the values start: the array ends with the object. The object is a
+// multiple of 8 bytes and the array a multiple of the size of T, so T is aligned.
+func (p *Fixed) vs(w int) int { return p.Size() - int(p.n)*w }
 
 // BuildFixed returns a page for the values vals of the keys rests (the keys from the
 // end of the path on, in key order: a key with several values appears once for each, one
@@ -75,14 +75,14 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 		keyEnd += len(r) - cp
 	}
 	w, _ := sizeAlign[T]()
-	vs := valuesAt[T](keyEnd)
-	c := classFor(vs + n*w)
+	c := classFor(keyEnd + n*w)
 	if c < 0 {
 		return nil
 	}
 	p := (*Fixed)(allocRaw(c))
 	newHead(&p.head, c, n, cp)
 	m := p.mem()
+	vs := p.vs(w)
 	lo := Header + cp
 	off := lo + n
 	copy(m[Header:], rests[0][:cp])
@@ -99,16 +99,14 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T) *Fixed {
 }
 
 // locate returns the position (slot) of the first value of the key with the remainder r, or
-// of the key that would follow it, with the offset of its remainder in the object, and the
-// offset where the remainders end.
-func (p *Fixed) locate(r []byte) (pos, off, keyEnd int, found bool) {
+// of the key that would follow it, with the offset of its remainder in the object.
+func (p *Fixed) locate(r []byte) (pos, off int, found bool) {
 	m := p.mem()
 	n := int(p.n)
 	lo := Header + p.cpl()
-	lens := m[lo : lo+n]
 	off = lo + n
 	pos = n
-	for i, rl := range lens {
+	for i, rl := range m[lo : lo+n] {
 		if rl == Further {
 			continue
 		}
@@ -119,12 +117,20 @@ func (p *Fixed) locate(r []byte) (pos, off, keyEnd int, found bool) {
 		}
 		off += int(rl)
 	}
+	return pos, off, found
+}
+
+// keyEndFrom returns the offset where the remainders end, given the offset off of the
+// remainder of the key at slot pos (the first slot of a key, or n).
+func (p *Fixed) keyEndFrom(pos, off int) int {
+	m := p.mem()
+	lo := Header + p.cpl()
 	sum, further := 0, 0
-	for _, rl := range lens[pos:] {
+	for _, rl := range m[lo+pos : lo+int(p.n)] {
 		sum += int(rl)
 		further += (int(rl) + 1) >> 8 // 1 for Further
 	}
-	return pos, off, off + sum - Further*further, found
+	return off + sum - Further*further
 }
 
 func valueAt[T comparable](m []byte, vs, i int) *T {
@@ -132,17 +138,9 @@ func valueAt[T comparable](m []byte, vs, i int) *T {
 	return (*T)(unsafe.Pointer(&m[vs+i*w]))
 }
 
-// Used returns the bytes of the page that hold something.
-func (p *Fixed) Used() int {
-	m := p.mem()
-	lo := Header + p.cpl()
-	sum, further := 0, 0
-	for _, rl := range m[lo : lo+int(p.n)] {
-		sum += int(rl)
-		further += (int(rl) + 1) >> 8 // 1 for Further
-	}
-	return lo + int(p.n) + sum - Further*further
-}
+// Used returns the bytes of the page that hold keys: where the remainders end. The values
+// are at the end of the object.
+func (p *Fixed) Used() int { return p.keyEndFrom(0, Header+p.cpl()+int(p.n)) }
 
 // Get returns the first value of the key rest (the key from the end of the path on), or
 // false if the page does not hold it.
@@ -151,11 +149,12 @@ func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 	if p.Match(rest) < p.cpl() {
 		return zero, false
 	}
-	pos, _, keyEnd, found := p.locate(rest[p.cpl():])
+	pos, _, found := p.locate(rest[p.cpl():])
 	if !found {
 		return zero, false
 	}
-	return *valueAt[T](p.mem(), valuesAt[T](keyEnd), pos), true
+	w, _ := sizeAlign[T]()
+	return *valueAt[T](p.mem(), p.vs(w), pos), true
 }
 
 // EachValue calls fn with every value of the key rest, in the order they came in, until fn
@@ -164,14 +163,15 @@ func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 	if p.Match(rest) < p.cpl() {
 		return false
 	}
-	pos, _, keyEnd, found := p.locate(rest[p.cpl():])
+	pos, _, found := p.locate(rest[p.cpl():])
 	if !found {
 		return false
 	}
 	m := p.mem()
 	n := int(p.n)
 	lo := Header + p.cpl()
-	vs := valuesAt[T](keyEnd)
+	w, _ := sizeAlign[T]()
+	vs := p.vs(w)
 	for i := pos; ; {
 		if !fn(*valueAt[T](m, vs, i)) {
 			return true
@@ -198,10 +198,10 @@ func (p *Fixed) add[T comparable](rest []byte, v T, multi bool) (*Fixed, Result)
 		return p, Outside
 	}
 	r := rest[cpl:]
-	pos, off, keyEnd, found := p.locate(r)
+	pos, off, found := p.locate(r)
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
-	vs := valuesAt[T](keyEnd)
+	vs := p.vs(w)
 	m := p.mem()
 	lo := Header + cpl
 	rl, slot, at := uint8(len(r)), pos, off
@@ -222,25 +222,29 @@ func (p *Fixed) add[T comparable](rest []byte, v T, multi bool) (*Fixed, Result)
 	if len(r) > MaxRemainder {
 		return p, Full
 	}
+	keyEnd := p.keyEndFrom(pos, off)
 	nk := keyEnd + 1 + len(r)
-	nvs := valuesAt[T](nk)
-	c := classFor(nvs + (n+1)*w)
+	c := classFor(nk + (n+1)*w)
 	if c < 0 {
 		return p, Full
 	}
-	q := p
+	q, old := p, m
 	if c > p.class() {
-		q = (*Fixed)(grow(&p.head, c, vs+n*w))
+		q = (*Fixed)(grow(&p.head, c, keyEnd))
 		m = q.mem()
 	}
-	copy(m[nvs+(slot+1)*w:nvs+(n+1)*w], m[vs+slot*w:vs+n*w])
-	copy(m[nvs:nvs+slot*w], m[vs:vs+slot*w])
+	// the array grows at its front: the values before the new one move down by one slot,
+	// those behind it stay where they are (from the old object, if the page grew)
+	nvs := len(m) - (n+1)*w
+	copy(m[nvs:nvs+slot*w], old[vs:vs+slot*w])
+	if q != p {
+		copy(m[nvs+(slot+1)*w:], old[vs+slot*w:vs+n*w])
+	}
 	a := lo + slot
 	copy(m[at+1+len(r):nk], m[at:keyEnd])
 	copy(m[a+1:at+1], m[a:at])
 	m[a] = rl
 	copy(m[at+1:], r)
-	clear(m[nk:nvs])
 	*valueAt[T](m, nvs, slot) = v
 	q.n++
 	return q, Added + Result(b2i(found))
@@ -262,7 +266,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	m := p.mem()
 	lo := Header + cpl
 	keyEnd := p.Used()
-	vs := valuesAt[T](keyEnd)
+	vs := p.vs(w)
 	heads, longest := 0, 0
 	for _, rl := range m[lo : lo+n] {
 		if rl != Further {
@@ -271,8 +275,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 		}
 	}
 	nk := keyEnd + 1 - d + heads*d + len(newRem)
-	nvs := valuesAt[T](nk)
-	c := classFor(nvs + (n+1)*w)
+	c := classFor(nk + (n+1)*w)
 	if c < 0 || longest+d > MaxRemainder {
 		return nil
 	}
@@ -310,6 +313,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	if !first {
 		copy(out[off:], newRem)
 	}
+	nvs := len(out) - (n+1)*w
 	copy(out[nvs+b2i(first)*w:nvs+b2i(first)*w+n*w], m[vs:vs+n*w])
 	*valueAt[T](out, nvs, at) = v
 	return q
@@ -325,13 +329,13 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
 		return p, false
 	}
 	r := rest[cpl:]
-	pos, off, keyEnd, found := p.locate(r)
+	pos, off, found := p.locate(r)
 	if !found {
 		return p, false
 	}
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
-	vs := valuesAt[T](keyEnd)
+	vs := p.vs(w)
 	m := p.mem()
 	lo := Header + cpl
 	slot := pos
@@ -340,6 +344,7 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
 			return p, false
 		}
 	}
+	keyEnd := p.keyEndFrom(pos, off) // before the length list changes
 	more := slot+1 < n && m[lo+slot+1] == Further
 	remOff, remLen := off+len(r), 0 // the remainder goes only with the last value of its key
 	if slot == pos {
@@ -353,18 +358,19 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
 		}
 	}
 	nk := keyEnd - 1 - remLen
-	nvs := valuesAt[T](nk)
 	a := lo + slot
 	copy(m[a:], m[a+1:remOff])
 	copy(m[remOff-1:], m[remOff+remLen:keyEnd])
-	copy(m[nvs:nvs+slot*w], m[vs:vs+slot*w])
-	copy(m[nvs+slot*w:], m[vs+(slot+1)*w:vs+n*w])
-	end := nvs + (n-1)*w
-	clear(m[end : vs+n*w])
-	clear(m[nk:nvs])
+	clear(m[nk:keyEnd])
+	// the array shrinks at its front: the values before the removed one move up by one slot
+	copy(m[vs+w:vs+(slot+1)*w], m[vs:vs+slot*w])
+	clear(m[vs : vs+w])
 	p.n--
-	if c := classFor(2 * end); c >= 0 && c < p.class() {
-		return (*Fixed)(grow(&p.head, c, end)), true
+	if c := classFor(2 * (nk + (n-1)*w)); c >= 0 && c < p.class() {
+		q := (*Fixed)(grow(&p.head, c, nk))
+		out := q.mem()
+		copy(out[len(out)-(n-1)*w:], m[vs+w:vs+n*w])
+		return q, true
 	}
 	return p, true
 }
@@ -378,7 +384,8 @@ func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bo
 	n := int(p.n)
 	lo := Header + p.cpl()
 	off := lo + n
-	vs := valuesAt[T](p.Used())
+	w, _ := sizeAlign[T]()
+	vs := p.vs(w)
 	var rem []byte
 	for i, rl := range m[lo : lo+n] {
 		first := rl != Further
@@ -397,16 +404,9 @@ func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bo
 // tree has put a byte node above the page that consumes them. It happens in place.
 func (p *Fixed) Skip[T comparable](k int) {
 	m := p.mem()
-	n := int(p.n)
-	w, _ := sizeAlign[T]()
 	keyEnd := p.Used()
-	vs := valuesAt[T](keyEnd)
-	nk := keyEnd - k
-	nvs := valuesAt[T](nk)
 	copy(m[Header:], m[Header+k:keyEnd])
-	copy(m[nvs:nvs+n*w], m[vs:vs+n*w])
-	clear(m[nk:nvs])
-	clear(m[nvs+n*w : vs+n*w])
+	clear(m[keyEnd-k : keyEnd])
 	p.setCpl(p.cpl() - k)
 }
 
@@ -418,22 +418,19 @@ func (p *Fixed) Prepend[T comparable](pre []byte) *Fixed {
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
 	keyEnd := p.Used()
-	vs := valuesAt[T](keyEnd)
 	nk := keyEnd + len(pre)
-	nvs := valuesAt[T](nk)
-	c := classFor(nvs + n*w)
+	c := classFor(nk + n*w)
 	if p.cpl()+len(pre) > MaxPrefix || c < 0 {
 		return nil
 	}
 	q := p
 	if c > p.class() {
-		q = (*Fixed)(grow(&p.head, c, vs+n*w))
+		q = (*Fixed)(grow(&p.head, c, keyEnd))
+		copy(q.mem()[q.Size()-n*w:], p.mem()[p.Size()-n*w:])
 	}
 	m := q.mem()
-	copy(m[nvs:nvs+n*w], m[vs:vs+n*w])
 	copy(m[Header+len(pre):nk], m[Header:keyEnd])
 	copy(m[Header:], pre)
-	clear(m[nk:nvs])
 	q.setCpl(q.cpl() + len(pre))
 	return q
 }

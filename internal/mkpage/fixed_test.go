@@ -25,10 +25,10 @@ func (m fixedModel[T]) find(key string) (int, bool) {
 	return i, i < len(m) && m[i].key == key
 }
 
-// fixedEnd returns where the values of a page end: the end of the used part, aligned,
-// plus the values.
+// fixedEnd returns the content of a page: its keys and its values (which sit at the end of the
+// object, with zeros between).
 func fixedEnd[T comparable](p *Fixed) int {
-	return valuesAt[T](p.Used()) + p.Len()*int(unsafe.Sizeof(*new(T)))
+	return p.Used() + p.Len()*int(unsafe.Sizeof(*new(T)))
 }
 
 // checkFixed compares a page with the model and checks its invariants.
@@ -54,12 +54,12 @@ func checkFixed[T comparable](t *testing.T, p *Fixed, m fixedModel[T]) {
 	})
 	end := fixedEnd[T](p)
 	if end > p.Size() {
-		t.Fatalf("values end at %d, the object has %d bytes", end, p.Size())
+		t.Fatalf("content %d, the object has %d bytes", end, p.Size())
 	}
 	mem := p.mem()
-	vs := valuesAt[T](p.Used())
-	if bytes.Count(mem[end:], []byte{0}) != p.Size()-end || bytes.Count(mem[p.Used():vs], []byte{0}) != vs-p.Used() {
-		t.Fatalf("bytes behind the used part are not zero")
+	vs := p.vs(int(unsafe.Sizeof(*new(T))))
+	if bytes.Count(mem[p.Used():vs], []byte{0}) != vs-p.Used() {
+		t.Fatalf("bytes between the keys and the values are not zero")
 	}
 	for _, e := range m {
 		if v, ok := p.Get[T]([]byte(e.key)); !ok || v != e.val {
@@ -237,7 +237,7 @@ func TestFixedLimits(t *testing.T) {
 			t.Errorf("%d entries of one byte: built %v, want %v (need %d)", n, got, want, NeedFixed[uint64](n, 0, n))
 		}
 	}
-	if NeedFixed[uint64](2, 1, 4) != 16+16 {
+	if NeedFixed[uint64](2, 1, 4) != 3+2+1+4+16 {
 		t.Errorf("NeedFixed = %d", NeedFixed[uint64](2, 1, 4))
 	}
 }

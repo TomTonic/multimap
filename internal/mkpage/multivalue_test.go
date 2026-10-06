@@ -240,14 +240,12 @@ func (f *fixedPage) counts() (int, int) { return f.p.Len(), f.p.Keys() }
 func (f *fixedPage) invariants(t *testing.T) {
 	t.Helper()
 	used := f.p.Used()
-	vs := valuesAt[uint64](used)
-	end := vs + f.p.Len()*int(unsafe.Sizeof(uint64(0)))
-	if end > f.p.Size() {
-		t.Fatalf("values end at %d, the object has %d bytes", end, f.p.Size())
+	vs := f.p.vs(int(unsafe.Sizeof(uint64(0))))
+	if vs < used {
+		t.Fatalf("values start at %d, the keys end at %d", vs, used)
 	}
-	mem := f.p.mem()
-	if bytes.Count(mem[end:], []byte{0}) != f.p.Size()-end || bytes.Count(mem[used:vs], []byte{0}) != vs-used {
-		t.Fatal("bytes behind the used part are not zero")
+	if mem := f.p.mem(); bytes.Count(mem[used:vs], []byte{0}) != vs-used {
+		t.Fatal("bytes between the keys and the values are not zero")
 	}
 }
 
@@ -362,8 +360,10 @@ func runMV(t *testing.T, flavor mvPage) {
 			if i, ok := m.find(key); ok && r.IntN(3) == 0 {
 				val = m[i].vals[r.IntN(len(m[i].vals))]
 			}
+			opName := "add"
 			switch r.IntN(10) {
 			case 0, 1, 2, 3: // remove
+				opName = "remove"
 				i, found := m.find(key)
 				want := found && strings.HasPrefix(key, cp) && slices.Contains(m[i].vals, val)
 				ok := pg.remove(key, val)
@@ -381,6 +381,7 @@ func runMV(t *testing.T, flavor mvPage) {
 			default:
 				want := expectAdd(pg, m, key, val)
 				if want == Outside && r.IntN(2) == 0 { // the tree would widen the page, if the entries fit
+					opName = "widen"
 					all, _ := m.clone().add(key, val)
 					rests, vals := all.rests()
 					vs := make([]uint64, len(vals))
@@ -413,6 +414,7 @@ func runMV(t *testing.T, flavor mvPage) {
 			if pg.gone() {
 				break
 			}
+			t.Logf("seed %d step %d: %s %q %q", seed, step, opName, key, val)
 			checkMV(t, pg, m)
 		}
 	}
@@ -446,10 +448,11 @@ func TestMultiValuePageLayout(t *testing.T) {
 	want = append(want, "Bahnhof"...)
 	want = append(want, 0, 6, 7, Further, Further, 3)
 	want = append(want, "sallee"+"strasse"+"weg"...)
+	want = append(want, make([]byte, 128-6*8-len(want))...) // zeros up to the values, which end with the object
 	for _, v := range []uint64{7, 1, 2, 5, 9, 4} {
 		want = binaryLE(want, v)
 	}
-	if got := f.mem()[:f.Used()+6*8]; !bytes.Equal(got, want) || f.Size() != 128 || f.Used() != 32 {
+	if got := f.mem(); !bytes.Equal(got, want) || f.Size() != 128 || f.Used() != 32 {
 		t.Fatalf("Fixed page:\n got %v\nwant %v (size %d, used %d)", got, want, f.Size(), f.Used())
 	}
 	if f.Len() != 6 || f.Keys() != 4 || f.PrefixLen() != 7 {
