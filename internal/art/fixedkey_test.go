@@ -45,7 +45,11 @@ func TestFixedKeys(t *testing.T) {
 				if len(want) < 2 { // an entry with one value may be in a multi-key page
 					return
 				}
-				switch l := m.t.findLeaf(key); {
+				l := m.t.findLeaf(key)
+				if l == nil { // the key shares a multi-key page with its neighbour
+					return
+				}
+				switch {
 				case l.isValueOverflow() && pageable && !removing && len(want) <= capLargest:
 					t.Fatalf("a value overflow with %d values, which a page holds", len(want))
 				case l.isValueOverflow() && pageable && removing && skpage.BackFits(rem, 8*len(want)):
@@ -96,7 +100,7 @@ func TestFixedKeyMovesUp(t *testing.T) {
 				m.Add(k1, v)
 				want = append(want, v)
 			}
-			if l := m.t.findLeaf(k1); len(l.stored()) != 0 {
+			if l := m.t.findLeaf(k1); l != nil && len(l.stored()) != 0 { // nil: the keys share a multi-key page
 				t.Fatalf("leaf below the common part holds %q, want nothing", l.stored())
 			}
 			m.RemoveKey(k2)

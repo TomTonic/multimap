@@ -10,7 +10,7 @@ const (
 	evPair event = iota
 	evPairNo
 	evAdded
-	evPromote
+	evAddedValue
 	evBurst
 	evWiden
 	evAbove

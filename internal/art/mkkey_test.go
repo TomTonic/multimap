@@ -39,7 +39,7 @@ func mkKeys(n int) [][]byte {
 //
 // Expected, for strings and for uint64 values: after adding 300 keys with one value
 // each most of them are in multi-key pages (and every one is found); a second value
-// takes one key out of its page; removing the keys one by one leaves the others
+// stays in the key's page; removing the keys one by one leaves the others
 // intact down to the last key, which is a single-key page.
 func TestMultiKeyPages(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runMultiKeyPages(t, func(i int) string { return fmt.Sprint("v", i) }) })
@@ -66,9 +66,9 @@ func runMultiKeyPages[T comparable](t *testing.T, val func(i int) T) {
 		t.Fatal("found a key that was never added")
 	}
 	_, before := pageCount(&m)
-	m.Add(keys[10], val(1000+10)) // a second value: the key leaves its page
-	if _, after := pageCount(&m); after >= before {
-		t.Fatalf("a second value did not take the key out of its page: %d keys in pages before, %d after", before, after)
+	m.Add(keys[10], val(1000+10)) // a second value: the key stays in its page
+	if _, after := pageCount(&m); after != before {
+		t.Fatalf("a second value moved a key out of its page: %d keys in pages before, %d after", before, after)
 	}
 	if got := valuesOf(&m, keys[10]); len(got) != 2 {
 		t.Fatalf("key with two values holds %v", got)

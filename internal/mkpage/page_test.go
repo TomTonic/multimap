@@ -75,18 +75,15 @@ func checkPage(t *testing.T, p *Page, m model, prefix string) {
 	}
 }
 
-// expectInsert says what Insert must answer for the model.
+// expectInsert says what Add must answer for the model.
 func expectInsert(m model, cp string, key, val string) Result {
 	var r string
 	if !strings.HasPrefix(key, cp) {
 		return Outside
 	}
 	r = key[len(cp):]
-	if i, ok := m.find(key); ok {
-		if m[i].val == val {
-			return Present
-		}
-		return Differs
+	if i, ok := m.find(key); ok && m[i].val == val {
+		return Present
 	}
 	if len(val) > MaxValue {
 		return Full
@@ -150,7 +147,8 @@ func TestPageAgainstModel(t *testing.T) {
 				val = randVal(r)
 			}
 			if r.IntN(3) > 0 {
-				q, ok := p.Remove([]byte(key), []byte(val))
+				q, rm := p.Remove([]byte(key), []byte(val))
+				ok := rm != Absent
 				i, found := m.find(key)
 				want := found && strings.HasPrefix(key, cp) && m[i].val == val
 				if ok != want {
@@ -167,8 +165,11 @@ func TestPageAgainstModel(t *testing.T) {
 					break
 				}
 			} else {
+				if i, ok := m.find(key); ok { // these models hold one value a key
+					val = m[i].val
+				}
 				want := expectInsert(m, cp, key, val)
-				q, res := p.Insert([]byte(key), []byte(val))
+				q, res := p.Add([]byte(key), []byte(val))
 				if res != want {
 					t.Fatalf("seed %d step %d: Insert(%q, %q) = %v, want %v", seed, step, key, val, res, want)
 				}
@@ -241,9 +242,8 @@ func TestPageLimits(t *testing.T) {
 // TestPageInsertResults shows each answer an insert can give, and that only a page
 // that really changed is a different page.
 //
-// The tree acts on the answer: Added needs nothing, Present nothing, Differs means
-// the key gets a second value (the subtree is built again), Full means a burst,
-// Outside a byte node above the page.
+// The tree acts on the answer: Added and AddedValue need nothing, Present nothing, Full
+// means a burst, Outside a byte node above the page.
 //
 // Expected: one case for every Result, with the page and its entries unchanged where
 // nothing was added.
@@ -264,21 +264,21 @@ func TestPageInsertResults(t *testing.T) {
 		{"adds a key under the prefix", "abc3", "z", Added},
 		{"adds the key that ends at the prefix", "abc", "z", Added},
 		{"knows an entry that is there", "abc1", "x", Present},
-		{"sees a second value", "abc1", "other", Differs},
+		{"adds a second value to a key", "abc1", "other", AddedValue},
 		{"refuses a key outside the prefix", "abd1", "x", Outside},
 		{"refuses a key shorter than the prefix", "ab", "x", Outside},
 		{"refuses a value of 255 bytes", "abc4", strings.Repeat("v", 255), Full},
-		{"sees a second value of 255 bytes", "abc1", strings.Repeat("v", 255), Differs},
+		{"refuses a second value of 255 bytes", "abc1", strings.Repeat("v", 255), Full},
 		{"refuses a remainder of 256 bytes", "abc" + strings.Repeat("k", 256), "x", Full},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := fresh()
-			q, res := p.Insert([]byte(tt.key), []byte(tt.val))
+			q, res := p.Add([]byte(tt.key), []byte(tt.val))
 			if res != tt.want {
 				t.Fatalf("Insert = %v, want %v", res, tt.want)
 			}
-			if res != Added && (q != p || p.Len() != 2) {
+			if res != Added && res != AddedValue && (q != p || p.Len() != 2) {
 				t.Errorf("the page changed without an addition")
 			}
 			if v, ok := q.Get([]byte(tt.key)); res == Added && (!ok || string(v) != tt.val) {
@@ -292,16 +292,16 @@ func TestPageInsertResults(t *testing.T) {
 	if _, ok := p.Get([]byte("abc9")); ok {
 		t.Error("Get found a key that is not there")
 	}
-	if q, ok := p.Remove([]byte("abd1"), []byte("x")); ok || q != p {
+	if q, rm := p.Remove([]byte("abd1"), []byte("x")); rm != Absent || q != p {
 		t.Error("Remove took a key outside the prefix")
 	}
-	if q, ok := p.Remove([]byte("abc9"), []byte("x")); ok || q != p {
+	if q, rm := p.Remove([]byte("abc9"), []byte("x")); rm != Absent || q != p {
 		t.Error("Remove took a key that is not there")
 	}
-	if q, ok := p.Remove([]byte("abc1"), []byte("y")); ok || q != p {
+	if q, rm := p.Remove([]byte("abc1"), []byte("y")); rm != Absent || q != p {
 		t.Error("Remove took an entry with another value")
 	}
-	if q, ok := BuildStrings([][]byte{[]byte("k")}, [][]byte{[]byte("v")}).Remove([]byte("k"), []byte("v")); !ok || q != nil {
+	if q, rm := BuildStrings([][]byte{[]byte("k")}, [][]byte{[]byte("v")}).Remove([]byte("k"), []byte("v")); rm != Gone || q != nil {
 		t.Error("Remove of the only entry")
 	}
 	if p.Class() != 0 || p.Size() != 32 {
@@ -319,7 +319,7 @@ func TestPageInsertResults(t *testing.T) {
 func TestPageFullAtTheLimits(t *testing.T) {
 	p := BuildStrings([][]byte{{0}, {255}}, [][]byte{nil, nil})
 	for i := 1; i < 255; i++ {
-		q, res := p.Insert([]byte{byte(i)}, nil)
+		q, res := p.Add([]byte{byte(i)}, nil)
 		if res == Full {
 			// each entry takes the length of its remainder, one byte, and its value length
 			if p.Size() != 512 || p.Used() != 3+p.Len()*3 || p.Used() > 512 || p.Used() < 512-3 {
@@ -391,7 +391,7 @@ func TestPageShrinksWithHysteresis(t *testing.T) {
 	p := BuildStrings([][]byte{{0}, {255}}, [][]byte{[]byte("vvvvvvv"), []byte("vvvvvvv")})
 	for i := 1; i < 40; i++ {
 		var res Result
-		if p, res = p.Insert([]byte{byte(i)}, []byte("vvvvvvv")); res != Added {
+		if p, res = p.Add([]byte{byte(i)}, []byte("vvvvvvv")); res != Added {
 			t.Fatalf("entry %d: %v", i, res)
 		}
 	}
@@ -400,8 +400,8 @@ func TestPageShrinksWithHysteresis(t *testing.T) {
 	}
 	classes := []int{p.Size()}
 	for i := 39; i >= 1; i-- {
-		var ok bool
-		if p, ok = p.Remove([]byte{byte(i)}, []byte("vvvvvvv")); !ok {
+		var rm Removal
+		if p, rm = p.Remove([]byte{byte(i)}, []byte("vvvvvvv")); rm == Absent {
 			t.Fatalf("entry %d not removed", i)
 		}
 		if c := classFor(2 * p.Used()); c >= 0 && c < p.class() {
@@ -416,11 +416,12 @@ func TestPageShrinksWithHysteresis(t *testing.T) {
 	}
 	size := p.Size()
 	for range 5 {
-		q, res := p.Insert([]byte{9}, []byte("vvvvvvv"))
+		q, res := p.Add([]byte{9}, []byte("vvvvvvv"))
 		if res != Added {
 			t.Fatalf("insert: %v", res)
 		}
-		r, ok := q.Remove([]byte{9}, []byte("vvvvvvv"))
+		r, rm := q.Remove([]byte{9}, []byte("vvvvvvv"))
+		ok := rm != Absent
 		if !ok || r.Size() != size {
 			t.Fatalf("remove after insert: %v, size %d, was %d", ok, r.Size(), size)
 		}
@@ -499,7 +500,8 @@ func FuzzPage(f *testing.F) {
 				m = model{{key, val}}
 			case p == nil:
 			case op == 1:
-				q, ok := p.Remove([]byte(key), []byte(val))
+				q, rm := p.Remove([]byte(key), []byte(val))
+				ok := rm != Absent
 				if want := found && strings.HasPrefix(key, string(p.CP())) && m[i].val == val; ok != want {
 					t.Fatalf("Remove %q: %v, want %v", key, ok, want)
 				} else if want {
@@ -507,8 +509,11 @@ func FuzzPage(f *testing.F) {
 				}
 				p = q
 			default:
+				if found { // this model holds one value a key
+					val = m[i].val
+				}
 				want := expectInsert(m, string(p.CP()), key, val)
-				q, res := p.Insert([]byte(key), []byte(val))
+				q, res := p.Add([]byte(key), []byte(val))
 				if res != want {
 					t.Fatalf("Insert %q: %v, want %v", key, res, want)
 				}

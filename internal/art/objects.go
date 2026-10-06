@@ -99,15 +99,15 @@ func (m *Map[T]) leafKind(l *singleKeyHead) Object {
 	return Object{Label: "value overflow", Size: int(valueOverflowSize(l.rem())), Pointers: true, Keys: 1}
 }
 
-// multiKeyObject describes multi-key page n: it holds Len keys with one value each, and
-// Remainder is the common prefix of its keys.
+// multiKeyObject describes multi-key page n: its keys and values, and Remainder is the common
+// prefix of its keys.
 func (m *Map[T]) multiKeyObject(n *header) Object {
 	if m.flat == 3 {
 		p := asMKStr(n)
-		return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Len(), Values: p.Len(), Remainder: p.PrefixLen()}
+		return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Keys(), Values: p.Len(), Remainder: p.PrefixLen()}
 	}
 	p := asMKFix(n)
-	return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Len(), Values: p.Len(), Remainder: p.PrefixLen()}
+	return Object{Label: "multi-key page", Size: p.Size(), Keys: p.Keys(), Values: p.Len(), Remainder: p.PrefixLen()}
 }
 
 // object describes the object n, a leaf, page or node, without what is below

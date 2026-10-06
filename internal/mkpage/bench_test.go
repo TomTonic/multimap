@@ -68,7 +68,7 @@ func BenchmarkPage(b *testing.B) {
 			k := []byte("prem")
 			for i := range b.N {
 				p := pages[i&4095]
-				q, res := p.Insert(k, vals[0][0])
+				q, res := p.Add(k, vals[0][0])
 				if res == Added {
 					p, _ = q.Remove(k, vals[0][0])
 					pages[i&4095] = p
@@ -130,7 +130,7 @@ func BenchmarkFixed(b *testing.B) {
 			k := []byte("prem")
 			for i := range b.N {
 				p := pages[i&4095]
-				q, res := p.Insert(k, uint64(99))
+				q, res := p.Add(k, uint64(99))
 				if res == Added {
 					p, _ = q.Remove(k, uint64(99))
 					pages[i&4095] = p

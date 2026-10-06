@@ -115,3 +115,16 @@ at most 5 in 1000 operations on the real mix (0.1 now; pages fill with values), 
 4. Option B (scan glue, allocation-free change) after gate 5, not inside it.
 
 Decided with the user on 2026-10-06: the head of this page has `cpl` as its nine-bit byte 1 and `n` at byte 2 (as above); the shared head of all page kinds is step 5.5.
+
+## 5.2: the tree with several values in a page (plan, 2026-10-06)
+
+What changes in `internal/art/mkkey.go` and `map.go`; nothing in the node layer.
+
+- **`reach`** uses `Add`: `Added` size+1, `AddedValue` nothing (the key was there), `Present` nothing, `Full` is a burst (size+1 only if the key is new: `pageHas` tells, on the rare path). **`Differs` and the promote go**, and `Insert` of both pages with them (5.2 ends with `Add` only).
+- **`pair`**: the single-key page may have any number of values (not a value overflow); both entries go into one `Build*` call with the key repeated for each value. **`build`/`pageOf`**: an item with `multi` is one key with several slots: the size is `NeedStrings/NeedFixed(slots, cp, remainders of the keys, values)`, a key with more values than a page holds (or one that does not fit) is a single-key page as before. **`pageItems`** folds the runs back into items (`first` flag of `Each`).
+- **Merge**: `mergeFits`/`tryMerge` count slots and keys; a child may be a single-key page with several values or a page with runs. `mergeLimit` counts slots.
+- **Remove**: `Remove` of both pages says what went (`Removed` a value, `Gone` the key too, `Absent`), so the tree knows when the number of keys changes; `RemoveKey` takes the values of the key one by one. The number of keys left (`KeysUpTo(3)`, the scan of the length list stops after the third key: no cost for one value per entry) decides: one key left is a single-key page, at most `mergeBelow` keys try the merge.
+- **Scans**: `Range` calls `fn` once for a key (the `first` slot), `RangeValues` yields every value; a run is compared with the bounds once.
+- `Objects` reports keys and values of a page separately.
+
+**Prediction.** `evPromote` is gone. The census of the real mix after the probe's cycle: pages hold at least 90 % of the keys of the fresh tree. Events: burst at most 5 in 1000 operations, merge tries as before. Cells with one value per entry stay within 0.95 to 1.05 of m43 (the added work on their path: `KeysUpTo` on a removal, the `first` flag in scans); the other predictions are those of the table above.

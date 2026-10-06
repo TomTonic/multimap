@@ -556,12 +556,12 @@ func checkNode(t *testing.T, n *header, path []byte) int {
 		checkLeaf(t, asSingleKey(n), path)
 		return 1
 	}
-	if isPage(n.objType) { // a multi-key page: two entries at least
+	if isPage(n.objType) { // a multi-key page: two keys at least, with one value or more each
 		p := asMKStr(n) // the head is that of both kinds of page
-		if p.Len() < 2 {
-			t.Fatalf("multi-key page with %d entries", p.Len())
+		if p.Keys() < 2 || p.Len() < p.Keys() {
+			t.Fatalf("multi-key page with %d keys and %d values", p.Keys(), p.Len())
 		}
-		return p.Len()
+		return p.Keys()
 	}
 	limits := map[objType][2]int{kN5: {1, 5}, kN12: {shrink12 + 1, 12}, kN26: {shrink26 + 1, 26},
 		kN58: {shrink58 + 1, 58}, kN256: {shrink256 + 1, 256}}[n.objType]

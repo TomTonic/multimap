@@ -21,9 +21,12 @@ func isSKPage(l *singleKeyHead) bool { return !l.isValueOverflow() }
 // TestStringMapUsesPages covers what a user of multimap.Ordered with string
 // values gets for each key: one single-key page (SKMV) with the key's end and
 // its values as bytes, not a leaf with string headers. The test fills a map and
-// checks the type of every key's object and what the object statistic calls it.
+// checks the type of every key's object and what the object statistic calls it. The map
+// has no multi-key pages (flat is set by hand, so that decide does not turn them on): they
+// take keys with a few values themselves, as TestMultiKeyPages shows.
 func TestStringMapUsesPages(t *testing.T) {
 	var m Map[string]
+	m.flat = 3
 	for i := range 300 {
 		key := []byte(fmt.Sprint("key-", i))
 		for j := range i%4 + 1 {

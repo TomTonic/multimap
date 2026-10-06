@@ -78,19 +78,16 @@ type head struct {
 // comment; Fixed is the page of values of one size.
 type Page struct{ head }
 
-// Result says what an Insert or Add did.
+// Result says what an Add did.
 type Result int
 
 const (
 	// Added: the key was not there and is now.
 	Added Result = iota
-	// AddedValue: the key was there with other values and has one more now (Add only).
+	// AddedValue: the key was there with other values and has one more now.
 	AddedValue
 	// Present: the key was there with this value, nothing changed.
 	Present
-	// Differs: the key is there with another value, and Insert, which knows one value a key, left
-	// the page unchanged. The tree builds the subtree again (promote). Add never answers it.
-	Differs
 	// Full: the entry does not go into the page (the content would exceed the
 	// largest class, or the remainder or the value are too long). The
 	// page is unchanged; the tree bursts it.
@@ -98,6 +95,19 @@ const (
 	// Outside: the key does not start with the common prefix of the page. The page
 	// is unchanged; the tree puts a byte node above it.
 	Outside
+)
+
+// Removal says what a Remove did.
+type Removal int
+
+const (
+	// Absent: the key was not there with that value (or the key is outside the common prefix);
+	// the page is unchanged.
+	Absent Removal = iota
+	// Removed: the value is gone, the key has other values.
+	Removed
+	// Gone: the value was the last of its key, and the key is gone.
+	Gone
 )
 
 func (p *head) class() int { return int(p.objType-TypeBase) >> 1 }
@@ -131,6 +141,21 @@ func (p *head) Keys() int {
 	k := 0
 	for _, rl := range m[lo : lo+int(p.n)] {
 		k += b2i(rl != Further)
+	}
+	return k
+}
+
+// KeysUpTo returns the number of keys of the page, or limit if it has at least that many: the
+// scan of the length list stops there, which is after the first limit slots for a page whose keys have
+// one value each.
+func (p *head) KeysUpTo(limit int) int {
+	m := p.mem()
+	lo := Header + p.cpl()
+	k := 0
+	for _, rl := range m[lo : lo+int(p.n)] {
+		if k += b2i(rl != Further); k >= limit {
+			break
+		}
 	}
 	return k
 }
@@ -351,17 +376,10 @@ func (p *Page) EachValue(rest []byte, fn func(val []byte) bool) bool {
 	}
 }
 
-// Insert is Add for a page whose keys have one value each: a key that is there with another
-// value is left alone, and the answer is Differs (the tree builds it again). Add replaces it
-// once the tree holds several values in a page.
-func (p *Page) Insert(rest, val []byte) (*Page, Result) { return p.add(rest, val, false) }
-
 // Add adds the value val to the key rest and returns the page that holds the result, which
 // is p itself unless the content no longer fits p's class, and says what happened (see
 // Result). val is copied. A key that is there gets the value behind its others.
-func (p *Page) Add(rest, val []byte) (*Page, Result) { return p.add(rest, val, true) }
-
-func (p *Page) add(rest, val []byte, multi bool) (*Page, Result) {
+func (p *Page) Add(rest, val []byte) (*Page, Result) {
 	cpl := p.cpl()
 	if p.Match(rest) < cpl {
 		return p, Outside
@@ -384,9 +402,6 @@ func (p *Page) add(rest, val []byte, multi bool) (*Page, Result) {
 			if slot++; slot >= n || m[lo+slot] != Further {
 				break
 			}
-		}
-		if !multi {
-			return p, Differs
 		}
 		rl, r, at = Further, nil, o
 	}
@@ -503,21 +518,21 @@ func b2i(b bool) int {
 	return 0
 }
 
-// Remove removes the value val of the key rest and reports whether it was there; a key
-// that has no value left is gone. It returns the page that holds the rest: p itself, a page
+// Remove removes the value val of the key rest and says whether it was there (Removed), and
+// whether the key went with it (Gone, its last value); a key that has no value left is gone. It returns the page that holds the rest: p itself, a page
 // of a smaller class once the content fills at most half of it, or nil if the value was the
 // only one (the page is gone). Like Fixed, a page grows by the smallest class that holds one
 // more value, so a page at a class border does not change its object with every insert and
 // remove. The first value of a key with others lets the next one take its place.
-func (p *Page) Remove(rest, val []byte) (*Page, bool) {
+func (p *Page) Remove(rest, val []byte) (*Page, Removal) {
 	cpl := p.cpl()
 	if p.Match(rest) < cpl {
-		return p, false
+		return p, Absent
 	}
 	r := rest[cpl:]
 	pos, off, found := p.locate(r)
 	if !found {
-		return p, false
+		return p, Absent
 	}
 	m := p.mem()
 	n := int(p.n)
@@ -530,15 +545,19 @@ func (p *Page) Remove(rest, val []byte) (*Page, bool) {
 		}
 		vo += 1 + vl
 		if slot++; slot >= n || m[lo+slot] != Further {
-			return p, false
+			return p, Absent
 		}
 	}
 	vl := int(m[vo])
 	more := slot+1 < n && m[lo+slot+1] == Further
+	res := Removed
+	if slot == pos && !more {
+		res = Gone
+	}
 	from, to := vo, vo+1+vl   // what goes: the value, with its length, ...
 	if slot == pos && !more { // ... and the key's remainder, if the value is the only one
 		if n == 1 {
-			return nil, true
+			return nil, Gone
 		}
 		from = off
 	}
@@ -553,9 +572,9 @@ func (p *Page) Remove(rest, val []byte) (*Page, bool) {
 	clear(m[used : used+1+to-from])
 	p.n--
 	if c := classFor(2 * used); c >= 0 && c < p.class() {
-		return (*Page)(grow(&p.head, c, used)), true
+		return (*Page)(grow(&p.head, c, used)), res
 	}
-	return p, true
+	return p, res
 }
 
 // Each calls fn with the remainder (after the common prefix), the value and whether it is the

@@ -182,17 +182,10 @@ func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 	}
 }
 
-// Insert is Add for a page whose keys have one value each: a key that is there with another
-// value is left alone, and the answer is Differs (the tree builds it again). Add replaces it
-// once the tree holds several values in a page.
-func (p *Fixed) Insert[T comparable](rest []byte, v T) (*Fixed, Result) { return p.add(rest, v, false) }
-
 // Add adds the value v to the key rest and returns the page that holds the result, which is
 // p itself unless the content no longer fits p's class, and says what happened (see Result).
 // A key that is there gets the value behind its others.
-func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) { return p.add(rest, v, true) }
-
-func (p *Fixed) add[T comparable](rest []byte, v T, multi bool) (*Fixed, Result) {
+func (p *Fixed) Add[T comparable](rest []byte, v T) (*Fixed, Result) {
 	cpl := p.cpl()
 	if p.Match(rest) < cpl {
 		return p, Outside
@@ -213,9 +206,6 @@ func (p *Fixed) add[T comparable](rest []byte, v T, multi bool) (*Fixed, Result)
 			if slot++; slot >= n || m[lo+slot] != Further {
 				break
 			}
-		}
-		if !multi {
-			return p, Differs
 		}
 		rl, r, at = Further, nil, off+len(r)
 	}
@@ -319,19 +309,19 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T) *Fixed {
 	return q
 }
 
-// Remove removes the value v of the key rest and reports whether it was there; a key that has
-// no value left is gone. It returns the page that holds the rest: p itself, a page of a smaller
+// Remove removes the value v of the key rest and says whether it was there (Removed) and
+// whether the key went with it (Gone, its last value). It returns the page that holds the rest: p itself, a page of a smaller
 // class once the content fills at most half of it, or nil if the value was the only one (the
 // page is gone); see Page.Remove.
-func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
+func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, Removal) {
 	cpl := p.cpl()
 	if p.Match(rest) < cpl {
-		return p, false
+		return p, Absent
 	}
 	r := rest[cpl:]
 	pos, off, found := p.locate(r)
 	if !found {
-		return p, false
+		return p, Absent
 	}
 	n := int(p.n)
 	w, _ := sizeAlign[T]()
@@ -341,20 +331,21 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
 	slot := pos
 	for *valueAt[T](m, vs, slot) != v {
 		if slot++; slot >= n || m[lo+slot] != Further {
-			return p, false
+			return p, Absent
 		}
 	}
 	keyEnd := p.keyEndFrom(pos, off) // before the length list changes
 	more := slot+1 < n && m[lo+slot+1] == Further
+	res := Removed
 	remOff, remLen := off+len(r), 0 // the remainder goes only with the last value of its key
 	if slot == pos {
 		if more { // the next value takes the key's place: its slot becomes the key's
 			m[lo+slot+1] = uint8(len(r))
 		} else {
 			if n == 1 {
-				return nil, true
+				return nil, Gone
 			}
-			remOff, remLen = off, len(r)
+			remOff, remLen, res = off, len(r), Gone
 		}
 	}
 	nk := keyEnd - 1 - remLen
@@ -370,9 +361,9 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T) (*Fixed, bool) {
 		q := (*Fixed)(grow(&p.head, c, nk))
 		out := q.mem()
 		copy(out[len(out)-(n-1)*w:], m[vs+w:vs+n*w])
-		return q, true
+		return q, res
 	}
-	return p, true
+	return p, res
 }
 
 // Each calls fn with the remainder (after the common prefix), the value and whether it is the

@@ -82,6 +82,18 @@ func (m mvModel) remove(key, val string) (mvModel, bool) {
 	return m, true
 }
 
+// removalOf is what Remove of val from the key at m[i] must answer; inside says that the key is
+// found and starts with the page's common prefix.
+func removalOf(m mvModel, i int, inside bool, val string) Removal {
+	switch {
+	case !inside || !slices.Contains(m[i].vals, val):
+		return Absent
+	case len(m[i].vals) == 1:
+		return Gone
+	}
+	return Removed
+}
+
 // mvFlat is one value of a page as Each reports it.
 type mvFlat struct {
 	key, val string
@@ -91,8 +103,7 @@ type mvFlat struct {
 // mvPage is a page of either flavor as the tests of the values of a key see it.
 type mvPage interface {
 	add(key, val string) Result
-	insert(key, val string) Result
-	remove(key, val string) bool
+	remove(key, val string) Removal
 	widen(key, val string) bool
 	gone() bool
 	cp() string
@@ -127,15 +138,10 @@ func (s *strPage) add(key, val string) Result {
 	s.p = q
 	return res
 }
-func (s *strPage) insert(key, val string) Result {
-	q, res := s.p.Insert([]byte(key), []byte(val))
+func (s *strPage) remove(key, val string) Removal {
+	q, rm := s.p.Remove([]byte(key), []byte(val))
 	s.p = q
-	return res
-}
-func (s *strPage) remove(key, val string) bool {
-	q, ok := s.p.Remove([]byte(key), []byte(val))
-	s.p = q
-	return ok
+	return rm
 }
 func (s *strPage) widen(key, val string) bool {
 	q := s.p.Widen([]byte(key), []byte(val))
@@ -197,15 +203,10 @@ func (f *fixedPage) add(key, val string) Result {
 	f.p = q
 	return res
 }
-func (f *fixedPage) insert(key, val string) Result {
-	q, res := f.p.Insert([]byte(key), fixedVal(val))
+func (f *fixedPage) remove(key, val string) Removal {
+	q, rm := f.p.Remove([]byte(key), fixedVal(val))
 	f.p = q
-	return res
-}
-func (f *fixedPage) remove(key, val string) bool {
-	q, ok := f.p.Remove([]byte(key), fixedVal(val))
-	f.p = q
-	return ok
+	return rm
 }
 func (f *fixedPage) widen(key, val string) bool {
 	q := f.p.Widen([]byte(key), fixedVal(val))
@@ -365,12 +366,11 @@ func runMV(t *testing.T, flavor mvPage) {
 			case 0, 1, 2, 3: // remove
 				opName = "remove"
 				i, found := m.find(key)
-				want := found && strings.HasPrefix(key, cp) && slices.Contains(m[i].vals, val)
-				ok := pg.remove(key, val)
-				if ok != want {
-					t.Fatalf("seed %d step %d: Remove(%q, %q) = %v, want %v", seed, step, key, val, ok, want)
+				want := removalOf(m, i, found && strings.HasPrefix(key, cp), val)
+				if got := pg.remove(key, val); got != want {
+					t.Fatalf("seed %d step %d: Remove(%q, %q) = %v, want %v", seed, step, key, val, got, want)
 				}
-				if want {
+				if want != Absent {
 					m, _ = m.remove(key, val)
 				}
 				if pg.gone() {
@@ -514,18 +514,18 @@ func TestMultiValuePageRemovals(t *testing.T) {
 				cur := m.clone()
 				p := pg.build(cur)
 				for _, v := range order {
-					if !p.remove("Bahnhofstrasse", v) {
+					if p.remove("Bahnhofstrasse", v) == Absent {
 						t.Fatalf("Remove(%s) failed", v)
 					}
 					cur, _ = cur.remove("Bahnhofstrasse", v)
 					checkMV(t, p, cur)
 				}
-				if p.remove("Bahnhofstrasse", "9") || p.remove("Bahnhofstrasse", "5") {
+				if p.remove("Bahnhofstrasse", "9") != Absent || p.remove("Bahnhofstrasse", "5") != Absent {
 					t.Error("removed a value that is gone")
 				}
 			}
 			p := pg.build(mvModel{{"a", []string{"1", "2"}}})
-			if !p.remove("a", "1") || !p.remove("a", "2") || !p.gone() {
+			if p.remove("a", "1") != Removed || p.remove("a", "2") != Gone || !p.gone() {
 				t.Error("the page is not gone with its last value")
 			}
 		})
@@ -552,25 +552,35 @@ func TestMultiValuePageEachValue(t *testing.T) {
 	}
 }
 
-// TestMultiValuePageInsertKeepsOneValue shows that Insert, which the tree still uses until it
-// holds several values in a page, leaves a key that has a value alone.
+// TestMultiValuePageKeysUpTo shows that the tree can ask whether a page has at least a few
+// keys without counting them all.
 //
-// Expected: Differs for another value of a key that is there, Present for the same, Added for a
-// new key; the page is the same page after Differs.
-func TestMultiValuePageInsertKeepsOneValue(t *testing.T) {
-	p := BuildStrings(bs("a", "b"), bs("1", "2"))
-	if q, res := p.Insert([]byte("a"), []byte("9")); res != Differs || q != p {
-		t.Errorf("Differs: %v", res)
-	}
-	if _, res := p.Insert([]byte("a"), []byte("1")); res != Present {
-		t.Errorf("Present: %v", res)
-	}
-	f := BuildFixed(bs("a", "b"), []uint64{1, 2})
-	if q, res := f.Insert([]byte("a"), uint64(9)); res != Differs || q != f {
-		t.Errorf("Fixed Differs: %v", res)
-	}
-	if _, res := f.Insert([]byte("c"), uint64(9)); res != Added {
-		t.Errorf("Fixed Added: %v", res)
+// The tree decides on a removal whether one key is left (a single-key page) or at most two
+// (try a merge); for a page of one value each the scan stops after the third slot.
+//
+// Expected: for pages of 1, 2, 3 and 5 keys, some with several values, KeysUpTo(limit) is the
+// smaller of the number of keys and limit, and Keys is the number of keys.
+func TestMultiValuePageKeysUpTo(t *testing.T) {
+	for _, keys := range []int{1, 2, 3, 5} {
+		for _, per := range []int{1, 3} {
+			var rests, vals [][]byte
+			for k := range keys {
+				for v := range per {
+					rests = append(rests, []byte{byte('a' + k)})
+					vals = append(vals, []byte{byte('0' + v)})
+				}
+			}
+			p := BuildStrings(rests, vals)
+			f := BuildFixed(rests, make([]uint8, len(rests)))
+			if p.Keys() != keys || f.Keys() != keys {
+				t.Fatalf("%d keys of %d values: Keys %d and %d", keys, per, p.Keys(), f.Keys())
+			}
+			for limit := 1; limit <= 6; limit++ {
+				if got, want := p.KeysUpTo(limit), min(keys, limit); got != want || f.KeysUpTo(limit) != want {
+					t.Errorf("%d keys of %d values: KeysUpTo(%d) = %d and %d, want %d", keys, per, limit, got, f.KeysUpTo(limit), want)
+				}
+			}
+		}
 	}
 }
 
@@ -764,10 +774,10 @@ func FuzzMultiValuePage(f *testing.F) {
 				case pg == nil:
 				case op == 1:
 					i, found := m.find(key)
-					want := found && strings.HasPrefix(key, pg.cp()) && slices.Contains(m[i].vals, val)
-					if ok := pg.remove(key, val); ok != want {
-						t.Fatalf("Remove %q: %v, want %v", key, ok, want)
-					} else if want {
+					want := removalOf(m, i, found && strings.HasPrefix(key, pg.cp()), val)
+					if got := pg.remove(key, val); got != want {
+						t.Fatalf("Remove %q: %v, want %v", key, got, want)
+					} else if want != Absent {
 						m, _ = m.remove(key, val)
 					}
 				default:

@@ -206,9 +206,9 @@ func TestObjects(t *testing.T) {
 			if o.Label == "" || o.Size < 16 || o.Size%8 != 0 {
 				t.Errorf("%s: object %+v is not an object of the tree", name, o)
 			}
-			if o.Label == "multi-key page" { // many keys with one value each, and a common prefix
-				if o.Keys < 2 || o.Values != o.Keys {
-					t.Errorf("%s: object %+v: a multi-key page holds two keys at least, with one value each", name, o)
+			if o.Label == "multi-key page" { // many keys with one value or more each, and a common prefix
+				if o.Keys < 2 || o.Values < o.Keys {
+					t.Errorf("%s: object %+v: a multi-key page holds two keys at least, with one value each at least", name, o)
 				}
 			} else if single := strings.HasSuffix(o.Label, "leaf") || o.Label == "single-key page" || o.Label == "value overflow"; single != (o.Values > 0) || !single && o.Remainder != 0 {
 				t.Errorf("%s: object %+v: only a single-key page has values and a remainder", name, o)

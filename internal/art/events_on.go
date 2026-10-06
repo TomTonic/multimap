@@ -11,7 +11,7 @@ const (
 	evPair event = iota
 	evPairNo
 	evAdded
-	evPromote
+	evAddedValue
 	evBurst
 	evWiden
 	evAbove
@@ -31,7 +31,7 @@ var eventNames = [evCount]string{
 	evPair:           "pair: single-key page and new key make a page",
 	evPairNo:         "pair refused: the two do not make a page",
 	evAdded:          "key added to a page in place",
-	evPromote:        "promote: entry gets a second value, page dissolves",
+	evAddedValue:     "value added to a key in a page in place",
 	evBurst:          "burst: page is full, page dissolves",
 	evWiden:          "widen: key outside the common prefix joins the page",
 	evAbove:          "byte node put above a page",
