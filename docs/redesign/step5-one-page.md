@@ -50,7 +50,7 @@ Byte 21..31  values "Ost" "Sued" "West" (they end with the object; no free byte 
 Byte 0       type (one key, values of one size, class 64)
 Byte 1       len = 14          Byte 2  n = 3          Byte 3  rawWords = 0
 Byte 4..17   key part "Bahnhofstrasse"
-Byte 18..39  free (zero): a further value goes to bytes 32..39, a longer key would grow into it
+Byte 18..39  free (zero): a further value makes the array one slot longer at its front (it then begins at byte 32, the values move by one slot, as in the multi-key page today); a longer key part would grow into it
 Byte 40..63  values 2, 5, 9
 ```
 **Many keys, strings** (the six slots of the design note; 63 bytes, class 64, as today):
