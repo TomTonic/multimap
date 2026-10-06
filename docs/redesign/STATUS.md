@@ -1,5 +1,13 @@
 # Status
 
+## 2026-10-06 evening: gate 5 on the PC ([results](step5-gate-results.md)); M1 deferred to the end of step 5
+
+- Memory as predicted (`uint64` street 73 → 54, dirs 96 → 74, strings street 98 → 79, dirs 153 → 131; pointers equal to `uint64`); scannable bytes of the real mix 21 → 5; ranges of the real mix faster (0.66 to 0.98 of the time).
+- Credo 1 for the real mix against `btree-sets`: met for `uint64`; strings 0.89 to 0.97 at 4,096 keys; **pointers 0.73 to 0.89 up to 16,384 keys** (the stage of 5.3, optimised in 5.6).
+- **Missed:** single-value cells 2 to 8 % slower than m43 (not understood), real-mix churn/build not faster (build 0.99 to 1.11 of m43's time).
+- **Crash found** by the memory phase (`dirs natural`: a node left with one single-key page), fixed in `54e9297` (two tests that crash without it); the three cases run again.
+- Next: profile of single-value `churn`/`build` against `3e1e952` (the 2 to 8 %), then 5.5 (shared head), 5.6 (in-place pointer page), then the M1 and the decision about step 6.
+
 ## 2026-10-06: step 5.3 built: the pointer page ([results](step5-tree-results.md)); stopped at one missed prediction (time)
 
 - `mkpage.Fixed` for a `T` with a pointer: typed object of `skpage` (N = n), values moved as `T`; `art` uses pages for `*T` maps. Gates green (100 %, race, lint 0), collector tests; commit `e2c912d`.
