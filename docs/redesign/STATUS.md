@@ -1,5 +1,10 @@
 # Status
 
+## 2026-10-06 night: the plan for one page layout is written ([step5-one-page.md](step5-one-page.md), section 5)
+
+- Decided with the user: one structure for every page (head of 4 bytes `type | len | n | rawWords`, the key part at byte 4, key lengths, value lengths, remainders, free bytes, values); one-key pages leave the key-length list out, pages of fixed-size values the value-length list; the value lengths of strings are a list of their own; whether the values sit at the end of the object or behind the byte area is decided by a benchmark (5.5b).
+- It replaces the old 5.5 (head only) and the core of 5.6. Next: **5.5a**, the model (`skmodel -onepage`) with the prediction of section 5; then 5.5b (the package `internal/page` alone, the placement benchmark), 5.5c (the tree, in four steps), 5.5d (gate). Before it: the analyses of the gate (pointer flag `7842ffe`, `pager` gone `3b94663`, conversion without `pageItems` `2d5d08b`).
+
 ## 2026-10-06 evening: gate 5 on the PC ([results](step5-gate-results.md)); M1 deferred to the end of step 5
 
 - Memory as predicted (`uint64` street 73 → 54, dirs 96 → 74, strings street 98 → 79, dirs 153 → 131; pointers equal to `uint64`); scannable bytes of the real mix 21 → 5; ranges of the real mix faster (0.66 to 0.98 of the time).
