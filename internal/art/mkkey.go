@@ -270,7 +270,7 @@ func appendValue[T comparable](items []item[T], v T, i int) []item[T] {
 	return items
 }
 
-// pair implements pager: single-key page l, with one value or several, and a new key meet
+// pair is called by upsert: single-key page l, with one value or several, and a new key meet
 // below pathLen; if both fit one page, the page is returned.
 func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 	if !m.mk || l.isValueOverflow() {
@@ -328,7 +328,7 @@ func (m *Map[T]) pair(l *singleKeyHead, key []byte, pathLen int) *header {
 	return nil
 }
 
-// reach implements pager: the descent for key ended at multi-key page n.
+// reach is called by upsert: the descent for key ended at multi-key page n.
 func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **header {
 	rest := key[pathLen:]
 	var q *header

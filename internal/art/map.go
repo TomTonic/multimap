@@ -18,7 +18,7 @@ type Map[T comparable] struct {
 	flat int8 // 1: single-key pages of fixed-size values (skpage.Fixed), 3: single-key pages of strings (skpage.Page), -1: value overflows only, 0: not decided yet
 	mk   bool // entries share multi-key pages (mkkey.go): strings and fixed-size values, with a pointer or none
 	ptr  bool // the values are a word with a pointer: the multi-key pages of fixed-size values are typed objects (mkpage.Fixed)
-	cur  T    // the value of the Add in progress, for the pager methods of mkkey.go
+	cur  T    // the value of the Add in progress, for pair and reach of mkkey.go
 
 	scrRests, scrVals [][]byte // scratch of pageOf, reused so that a burst allocates only its pages
 	scrT              []T
@@ -81,7 +81,7 @@ func (m *Map[T]) Add(key []byte, v T) {
 	if m.mk {
 		m.cur = v
 	}
-	loc := m.t.upsert(key, nl, m)
+	loc := m.upsert(key, nl)
 	if m.mk {
 		var zero T
 		m.cur = zero

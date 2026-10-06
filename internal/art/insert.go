@@ -6,29 +6,18 @@ import (
 	"github.com/TomTonic/multimap/internal/swar"
 )
 
-// pager is what the tree asks of the typed map when a multi-key page is in play: the
-// map knows the type of the values, the tree does not (see mkkey.go).
-type pager interface {
-	// pair is called when the descent for a new key ends at single-key page l
-	// (below pathLen), which holds another key. It returns a multi-key page that
-	// holds both entries, or nil if there is none: l has several values, or the
-	// entries do not fit a page.
-	pair(l *singleKeyHead, key []byte, pathLen int) *header
-	// reach is called when the descent ends at multi-key page p, whose keys begin
-	// at pathLen. It does everything the add needs, except when the entry goes into
-	// a single-key page: it then returns the slot of that page, for the caller to
-	// fill with the value; otherwise it returns nil.
-	reach(loc **header, p *header, key []byte, pathLen int) **header
-}
-
 // upsert returns the slot that holds the leaf of key, creating the leaf with
-// nl when it is missing, or nil if pg has put the entry into a multi-key page.
-// The caller may replace a leaf in its slot, as a page does when it grows.
+// nl when it is missing, or nil if the map has put the entry into a multi-key page
+// (pair, reach: the map knows the type of the values, the tree does not). The caller
+// may replace a leaf in its slot, as a page does when it grows.
 //
 // It descends like find, checking common prefixes and searching nodes the
 // same fast way, and keeps the slot it came through. A missing key is then
-// added right where the descent stopped, without a second traversal.
-func (t *Tree) upsert(key []byte, nl newLeafFunc, pg pager) **header {
+// added right where the descent stopped, without a second traversal. It is a method
+// of the typed map, not of the tree, so that the calls into the pages are direct
+// calls and not through an interface.
+func (m *Map[T]) upsert(key []byte, nl newLeafFunc) **header {
+	t := &m.t
 	loc, pathLen := &t.root, 0
 	for {
 		n := *loc
@@ -39,9 +28,9 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc, pg pager) **header {
 		}
 		if isPage(n.objType) {
 			if isSingleKey(n.objType) {
-				return t.splitLeaf(loc, asSingleKey(n), key, pathLen, nl, pg)
+				return m.splitLeaf(loc, asSingleKey(n), key, pathLen, nl)
 			}
-			return pg.reach(loc, n, key, pathLen)
+			return m.reach(loc, n, key, pathLen)
 		}
 		if n.plen > 0 {
 			pl := int(n.plen)
@@ -76,13 +65,14 @@ func (t *Tree) upsert(key []byte, nl newLeafFunc, pg pager) **header {
 // splitLeaf handles an insert that reaches leaf l at pathLen: either it is the
 // key's leaf, or both keys go below a new node holding their common prefix. l
 // keeps its base and moves below the new node, unless the two entries fit a multi-key
-// page, which pg then makes.
-func (t *Tree) splitLeaf(loc **header, l *singleKeyHead, key []byte, pathLen int, nl newLeafFunc, pg pager) **header {
+// page, which pair then makes.
+func (m *Map[T]) splitLeaf(loc **header, l *singleKeyHead, key []byte, pathLen int, nl newLeafFunc) **header {
+	t := &m.t
 	ls, rest := l.from(pathLen), key[pathLen:]
 	if len(key) == l.keyLen() && bytes.Equal(ls, rest) {
 		return loc
 	}
-	if h := pg.pair(l, key, pathLen); h != nil {
+	if h := m.pair(l, key, pathLen); h != nil {
 		*loc = h
 		t.size++
 		return nil
