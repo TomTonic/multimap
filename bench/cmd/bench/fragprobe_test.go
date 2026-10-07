@@ -42,15 +42,19 @@ func TestFragProbe(t *testing.T) {
 	cycle, err := workload.Cycle(len(f.vals), cfg)
 	must(err)
 	s := f.structure(impl)
+	runtime.GC()
+	base := heapMetrics() // the fixture and the streams: what the map adds is measured against it
 	m := s.New()
 	s.Apply(m, build)
-	fmt.Printf("frag %s %s %s n=%d: %d values, cycle of %d operations\n", impl, kind, profile, n, len(f.vals), len(cycle))
-	fmt.Println("cycle | live objects MB | unused in spans MB | free pages MB | released MB | heap total MB | objects | unused/live")
+	fmt.Printf("frag %s %s %s n=%d: %d values, cycle of %d operations; the fixture holds %.1f MB live, %.1f MB unused\n",
+		impl, kind, profile, n, len(f.vals), len(cycle), base[0]/1e6, base[1]/1e6)
+	fmt.Println("cycle | map live MB | map unused in spans MB | heap free + released MB | (live + unused) B a key | objects of the map | unused/live")
 	report := func(c int) {
 		runtime.GC()
 		v := heapMetrics()
-		fmt.Printf("%d | %.1f | %.1f | %.1f | %.1f | %.1f | %d | %.3f\n", c, v[0]/1e6, v[1]/1e6, v[2]/1e6, v[3]/1e6,
-			(v[0]+v[1]+v[2]+v[3])/1e6, int(v[4]), v[1]/v[0])
+		live, unused := v[0]-base[0], v[1]-base[1]
+		fmt.Printf("%d | %.2f | %.2f | %.1f | %.1f | %d | %.3f\n", c, live/1e6, unused/1e6, (v[2]+v[3])/1e6,
+			(live+unused)/float64(n), int(v[4]-base[4]), unused/live)
 	}
 	report(0)
 	for c := 1; c <= cycles; c++ {
@@ -60,6 +64,8 @@ func TestFragProbe(t *testing.T) {
 		}
 	}
 	runtime.KeepAlive(m)
+	runtime.KeepAlive(build) // part of the base, as the fixture is: both must outlive the measurement
+	runtime.KeepAlive(f)
 }
 
 // heapMetrics reads the bytes of live heap objects, the bytes unused in the spans that hold them, the free
