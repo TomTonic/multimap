@@ -293,15 +293,9 @@ other end), and the border moves between them by one number.
 - the step at which the limit rises should follow memory, not keys alone: the bytes a key take differ by kind by a factor of three
   (E4: 27 to 114 block bytes a key).
 
-**Open questions for the design note** (none decided):
-1. The heuristic: a step function of the page count (for example 1 key below some thousand pages, then 2, 4, ... up to the page's own
-   limits), or a target of bytes a key, or of the share of the heap; and which cache size it assumes (L2 of one core, about 1 MB, or a
-   share of the L3), given that several maps share the caches.
-2. What happens to the pages that exist when the limit rises: nothing (they fill as keys come; old pages of one key stay until they
-   meet a neighbour), or a merge pass now and then. And when the map shrinks: does the limit come down again (with a hysteresis of its own)?
-3. Whether the limit is one number for the whole map or follows the size of the subtree (a dense subtree in a large map may profit from
-   fuller pages first).
-4. How it is measured: the gate cells at 4K, 16K, 65K and the full corpus, against today, E1 and `main`; memory and reserved memory (E3).
+**Concept fixed by the user (2026-10-07), implemented later:** [autotune-design.md](autotune-design.md). One number for the whole map
+(`maxKeys`), growing linearly with the number of pages; nothing merged or split artificially (existing pages fill as keys come); the
+feature can be switched off and `maxKeys` fixed, to find the curve in a concrete context; the curve itself comes from experiments.
 
 ## Step 6: the routing layer
 
