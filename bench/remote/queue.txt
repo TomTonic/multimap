@@ -49,15 +49,16 @@ l4 c4dc4b6 - 40 tags=strvals -suite dev -keys dirs -values multi -sizes 4096,163
 # are the worst case of the memory (docs/redesign/step4-probe.md).
 m43 3e1e952 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 
-# Gate 5 of step 5 on the M1 Pro (2026-10-07): the deferred jobs, written with the commit of the PC gate m47 (36f4765, the
-# tree on the one page with the reads fixed), the cases of m44 / m46 / m47 (the PC took 2 h 25 min for the three builds;
-# m47 uint64 + strings + pointers ran in that order). Three jobs, one build each, so that one can be stopped:
-m47  36f4765 fe120f5 100 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-m47s 36f4765 fe120f5 65  tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-m47p 36f4765 fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-# (m43 took 1h40 for the same cases as m44, not the 150 minutes estimated.)
+# Gate 5 of step 5 on the M1 Pro (2026-10-07, rewritten the same evening): the deferred jobs, with the commit after the review
+# (eb4a574: the tree on the one page, reads fixed, hysteresis between burst and merge; docs/redesign/review-2026-10.md). The cases
+# of m44 / m46 / m47 on the PC. Three jobs, one build each; the user runs them in one night, one after the other:
+#   bench/remote/arm-run.sh m48 && bench/remote/arm-run.sh m48s && bench/remote/arm-run.sh m48p && bench/remote/arm-run.sh pg1
+# (m43 took 1h40 for the cases of m48, not the 150 minutes estimated; the estimates below are of that size.)
+m48  eb4a574 fe120f5 100 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+m48s eb4a574 fe120f5 65  tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+m48p eb4a574 fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 
 # Step 5.5b (docs/redesign/step5-one-page.md): the page-level benchmarks of the one page (internal/page) and its placement
 # benchmark (values at the end of the object or behind the byte area; cold: 64 MiB of pages, 128-byte cache lines here).
 # A few minutes; the machine must be at rest.
-pg1 36f4765 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
+pg1 eb4a574 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
