@@ -266,3 +266,33 @@ Done as planned (the leaves are the one-key form of the page, the value overflow
 Deleted: `internal/skpage`, `internal/mkpage`, `bench/cmd/skbench` (the diagnosis of the old single-key page) and `internal/art/fixed_bench_test.go` (a standalone benchmark of `skpage.Fixed`; the page-level benchmarks of `internal/page` replace it). `internal/page` now holds what the tree still took from them: `kind.go` (`Supported`, `HoldsPointers`, which `T` takes which page: reflection once per map) and the generator of the 166 typed objects of the pages of pointers (`gen/`, `fixed_ptr_gen.go`; `go generate ./internal/page` gives the same file). `skmodel` lost its `realPage` check against `mkpage` (the model of the one page is pinned by `TestPageLayout` and the memory numbers of the probe). New tests `TestSupportedTypes` and `TestAllocPtrEveryShape` (the old ones lived in `skpage`). Glossary: the section "The one page" (one-key form, many-key form, head, key part, key lengths, value lengths, byte area, pointer area, value overflow). 100 % in the root, `art` and `page`, race, lint 0, vet with `mkstats`, `ptrvals`, `baseline`.
 
 **Next: 5.5d**, the gate on the PC (three builds as `run-m44.cmd`), the M1 jobs written with that commit (`m44`, `m44s`, `m44p`; `pg1` is queued), the report against the predictions of step 5, then the decision on step 6. The one-key fast path (+13 % `uint64` single-value against before 5.5c) comes after the gate, as decided.
+
+### 5.5e the reads in the tree (2026-10-07; after the gate m46: reads 5 to 12 % slower)
+
+**Measurement** (new: `bench/cmd/bench/readprobe_test.go`, `MKREAD=1`; a tree built from the corpus, `Each` of every key in random order and a scan of all values, WSL, medians of 5 interleaved runs; builds at `7929687` = m44, `2d5d08b` = before 5.5c, `1ea4ddd` = part 1, now). `Each` ns a key / scan ns a value:
+
+| case | m44 | before 5.5c | part 1 | now |
+|---|--|--|--|--|
+| `uint64` single-value 4,096 | 36.0 / 6.61 | 35.9 / 6.60 | **47.4** / 6.06 | 47.7 / 6.03 |
+| `uint64` natural 4,096 | 45.8 / 3.38 | 44.6 / 3.25 | 47.4 / 3.23 | 52.2 / **4.04** |
+| street natural 4,096 | 72.8 / 4.98 | 73.2 / 4.95 | 81.9 / 5.18 | 82.8 / 5.56 |
+| street single-value 4,096 | 63.4 / 7.32 | 63.6 / 7.28 | 73.4 / 7.88 | 73.2 / 8.22 |
+| `uint64` natural 65,536 | 86.0 / 6.29 | 85.7 / 6.28 | 93.1 / 6.31 | 98.1 / 6.88 |
+
+**The regression came with part 1** (the many-key pages on the one page): a lookup of a key costs +10 ns (+30 % for `uint64` single-value, where the tree's descent is short) and part 2+3 adds to the scan of the single-key pages in the natural mix (+10 to +25 %).
+
+**Cause** (CPU profile of `Each`, `uint64` single-value 4,096, 3 s each): `Fixed.EachValue` of the one page builds the `lay` struct (`head.lay`, 13.8 % of the time; it did not exist in `mkpage`), passes it by value to `slotOf` (6.4 % of its own, plus the `Match` call that walks the common prefix again) and `EachValue`'s own time is 15 % where `mkpage`'s was 11 %; `locate` and `compare` cost the same as before. The page's `Get` was already written with scalars in 5.5b (the tuning of 5.5b skipped `EachValue` and `Each`, which the tree's `Each` and scans use).
+
+**Prediction** (the same fix as `Get`: `EachValue` and `Each` of both flavors with scalars, no `lay`, no `slotOf`): `Each` of a key `uint64` single-value 47.7 → **37 to 40 ns** (m44: 36.0), street 73 → 64 to 67 (m44: 63); the scan of the natural mix back to m44 ±3 % (3.4 / 5.0 ns a value). Writes unchanged (±2 %).
+
+**Result** (commit after `69c65ea`: `EachValue` and `Each` of `Fixed` and `Str` without `lay`/`slotOf`, `slotOf` deleted; new `EachSingle` for the scan of the single-key pages, which saves the closure around the closure; 100 %, race, lint 0). `Each` ns a key / scan ns a value, medians of 5 interleaved runs, m44 → before the fix → now:
+
+| case | m44 | before the fix | now |
+|---|--|--|--|
+| `uint64` single-value 4,096 | 36.3 / 6.64 | 47.6 / 6.03 | **33.2** / 5.84 |
+| `uint64` natural 4,096 | 45.6 / 3.37 | 52.2 / 4.04 | **42.3** / 3.04 |
+| street natural 4,096 | 73.1 / 4.96 | 81.6 / 5.51 | **68.4** / 4.91 |
+| street single-value 4,096 | 63.5 / 7.35 | 73.4 / 8.20 | **60.6** / 7.40 |
+| `uint64` natural 65,536 | 85.0 / 6.26 | 95.5 / 6.79 | **81.2** / 6.13 |
+
+**Prediction met and beaten** (`Each` of a key `uint64` single-value 37 to 40 ns: 33.2; street 64 to 67: 60.6 / 68.4; scan of the natural mix within ±3 % of m44: -10 % to +0 %): the reads are **-4 to -9 % against m44** for lookups (single-value `uint64` -9 %) and -9 % to +1 % for scans, i.e. the layout of the one page reads faster than `mkpage`/`skpage` once the page's own code has no per-call set-up. Writes unchanged (probe, medians of 7: `uint64` single-value 4,096 build 86 → 87 / replay 81 → 78, street natural 192 → 193 / 177 → 175, `uint64` natural 65,536 182 → 182 / 194 → 184). The lesson for the method: **a probe that measures writes only does not pin the reads**; `readprobe_test.go` (`MKREAD=1`) is now part of the probes, and the gate has to be run again for the numbers (the PC: `m47`).

@@ -92,18 +92,6 @@ func further(rests [][]byte, i int) bool {
 	return i > 0 && string(rests[i]) == string(rests[i-1])
 }
 
-// slotOf finds the first slot of the key rest in a Str page, or reports that it is not there.
-func (p *Str) slotOf(m []byte, la lay, rest []byte) (int, bool) {
-	if !la.many {
-		return 0, bytes.Equal(m[Header:Header+la.l], rest)
-	}
-	if p.Match(rest) < la.l {
-		return 0, false
-	}
-	pos, _, found := locate(m, la.kl, la.n, la.rem, rest[la.l:])
-	return pos, found
-}
-
 // Used returns the bytes of the page that hold keys: where the remainders end. The values are at the
 // end of the object.
 func (p *Str) Used() int {
@@ -139,18 +127,27 @@ func (p *Str) Get(rest []byte) ([]byte, bool) {
 // false, and reports whether the page holds the key.
 func (p *Str) EachValue(rest []byte, fn func(val []byte) bool) bool {
 	m := p.mem()
-	la := p.lay(true)
-	pos, ok := p.slotOf(m, la, rest)
-	if !ok {
-		return false
+	n, l := int(p.n), p.cpl()
+	pos, end, vl := 0, n, Header+l // the value lengths of the one-key form follow the key part
+	if p.one() {
+		if string(m[Header:Header+l]) != string(rest) {
+			return false
+		}
+	} else {
+		if lcp(m[Header:Header+l], rest) < l {
+			return false
+		}
+		var found bool
+		if pos, _, found = locate(m, Header+l, n, Header+l+n+n, rest[l:]); !found {
+			return false
+		}
+		for end = pos + 1; end < n && m[Header+l+end] == Further; end++ {
+		}
+		vl += n
 	}
-	end := la.n
-	if la.many {
-		end = la.runEnd(m, pos)
-	}
-	s := la.valueStart(m, pos)
+	s := len(m) - sum(m[vl+pos:vl+n])
 	for i := pos; i < end; i++ {
-		l := int(m[la.vl+i])
+		l := int(m[vl+i])
 		if !fn(m[s : s+l]) {
 			return true
 		}
@@ -396,11 +393,12 @@ func (p *head) KeysUpTo(limit int) int {
 // then the remainder.
 func (p *Str) Each(fn func(rem, val []byte, first bool) bool) bool {
 	m := p.mem()
-	la := p.lay(true)
-	s := la.valueStart(m, 0)
-	if !la.many {
-		for i := range la.n {
-			l := int(m[la.vl+i])
+	n, l := int(p.n), p.cpl()
+	kl := Header + l
+	if p.one() {
+		s := len(m) - sum(m[kl:kl+n])
+		for i := range n {
+			l := int(m[kl+i])
 			if !fn(nil, m[s:s+l], i == 0) {
 				return false
 			}
@@ -408,19 +406,37 @@ func (p *Str) Each(fn func(rem, val []byte, first bool) bool) bool {
 		}
 		return true
 	}
-	off := la.rem
+	vl := kl + n
+	off := vl + n
+	s := len(m) - sum(m[vl:vl+n])
 	var rem []byte
-	for i, rl := range m[la.kl : la.kl+la.n] {
+	for i, rl := range m[kl : kl+n] {
 		first := rl != Further
 		if first {
 			rem = m[off : off+int(rl)]
 			off += int(rl)
 		}
-		l := int(m[la.vl+i])
+		l := int(m[vl+i])
 		if !fn(rem, m[s:s+l], first) {
 			return false
 		}
 		s += l
+	}
+	return true
+}
+
+// EachSingle calls fn with every value of a page of the one-key form, in slot order, until fn returns false, and
+// reports whether it ran to completion. It is Each without the remainders, for the tree's scans of the
+// single-key pages.
+func (p *Str) EachSingle(fn func(val []byte) bool) bool {
+	m := p.mem()
+	n, vl := int(p.n), Header+p.cpl()
+	s := len(m) - sum(m[vl:vl+n])
+	for _, l := range m[vl : vl+n] {
+		if !fn(m[s : s+int(l)]) {
+			return false
+		}
+		s += int(l)
 	}
 	return true
 }

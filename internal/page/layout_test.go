@@ -537,3 +537,31 @@ func TestPageSlotLimit(t *testing.T) {
 		t.Errorf("a value that is there: %v", res)
 	}
 }
+
+// TestPageEachSingle shows the plain scan of a page of one key.
+//
+// A user who lists the values of a key that has its own page gets them in the order they came in, and
+// can stop the listing after any value; the tree does this for every key of a scan.
+//
+// Expected: EachSingle of a Str and of a Fixed page of one key calls fn with each value in slot order,
+// stops when fn says so (and says so), and runs to completion otherwise.
+func TestPageEachSingle(t *testing.T) {
+	sp := BuildStrings(bs("key", "key", "key"), bs("a", "bcd", "ef"))
+	fp := BuildFixed(bs("key", "key", "key"), []uint64{7, 8, 9})
+	var gs []string
+	if !sp.EachSingle(func(v []byte) bool { gs = append(gs, string(v)); return true }) || strings.Join(gs, ",") != "a,bcd,ef" {
+		t.Errorf("strings: %v", gs)
+	}
+	var gf []uint64
+	if !fp.EachSingle(func(v uint64) bool { gf = append(gf, v); return true }) || len(gf) != 3 || gf[0] != 7 || gf[2] != 9 {
+		t.Errorf("words: %v", gf)
+	}
+	n := 0
+	if sp.EachSingle(func([]byte) bool { n++; return n < 2 }) || n != 2 {
+		t.Errorf("strings stopped after %d values", n)
+	}
+	n = 0
+	if fp.EachSingle(func(uint64) bool { n++; return n < 2 }) || n != 2 {
+		t.Errorf("words stopped after %d values", n)
+	}
+}

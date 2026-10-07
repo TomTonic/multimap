@@ -132,18 +132,6 @@ func (p *Fixed) Used() int {
 	return la.keyEnd(p.mem())
 }
 
-// slotOf finds the first slot of the key rest in a Fixed page, or reports that it is not there.
-func (p *Fixed) slotOf(m []byte, la lay, rest []byte) (int, bool) {
-	if !la.many {
-		return 0, bytes.Equal(m[Header:Header+la.l], rest)
-	}
-	if p.Match(rest) < la.l {
-		return 0, false
-	}
-	pos, _, found := locate(m, la.kl, la.n, la.rem, rest[la.l:])
-	return pos, found
-}
-
 // Get returns the first value of the key rest (the key from the end of the path on), or false if the page
 // does not hold it.
 func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
@@ -171,16 +159,24 @@ func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 // false, and reports whether the page holds the key.
 func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 	m := p.mem()
-	la := p.lay(false)
-	pos, ok := p.slotOf(m, la, rest)
-	if !ok {
-		return false
+	n, l := int(p.n), p.cpl()
+	pos, end := 0, n
+	if p.one() {
+		if string(m[Header:Header+l]) != string(rest) {
+			return false
+		}
+	} else {
+		if lcp(m[Header:Header+l], rest) < l {
+			return false
+		}
+		var found bool
+		if pos, _, found = locate(m, Header+l, n, Header+l+n, rest[l:]); !found {
+			return false
+		}
+		for end = pos + 1; end < n && m[Header+l+end] == Further; end++ {
+		}
 	}
-	end := la.n
-	if la.many {
-		end = la.runEnd(m, pos)
-	}
-	vs := valuesIn[T](m, la.n)
+	vs := valuesIn[T](m, n)
 	for i := pos; i < end; i++ {
 		if !fn(vs[i]) {
 			return true
@@ -390,9 +386,9 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 // empty.
 func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bool {
 	m := p.mem()
-	la := p.lay(false)
-	vs := valuesIn[T](m, la.n)
-	if !la.many {
+	n, l := int(p.n), p.cpl()
+	vs := valuesIn[T](m, n)
+	if p.one() {
 		for i, v := range vs {
 			if !fn(nil, v, i == 0) {
 				return false
@@ -400,15 +396,28 @@ func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bo
 		}
 		return true
 	}
-	off := la.rem
+	kl := Header + l
+	off := kl + n
 	var rem []byte
-	for i, rl := range m[la.kl : la.kl+la.n] {
+	for i, rl := range m[kl : kl+n] {
 		first := rl != Further
 		if first {
 			rem = m[off : off+int(rl)]
 			off += int(rl)
 		}
 		if !fn(rem, vs[i], first) {
+			return false
+		}
+	}
+	return true
+}
+
+// EachSingle calls fn with every value of a page of the one-key form, in slot order, until fn returns false, and
+// reports whether it ran to completion. It is Each without the remainders for the tree's scans of the single-key
+// pages, which would otherwise call a closure around a closure for every value.
+func (p *Fixed) EachSingle[T comparable](fn func(v T) bool) bool {
+	for _, v := range valuesIn[T](p.mem(), int(p.n)) {
+		if !fn(v) {
 			return false
 		}
 	}

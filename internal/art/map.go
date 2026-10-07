@@ -147,9 +147,9 @@ func eachValue[T comparable](l *singleKeyHead, flat int8, yield func(T) bool) bo
 		return overflowEach(l, yield)
 	case flat == 3: // T is string
 		y := *(*func(string) bool)(unsafe.Pointer(&yield))
-		return asSK(l).Each(func(_, val []byte, _ bool) bool { return y(string(val)) })
+		return asSK(l).EachSingle(func(val []byte) bool { return y(string(val)) })
 	}
-	return asFixed(l).Each(func(_ []byte, v T, _ bool) bool { return yield(v) })
+	return asFixed(l).EachSingle(yield)
 }
 
 // leafTail is the offset of the last byte of the smallest object of any map, a
