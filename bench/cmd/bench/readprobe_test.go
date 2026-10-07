@@ -40,6 +40,7 @@ func TestReadProbe(t *testing.T) {
 	}
 	if os.Getenv("MKSHAPE") != "" { // the shape of the routing part only (build tag mkstats)
 		fmt.Printf("\n### shape %s %s n=%d (%d keys, %d values)\n\n%s", kind, profile, n, len(f.c.Keys.B), nvals, m.Shape())
+		census("tree as built from the corpus", &m)
 		return
 	}
 	order := rand.New(rand.NewPCG(1, 2)).Perm(len(f.c.Keys.B))
