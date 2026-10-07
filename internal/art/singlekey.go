@@ -195,6 +195,10 @@ func (m *Map[T]) reachLeaf(loc **header, l *singleKeyHead, key []byte, pathLen i
 		m.splitLeaf(loc, l, key, pathLen)
 		return
 	}
+	if !l.matches(rest) { // experiment E1: another key gets a page of its own below a node
+		m.splitLeaf(loc, l, key, pathLen)
+		return
+	}
 	var q *header
 	var res page.Result
 	if m.flat == 3 {

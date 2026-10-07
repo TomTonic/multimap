@@ -36,7 +36,7 @@ func (m *Map[T]) decide() {
 	default:
 		m.flat = -1
 	}
-	m.mk = m.flat == 3 || (m.flat == 1 && page.Supported[T]())
+	m.mk = false // experiment E1 (docs/redesign/review-2026-10.md): one key per page, no multi-key pages
 	m.ptr = m.flat == 1 && page.HoldsPointers[T]()
 }
 
