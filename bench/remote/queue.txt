@@ -49,16 +49,15 @@ l4 c4dc4b6 - 40 tags=strvals -suite dev -keys dirs -values multi -sizes 4096,163
 # are the worst case of the memory (docs/redesign/step4-probe.md).
 m43 3e1e952 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 
-# Gate 5 of step 5 on the M1 Pro: DEFERRED (user, 2026-10-06) to the end of step 5, after 5.5 (shared head) and 5.6 (the
-# in-place pointer page), so that the M1 measures the code that ships and not a stage (the page of pointers of 5.3 is
-# known to be slow: PC run m44). The jobs are written again then with the commit of that day; sketch of the cases:
-#   m44  <ref> fe120f5 100 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-#   m44s <ref> fe120f5 65  tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-#   m44p <ref> fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-# (m43 took 1h40 for the same cases as m44, not the 150 minutes estimated.) In between, short jobs on the M1 for the page level
-# (BenchmarkFixed / BenchmarkFixedPointers) when 5.5 or 5.6 need the 128-byte cache lines.
+# Gate 5 of step 5 on the M1 Pro (2026-10-07): the deferred jobs, written with the commit of the PC gate m47 (36f4765, the
+# tree on the one page with the reads fixed), the cases of m44 / m46 / m47 (the PC took 2 h 25 min for the three builds;
+# m47 uint64 + strings + pointers ran in that order). Three jobs, one build each, so that one can be stopped:
+m47  36f4765 fe120f5 100 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+m47s 36f4765 fe120f5 65  tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+m47p 36f4765 fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+# (m43 took 1h40 for the same cases as m44, not the 150 minutes estimated.)
 
 # Step 5.5b (docs/redesign/step5-one-page.md): the page-level benchmarks of the one page (internal/page) and its placement
 # benchmark (values at the end of the object or behind the byte area; cold: 64 MiB of pages, 128-byte cache lines here).
 # A few minutes; the machine must be at rest.
-pg1 5a61bec - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
+pg1 36f4765 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
