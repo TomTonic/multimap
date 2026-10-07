@@ -277,6 +277,32 @@ Not part of a step yet; each gets a design note with a prediction before any cod
 - **The fast path of the one-key page** (see below): +13 % build and +11 % replay for `uint64` single-value in the probe (5.5c), +1 to +3 % build in the gate; belongs to the two points above.
 - **Reads** were measured late (5.5e); the probes of later steps include `readprobe_test.go`.
 
+## Feature: autotune of the keys per page (user, 2026-10-07; from the review, review-2026-10.md)
+
+**Idea (the user's):** the hybrid of E1 as an automatic feature. The map keeps count of its pages (and keys) and infers its memory from
+them; with that count it raises, step by step and by a suitable heuristic, the largest number of keys a page may hold. A small map,
+which fits the caches, keeps one key (or few keys) per page and runs the fast form (E1: as fast as step 3.5, churn up to 45 % faster
+than today at 4,096 keys); as it grows, pages may take more keys, so that pages filled from then on are fuller and the memory stays low
+(E1: one key per page costs about twice the memory). The two ends work alone (E1 showed it for one key per page; today's code is the
+other end), and the border moves between them by one number.
+
+**What the experiments already say about it:**
+- the limit 1 costs, besides memory, 1.3 to 2.1 times the time of a scan of single-value maps (E4) and 1.3 to 3 times the reserved
+  memory over a long churn (E3); in a small map that is a small absolute amount, which is the point of the idea;
+- the hysteresis of E6 belongs to it either way (fewer bursts and merges for every limit above 1);
+- the step at which the limit rises should follow memory, not keys alone: the bytes a key take differ by kind by a factor of three
+  (E4: 27 to 114 block bytes a key).
+
+**Open questions for the design note** (none decided):
+1. The heuristic: a step function of the page count (for example 1 key below some thousand pages, then 2, 4, ... up to the page's own
+   limits), or a target of bytes a key, or of the share of the heap; and which cache size it assumes (L2 of one core, about 1 MB, or a
+   share of the L3), given that several maps share the caches.
+2. What happens to the pages that exist when the limit rises: nothing (they fill as keys come; old pages of one key stay until they
+   meet a neighbour), or a merge pass now and then. And when the map shrinks: does the limit come down again (with a hysteresis of its own)?
+3. Whether the limit is one number for the whole map or follows the size of the subtree (a dense subtree in a large map may profit from
+   fuller pages first).
+4. How it is measured: the gate cells at 4K, 16K, 65K and the full corpus, against today, E1 and `main`; memory and reserved memory (E3).
+
 ## Step 6: the routing layer
 
 - **Remove the smallest byte node** (N5, 64 bytes). The smallest is then N12 with 128 bytes. N5
