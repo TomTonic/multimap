@@ -126,7 +126,7 @@ Every object that stores entries stores only the end of their keys. The tree spe
 - **promote** (changed 2026-10-05; **goes with step 5.2**): an entry that gets a second value leaves its multi-key page: the page's entries are built again with that entry as a single-key page
   (`build`, the function that also does the burst). In step 5 a second value is a **continuation** in the page.
 - **slot**, **continuation** (2026-10-06, `internal/page`): a slot is one value of a multi-key page with its length byte; a continuation is the slot of a further value of the key before it: its length byte is `Further` (255) and it has no remainder.
-- **merge**: after a removal, a byte node whose children are single-value pages that fit one page together becomes one page.
+- **merge**: after a removal that leaves a page with at most two entries, a byte node whose children are pages that fit **half** of the largest page together (256 bytes, `mergeFill`) becomes one page. The half is the **hysteresis** between burst and merge (2026-10-07, review E6): a merged page has room for as many entries again before it bursts.
 - **fall back**, **split**: retired (2026-10-05). A multi-key page never holds a multi-value entry, so no subtree needs a fall back; there is no range node to split at. (Before: `settle`, `crowded`.)
 
 ## The one page (2026-10-07, `internal/page`, step 5.5)

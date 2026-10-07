@@ -248,8 +248,9 @@ func runRemoves[T comparable](t *testing.T, val func(i int) T) {
 // together as for keys with one value each, and loses no value in it.
 //
 // Expected: two sibling pages of six keys with two values each become one page of
-// 6+mergeBelow keys, with all their values, when the removals leave mergeBelow keys in one of
-// them.
+// 2*mergeBelow keys, with all their values, when the removals leave mergeBelow keys in both of
+// them (the merged page then needs at most mergeFill bytes; with six keys left in one page it
+// would need more, and the pages stay apart).
 func TestMultiKeyPageMergesWithSeveralValues(t *testing.T) {
 	t.Run("strings", func(t *testing.T) { runMerges(t, func(i int) string { return fmt.Sprint("v", i) }) })
 	t.Run("uint64", func(t *testing.T) { runMerges(t, func(i int) uint64 { return uint64(i) }) })
@@ -271,15 +272,19 @@ func runMerges[T comparable](t *testing.T, val func(i int) T) {
 	for i := range 6 - mergeBelow {
 		m.RemoveKey(key('a', i))
 	}
-	pages, keys := pageCount(&m)
-	if pages != 1 || keys != 6+mergeBelow || pageValues(&m) != 2*(6+mergeBelow) {
-		t.Fatalf("after the merge: %d pages hold %d keys and %d values, want 1 page with %d keys and %d values", pages, keys, pageValues(&m), 6+mergeBelow, 2*(6+mergeBelow))
+	if pages, _ := pageCount(&m); pages != 2 {
+		t.Fatalf("%d pages with six keys left in one of them, want 2", pages)
 	}
-	for i := range 6 {
-		holds(t, &m, key('b', i), []T{val(100 + i*10), val(100 + i*10 + 1)})
+	for i := range 6 - mergeBelow {
+		m.RemoveKey(key('b', i))
+	}
+	pages, keys := pageCount(&m)
+	if pages != 1 || keys != 2*mergeBelow || pageValues(&m) != 2*2*mergeBelow {
+		t.Fatalf("after the merge: %d pages hold %d keys and %d values, want 1 page with %d keys and %d values", pages, keys, pageValues(&m), 2*mergeBelow, 2*2*mergeBelow)
 	}
 	for i := 6 - mergeBelow; i < 6; i++ {
 		holds(t, &m, key('a', i), []T{val(i * 10), val(i*10 + 1)})
+		holds(t, &m, key('b', i), []T{val(100 + i*10), val(100 + i*10 + 1)})
 	}
 	checkInvariants(t, &m.t)
 }

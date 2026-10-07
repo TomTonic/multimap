@@ -561,7 +561,7 @@ const (
 const mergeBelow = 2
 
 // mergeFits reports whether the children of byte node n, which has prefix pre, are all pages
-// (value overflows excepted) whose entries fit one page together, without building anything: it
+// (value overflows excepted) whose entries fit half of the largest page together (mergeFill), without building anything: it
 // adds up the sizes the merged page would take. The node branches, so the common prefix of the
 // merged page is pre, exactly.
 func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
@@ -620,10 +620,18 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 	}
 	cp := min(len(pre), page.MaxKeyPart)
 	if m.flat == 3 {
-		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= 512
+		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= mergeFill
 	}
-	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= 512
+	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= mergeFill
 }
+
+// mergeFill is the most bytes a merged page may need: half of the largest page, so that the merged page has
+// room for as many entries again before it bursts. A merge into a page that is nearly full made the same
+// subtrees burst and merge back and forth (8 bursts and 8 merges of some 25 entries in 1,000 operations of a
+// small single-value tree); with half of it as the limit there are none, and the churn of small trees is 10
+// to 40 % faster (docs/redesign/review-2026-10.md, E6). The same half brings a value overflow back into a
+// page (page.BackFits).
+const mergeFill = 256
 
 // leafItem returns the entry of single-key page l, which is not a value overflow, with its
 // values, for the key rest.
@@ -648,7 +656,7 @@ func (m *Map[T]) leafItem(l *singleKeyHead, rest []byte) item[T] {
 }
 
 // tryMerge replaces the byte node at *loc, whose path begins at pathLen, by one multi-key page
-// if every child is a page that holds single-value entries and the entries together fit one.
+// if every child is a page and their entries together fit half of the largest page (mergeFits).
 // It reports whether it did. Only a map with multi-key pages calls it.
 func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	n := *loc
@@ -681,12 +689,10 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 		collect(-1, singleKeyHdr(e))
 	}
 	eachByteNode(n, func(b byte, c *header) { collect(int(b), c) })
-	h := m.pageOf(items)
-	if h == nil { // the sizes said it fits; the page's own limits (a remainder or a value too long) say no
-		return false
-	}
+	// mergeFits allowed at most mergeFill bytes, which keeps every remainder, value and slot count within the
+	// page's own limits (each of them alone would take more): pageOf builds the page.
 	ev(evMergeOK, len(items))
-	*loc = h
+	*loc = m.pageOf(items)
 	return true
 }
 

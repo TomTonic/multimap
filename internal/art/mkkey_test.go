@@ -439,17 +439,18 @@ func TestMultiKeyPageOfWordsCannotMoveUp(t *testing.T) {
 }
 
 // TestMultiKeyPageMergeWaitsForNearlyEmptyPage makes sure that removing values from a
-// map with multi-key pages does not try to merge pages while they are still well filled.
+// map with multi-key pages merges pages only when one of them is nearly empty and the merged
+// page would be at most half full.
 //
 // A user who deletes entries from a large index of single-value entries should not pay for
 // a merge attempt at every deletion: with pages that hold some ten entries, nearly every
-// attempt fails (docs/redesign/step4-probe.md). The tree comes together again once a page
-// is nearly empty.
+// attempt fails (docs/redesign/step4-probe.md). Nor should the tree merge pages into one that
+// is nearly full, which the next few adds burst again (docs/redesign/review-2026-10.md, E6).
 //
-// Expected: two sibling pages of six entries each, whose entries together would fit one
-// page after four removals, stay two pages while the page the removals come from has
-// more than mergeBelow entries left, and become one page with the removal that leaves it
-// mergeBelow entries.
+// Expected: two sibling pages of six entries of 52 bytes each stay two pages while the page the
+// removals come from keeps more than mergeBelow entries, and also when it keeps mergeBelow (the
+// merged page would need 420 bytes, more than mergeFill); once removals leave mergeBelow entries
+// in the other page too, the four entries (212 bytes) become one page.
 func TestMultiKeyPageMergeWaitsForNearlyEmptyPage(t *testing.T) {
 	var m Map[uint64]
 	key := func(side byte, i int) []byte { return fmt.Appendf(nil, "%c%02d%s", side, i, strings.Repeat("x", 40)) }
@@ -460,15 +461,21 @@ func TestMultiKeyPageMergeWaitsForNearlyEmptyPage(t *testing.T) {
 	if pages, keys := pageCount(&m); pages != 2 || keys != 12 {
 		t.Fatalf("setup: %d pages hold %d keys, want 2 pages with 12", pages, keys)
 	}
-	for i := range 6 - mergeBelow - 1 { // the page keeps mergeBelow+1 entries
+	for i := range 6 - mergeBelow { // the page keeps mergeBelow entries: merged, 8 entries would need 420 bytes
 		m.Remove(key('a', i), uint64(i))
+		if pages, _ := pageCount(&m); pages != 2 {
+			t.Fatalf("%d pages after %d removals, want 2 (no merge yet)", pages, i+1)
+		}
+	}
+	for i := range 6 - mergeBelow - 1 {
+		m.Remove(key('b', i), uint64(100+i))
 	}
 	if pages, _ := pageCount(&m); pages != 2 {
-		t.Fatalf("%d pages with %d entries left in one of them, want 2 (no merge yet)", pages, mergeBelow+1)
+		t.Fatalf("%d pages with %d entries left in the other page, want 2 (no merge yet)", pages, mergeBelow+1)
 	}
-	m.Remove(key('a', 6-mergeBelow-1), uint64(6-mergeBelow-1))
-	if pages, keys := pageCount(&m); pages != 1 || keys != 6+mergeBelow {
-		t.Fatalf("after the removal that leaves %d entries: %d pages with %d keys, want 1 page with %d", mergeBelow, pages, keys, 6+mergeBelow)
+	m.Remove(key('b', 6-mergeBelow-1), uint64(100+6-mergeBelow-1))
+	if pages, keys := pageCount(&m); pages != 1 || keys != 2*mergeBelow {
+		t.Fatalf("after the removal that leaves %d entries in both pages: %d pages with %d keys, want 1 page with %d", mergeBelow, pages, keys, 2*mergeBelow)
 	}
 	checkInvariants(t, &m.t)
 }
