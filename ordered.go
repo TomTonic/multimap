@@ -55,8 +55,28 @@ func (m *Ordered[T]) ValuesForSeq(key Key) iter.Seq[T] {
 
 // rangeSeq iterates over the values of all keys within b, key by key in
 // ascending key order.
+//
+// The walk hands out a page at a time (art.Cursor); the loop over a page's values is written here, so that the
+// compiler inlines this iterator into the caller's range loop and a value costs no call (docs/redesign/scan-design.md).
 func (m *Ordered[T]) rangeSeq(b art.Bounds) iter.Seq[T] {
-	return func(yield func(T) bool) { m.m.RangeValues(&b, yield) }
+	return func(yield func(T) bool) {
+		var c art.Cursor[T]
+		c.Init(&m.m, &b, false)
+		for c.NextPage() {
+			for _, v := range c.Vals {
+				if !yield(v) {
+					return
+				}
+			}
+			if c.Set != nil { // a value overflow: its set, not copied
+				for v := range c.Set.MutableRange() {
+					if !yield(v) {
+						return
+					}
+				}
+			}
+		}
+	}
 }
 
 // ValuesBetweenInclusive returns a copy of the values of all keys in [from, to].
@@ -139,7 +159,15 @@ func (m *Ordered[T]) AllKeys() []Key {
 // not be modified or retained; clone a Key to keep it.
 func (m *Ordered[T]) AllKeysSeq() iter.Seq[Key] {
 	return func(yield func(Key) bool) {
-		m.m.Range(&art.Bounds{}, func(k []byte) bool { return yield(k) })
+		var c art.Cursor[T]
+		c.Init(&m.m, &art.Bounds{}, true)
+		for c.NextPage() {
+			for _, k := range c.Keys {
+				if !yield(k) {
+					return
+				}
+			}
+		}
 	}
 }
 

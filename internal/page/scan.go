@@ -39,74 +39,101 @@ func cmpKey(a, b, bound []byte) int {
 	return bytes.Compare(b, bound[len(a):])
 }
 
-// ScanValues calls yield with the values of the keys of p, a page of the many-key form, that lie within b, in
-// key order, and reports false once the scan is over: yield returned false, or a key above the upper bound was
-// reached. It is the tree's range scan of a page: one call a value, and a plain loop over the values when the page
-// lies wholly inside the bounds (docs/redesign/scan-design.md).
-func (p *Fixed) ScanValues[T comparable](b *Bounds, yield func(T) bool) bool {
+// slotRange returns the slots [start, end) whose keys lie within b, for a page of the many-key form whose key lengths
+// begin at kl and remainders at rem, and whether a key above the upper bound follows (over: the scan is done
+// after this page). The keys are in order, so the slots below the lower bound come first and those above the
+// upper bound last: the lower bound is compared until the first key at or above it, the upper bound from there on.
+func slotRange(m []byte, kl, n, rem int, b *Bounds) (start, end int, over bool) {
+	cp := m[Header:kl]
+	off := rem
+	start = n
+	for i, rl := range m[kl : kl+n] {
+		if rl == Further {
+			continue
+		}
+		r := m[off : off+int(rl)]
+		off += int(rl)
+		if start == n {
+			if b.HasLo {
+				if c := cmpKey(cp, r, b.Lo); c < 0 || (c == 0 && !b.LoIncl) {
+					continue
+				}
+			}
+			start = i
+			if !b.HasHi {
+				return start, n, false
+			}
+		}
+		if c := cmpKey(cp, r, b.Hi); c > 0 || (c == 0 && !b.HiIncl) {
+			return start, i, true
+		}
+	}
+	return start, n, false
+}
+
+// ValuesIn returns the values of the keys of p that lie within b, in key order, as a slice of the page (it aliases
+// p: valid until the map changes), and whether a key above the upper bound follows. A page of the one-key form
+// holds one key, which the caller has checked: all its values. It is the tree's range scan of a page
+// (docs/redesign/scan-design.md): the scan hands the slice to its caller's loop as it is.
+func (p *Fixed) ValuesIn[T comparable](b *Bounds) ([]T, bool) {
 	m := p.mem()
 	n, l := int(p.n), p.cpl()
 	vs := valuesIn[T](m, n)
-	if !b.HasLo && !b.HasHi {
-		for _, v := range vs {
-			if !yield(v) {
-				return false
-			}
-		}
-		return true
+	if p.one() || !b.HasLo && !b.HasHi {
+		return vs, false
 	}
-	kl := Header + l
-	cp := m[Header:kl]
-	off := kl + n
-	skip := false
-	for i, rl := range m[kl : kl+n] {
-		if rl != Further {
-			var over bool
-			if skip, over = b.in(cp, m[off:off+int(rl)]); over {
-				return false
-			}
-			off += int(rl)
-		}
-		if !skip && !yield(vs[i]) {
-			return false
-		}
-	}
-	return true
+	start, end, over := slotRange(m, Header+l, n, Header+l+n, b)
+	return vs[start:end], over
 }
 
-// ScanValues calls yield with the values of the keys of p, a page of the many-key form, that lie within b, as
-// strings, in key order, and reports false once the scan is over (see Fixed.ScanValues). The strings are copies.
-func (p *Str) ScanValues(b *Bounds, yield func(string) bool) bool {
+// AppendStrings appends the values of the keys of p that lie within b, in key order, to dst as strings (copies),
+// and reports whether a key above the upper bound follows. A page of the one-key form gives all its values (see
+// Fixed.ValuesIn).
+func (p *Str) AppendStrings(dst []string, b *Bounds) ([]string, bool) {
+	m := p.mem()
+	n, l := int(p.n), p.cpl()
+	vl := Header + l // the value lengths of the one-key form follow the key part
+	start, end, over := 0, n, false
+	if !p.one() {
+		vl += n
+		if b.HasLo || b.HasHi {
+			start, end, over = slotRange(m, Header+l, n, vl+n, b)
+		}
+	}
+	s := len(m) - sum(m[vl+start:vl+n])
+	for _, x := range m[vl+start : vl+end] {
+		dst = append(dst, string(m[s:s+int(x)]))
+		s += int(x)
+	}
+	return dst, over
+}
+
+// AppendKeys appends the keys within b of p, a page of the many-key form, each as pre, the key part and the
+// remainder, to buf, and the end of each key in buf to ends; it reports whether a key above the upper bound
+// follows. It is the range scan of the keys of a page.
+func (p *head) AppendKeys(buf []byte, ends []int, pre []byte, b *Bounds, str bool) ([]byte, []int, bool) {
 	m := p.mem()
 	n, l := int(p.n), p.cpl()
 	kl := Header + l
-	vl := kl + n
-	s := len(m) - sum(m[vl:vl+n])
-	if !b.HasLo && !b.HasHi {
-		for _, x := range m[vl : vl+n] {
-			if !yield(string(m[s : s+int(x)])) {
-				return false
-			}
-			s += int(x)
-		}
-		return true
+	rem := kl + n
+	if str {
+		rem += n
 	}
 	cp := m[Header:kl]
-	off := vl + n
-	skip := false
-	for i, rl := range m[kl : kl+n] {
-		if rl != Further {
-			var over bool
-			if skip, over = b.in(cp, m[off:off+int(rl)]); over {
-				return false
-			}
-			off += int(rl)
+	for _, rl := range m[kl : kl+n] {
+		if rl == Further {
+			continue
 		}
-		x := int(m[vl+i])
-		if !skip && !yield(string(m[s:s+x])) {
-			return false
+		r := m[rem : rem+int(rl)]
+		rem += int(rl)
+		skip, past := b.in(cp, r)
+		if past {
+			return buf, ends, true
 		}
-		s += x
+		if !skip {
+			buf = append(append(append(buf, pre...), cp...), r...)
+			ends = append(ends, len(buf))
+		}
 	}
-	return true
+	return buf, ends, false
 }

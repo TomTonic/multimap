@@ -340,3 +340,31 @@ func TestRangeQueriesWithNegativeInts(t *testing.T) {
 		}
 	})
 }
+
+// TestRangeStopsInsideAKeyWithManyValues shows that a range query can be left early in the middle of the values of
+// a key that has more values than a page holds.
+//
+// A user who breaks out of the loop over a range after the first value gets no further values and no error, also
+// when that value comes from the value set of a key with hundreds of values.
+//
+// Expected: the loop over the values between two keys stops after one value, and a full loop sees all 300 values of
+// the key and the one of its neighbour.
+func TestRangeStopsInsideAKeyWithManyValues(t *testing.T) {
+	m := NewOrdered[int]()
+	for i := range 300 {
+		m.AddValue(Key("many"), i)
+	}
+	m.AddValue(Key("next"), 1000)
+	n := 0
+	for range m.ValuesBetweenInclusiveSeq(Key("a"), Key("z")) {
+		n++
+		break
+	}
+	all := 0
+	for range m.ValuesBetweenInclusiveSeq(Key("a"), Key("z")) {
+		all++
+	}
+	if n != 1 || all != 301 {
+		t.Fatalf("stopped after %d values, %d in all; want 1 and 301", n, all)
+	}
+}

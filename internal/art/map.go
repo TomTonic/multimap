@@ -163,16 +163,34 @@ const leafTail = 32 - 1
 // the rest the leaf holds: fn must not modify or retain it, and must not
 // modify the map.
 func (m *Map[T]) Range(b *Bounds, fn func(key []byte) bool) {
-	var kb keyBuf
-	m.t.scan(b, leafTail, &kb, func(*singleKeyHead) bool { return fn(kb.key) },
-		func(p *header, pathLen int, lo, hi bool) bool { return m.scanPage(p, pathLen, b, lo, hi, &kb, fn, nil) })
+	var c Cursor[T]
+	c.Init(m, b, true)
+	for c.NextPage() {
+		for _, k := range c.Keys {
+			if !fn(k) {
+				return
+			}
+		}
+	}
 }
 
 // RangeValues calls yield for every value of every key within b, key by key
 // in ascending key order, until yield returns false.
 func (m *Map[T]) RangeValues(b *Bounds, yield func(T) bool) {
-	m.t.scan(b, leafTail, nil, func(l *singleKeyHead) bool { return eachValue(l, m.flat, yield) },
-		func(p *header, pathLen int, lo, hi bool) bool {
-			return m.scanPage(p, pathLen, b, lo, hi, nil, nil, yield)
-		})
+	var c Cursor[T]
+	c.Init(m, b, false)
+	for c.NextPage() {
+		for _, v := range c.Vals {
+			if !yield(v) {
+				return
+			}
+		}
+		if c.Set != nil { // a value overflow: its set, not copied
+			for v := range c.Set.MutableRange() {
+				if !yield(v) {
+					return
+				}
+			}
+		}
+	}
 }

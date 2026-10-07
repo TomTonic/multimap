@@ -3,6 +3,7 @@ package page
 import (
 	"bytes"
 	"encoding/binary"
+	"strconv"
 	"strings"
 	"testing"
 	"unsafe"
@@ -566,18 +567,18 @@ func TestPageEachSingle(t *testing.T) {
 	}
 }
 
-// TestPageScanValues shows the values a range scan gets from a page of several keys.
+// TestPageValuesIn shows what a range scan gets from a page.
 //
-// A user who asks for the values of a key range gets, from each page the range touches, the values of the
-// keys inside the range in key order, a key with several values all of them, and can stop after any value;
-// the tree passes the bounds behind the path to the page and stops the scan when a page reports a key above
-// the upper bound.
+// A user who asks for the values or the keys of a key range gets, from each page the range touches, those of
+// the keys inside the range in key order, a key with several values all of them; the tree passes the bounds
+// behind the path to the page and ends the scan when a page reports a key above the upper bound.
 //
-// Expected: for pages of uint64 and of strings with the keys pa, pb (two values), pc and pd, ScanValues gives
-// every value without bounds, the values from or after a lower bound and up to or before an upper bound
-// (inclusive and exclusive), nothing for an upper bound below the page and everything for bounds shorter or
-// longer than the key part; it answers false when a key above the upper bound was reached or yield stopped.
-func TestPageScanValues(t *testing.T) {
+// Expected: for pages of uint64 and of strings with the keys pa, pb (two values), pc and pd, ValuesIn and
+// AppendStrings give every value without bounds, the values from or after a lower bound and up to or before an
+// upper bound (inclusive and exclusive), nothing for an upper bound below the page and everything for bounds
+// shorter or longer than the key part, and report a key above the upper bound exactly when one follows;
+// AppendKeys gives the keys with the prefix in front, each once; a page of one key gives all its values.
+func TestPageValuesIn(t *testing.T) {
 	rests := bs("pa", "pb", "pb", "pc", "pd")
 	fp := BuildFixed(rests, []uint64{1, 2, 3, 4, 5})
 	sp := BuildStrings(rests, bs("1", "2", "3", "4", "5"))
@@ -585,39 +586,56 @@ func TestPageScanValues(t *testing.T) {
 		name string
 		b    Bounds
 		want string
-		ok   bool
+		keys string
+		over bool
 	}{
-		{"no bounds", Bounds{}, "12345", true},
-		{"from pb inclusive", Bounds{Lo: []byte("pb"), HasLo: true, LoIncl: true}, "2345", true},
-		{"from pb exclusive", Bounds{Lo: []byte("pb"), HasLo: true}, "45", true},
-		{"to pc inclusive", Bounds{Hi: []byte("pc"), HasHi: true, HiIncl: true}, "1234", false},
-		{"to pc exclusive", Bounds{Hi: []byte("pc"), HasHi: true}, "123", false},
-		{"pb to pb", Bounds{Lo: []byte("pb"), Hi: []byte("pb"), HasLo: true, HasHi: true, LoIncl: true, HiIncl: true}, "23", false},
-		{"from a bound shorter than the key part", Bounds{Lo: []byte(""), HasLo: true}, "12345", true},
-		{"to a bound below the page", Bounds{Hi: []byte("o"), HasHi: true, HiIncl: true}, "", false},
-		{"to a bound above the page", Bounds{Hi: []byte("q"), HasHi: true}, "12345", true},
+		{"no bounds", Bounds{}, "12345", "pa pb pc pd", false},
+		{"from pb inclusive", Bounds{Lo: []byte("pb"), HasLo: true, LoIncl: true}, "2345", "pb pc pd", false},
+		{"from pb exclusive", Bounds{Lo: []byte("pb"), HasLo: true}, "45", "pc pd", false},
+		{"to pc inclusive", Bounds{Hi: []byte("pc"), HasHi: true, HiIncl: true}, "1234", "pa pb pc", true},
+		{"to pc exclusive", Bounds{Hi: []byte("pc"), HasHi: true}, "123", "pa pb", true},
+		{"pb to pb", Bounds{Lo: []byte("pb"), Hi: []byte("pb"), HasLo: true, HasHi: true, LoIncl: true, HiIncl: true}, "23", "pb", true},
+		{"from a bound shorter than the key part", Bounds{Lo: []byte(""), HasLo: true}, "12345", "pa pb pc pd", false},
+		{"to a bound below the page", Bounds{Hi: []byte("o"), HasHi: true, HiIncl: true}, "", "", true},
+		{"to a bound above the page", Bounds{Hi: []byte("q"), HasHi: true}, "12345", "pa pb pc pd", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var got []byte
-			ok := fp.ScanValues(&tc.b, func(v uint64) bool { got = append(got, byte('0'+v)); return true })
-			if string(got) != tc.want || ok != tc.ok {
-				t.Errorf("uint64: %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			vs, over := fp.ValuesIn[uint64](&tc.b)
+			got := ""
+			for _, v := range vs {
+				got += strconv.FormatUint(v, 10)
 			}
-			got = got[:0]
-			ok = sp.ScanValues(&tc.b, func(v string) bool { got = append(got, v...); return true })
-			if string(got) != tc.want || ok != tc.ok {
-				t.Errorf("strings: %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			if got != tc.want || over != tc.over {
+				t.Errorf("uint64: %q, over %v; want %q, %v", got, over, tc.want, tc.over)
+			}
+			ss, over := sp.AppendStrings(nil, &tc.b)
+			if strings.Join(ss, "") != tc.want || over != tc.over {
+				t.Errorf("strings: %q, over %v; want %q, %v", ss, over, tc.want, tc.over)
+			}
+			for _, p := range []*head{&fp.head, &sp.head} {
+				buf, ends, over := p.AppendKeys(nil, nil, []byte("x"), &tc.b, p == &sp.head)
+				var keys []string
+				start := 0
+				for _, e := range ends {
+					keys = append(keys, string(buf[start+1:e]))
+					if buf[start] != 'x' {
+						t.Errorf("a key without the prefix: %q", buf[start:e])
+					}
+					start = e
+				}
+				if strings.Join(keys, " ") != tc.keys || over != tc.over {
+					t.Errorf("keys: %q, over %v; want %q, %v", keys, over, tc.keys, tc.over)
+				}
 			}
 		})
 	}
-	for _, b := range []Bounds{{}, {Lo: []byte("pa"), HasLo: true, LoIncl: true}} {
-		n := 0
-		if fp.ScanValues(&b, func(uint64) bool { n++; return n < 2 }) || n != 2 {
-			t.Errorf("uint64 stopped after %d values", n)
-		}
-		n = 0
-		if sp.ScanValues(&b, func(string) bool { n++; return n < 2 }) || n != 2 {
-			t.Errorf("strings stopped after %d values", n)
-		}
+	one := BuildFixed(bs("k", "k"), []uint64{7, 8})
+	ones := BuildStrings(bs("k", "k"), bs("a", "b"))
+	b := Bounds{Hi: []byte("a"), HasHi: true} // ignored: the caller checks the one key
+	if vs, over := one.ValuesIn[uint64](&b); len(vs) != 2 || over {
+		t.Errorf("one key, uint64: %v, %v", vs, over)
+	}
+	if ss, over := ones.AppendStrings(nil, &b); strings.Join(ss, "") != "ab" || over {
+		t.Errorf("one key, strings: %q, %v", ss, over)
 	}
 }

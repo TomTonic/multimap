@@ -42,6 +42,17 @@ func TestRangeProbe(t *testing.T) {
 		}
 		sink += acc
 	}
+	total := 0
+	for range f.ord.AllValuesSeq() {
+		total++
+	}
+	all := func() {
+		var acc uint64
+		for v := range f.ord.AllValuesSeq() {
+			acc += weigh(v)
+		}
+		sink += acc
+	}
 	bm := func() {
 		var acc uint64
 		for j := range from.B {
@@ -76,4 +87,6 @@ func TestRangeProbe(t *testing.T) {
 	}
 	fmt.Printf("ranges %s %s n=%d: ordered %.2f ns a value, btree-map %.2f ns a value (%d ranges, %d values)\n",
 		kind, profile, n, timed(ord), timed(bm), len(from.B), values)
+	values = total
+	fmt.Printf("full scan %s %s n=%d: ordered %.2f ns a value (AllValuesSeq, %d values)\n", kind, profile, n, timed(all), total)
 }

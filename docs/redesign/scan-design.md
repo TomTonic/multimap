@@ -54,3 +54,44 @@ Range probe (WSL, medians of 9), ns a value before → after, `btree-map` alongs
 
 **Prediction met or beaten:** street 6 to 7.5 (6.70), `u64` 5 to 6 (4.39: as fast as `btree-map`), dirs 8 to 10 (9.46), street 65,536
 8.5 to 10 (9.01); natural -10 to -30 % (-40 %). Against `btree-map` now 0.62 to 1.01.
+
+## Step 2 result (2026-10-07)
+
+`art.Cursor` (new, `internal/art/cursor.go`) replaces the recursive scan (`scanRange`, `scanChildren`, `scanLeaf`, `scanPage`, `cmpParts`
+are gone): a stack of compact frames (24 bytes, 32 in the cursor, a slice behind them for deeper trees), `NextPage` once a page, and the
+page's methods `ValuesIn` (a slice of the page's own array for `uint64` and pointers), `AppendStrings` and `AppendKeys` (`internal/page/scan.go`,
+which also replace step 1's `ScanValues`); a value overflow hands its set to the loop instead of being copied. The iterators of `Ordered`
+(`rangeSeq`, `AllKeysSeq`) are the loop over a page's values: the compiler inlines them, `Cursor.Init` and the caller's loop body into the
+caller (checked with `-gcflags=-m` at the bench's call site), and the bounds no longer escape to the heap. New tests `TestScanOfDeepTrees`
+(two chains of 40 byte nodes, the frames beyond 32 used twice), `TestRangeStopsInsideAKeyWithManyValues`, `TestPageValuesIn`; 100 %, race,
+lint 0.
+
+**A surprise on the way, understood and fixed:** the first version was 10 to 30 % slower than step 1. The profile showed three faults of the
+implementation, not of the design: the next child of a node was searched from the start every time (`childFrom`, 12 to 16 %), a page at a
+bound compared every slot with both bounds (20 %), and a value overflow's set was copied into the cursor's scratch (with an allocation a
+range and 20 % garbage collection). Fixed by an incremental walk over the children, compares only as long as they can decide, and the set
+handed to the loop; the frames were made compact (56 → 24 bytes) and filled in place.
+
+Range probe, ns a value (the bench's ranges of 100 keys), before step 1 → step 1 → step 2, `btree-map` alongside:
+
+| case | before | step 1 | step 2 | `btree-map` |
+|---|--:|--:|--:|--:|
+| street single-value 4,096 | 10.97 | 6.66 | **6.03** | 4.96 |
+| `u64` single-value 4,096 | 8.82 | 4.37 | **2.74** | 4.27 |
+| dirs single-value 4,096 | 14.24 | 9.55 | **9.89** | 5.72 |
+| street single-value 65,536 | 13.44 | 9.03 | **8.48** | 7.38 |
+| street natural 4,096 | 7.24 | 4.37 | **3.42** | |
+| `u64` natural 4,096 | 4.17 | 3.74 | **2.68** | |
+| dirs natural 4,096 | | 5.02 | **4.42** | |
+
+The full scan through the public iterator (`AllValuesSeq`), step 1 → step 2: street single-value 3.29 → 3.15, `u64` single-value 1.93 →
+**0.99**, dirs single-value 4.90 → 5.29, `u64` natural 3.12 → 2.20, street natural 65,536 4.41 → 3.55. (The read probe's scan goes through
+`art.Map.RangeValues` with a closure, a path that the public API no longer takes; it is 12 to 29 % slower than in step 1, since the per-page
+work of the cursor is not paid back by an inlined loop there.)
+
+**Against the prediction** (single-value 3 to 5 ns a value at 4,096 keys, 1.0 to 1.4 times `btree-map`; natural a further 10 to 30 %; the
+full scan 1 to 2 ns a value for `uint64`): `u64` met (2.74, **1.56 times `btree-map`**; full scan 0.99); street (6.03, 0.82 of `btree-map`)
+and dirs (9.89, 0.58) **missed**; natural met (-12 to -28 % against step 1). **dirs is the one cell slower than step 1** (+3.5 % ranges, +8 %
+full scan): its pages are small (4.5 keys a multi-key page, 13 % single-key pages, 7.6 nodes on the way), so the walk's cost a page (the call
+of `NextPage`, the frame, the dispatch) is shared by few values. What remains for street and dirs against `btree-map` is that walk and the
+bound compares of the pages at the ends of a range; the lever there is fuller pages (the autotune) or a cheaper step from page to page.
