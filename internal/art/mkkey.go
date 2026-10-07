@@ -492,52 +492,54 @@ func cmpParts(a, b, bound []byte) int {
 
 // scanPage visits the entries of multi-key page n, whose keys begin at pathLen, within b:
 // lo and hi say whether the page lies on the path of the lower and the upper bound, as for a
-// leaf. It calls fn with the key (kb must be set) or, if fn is nil, yield with the value, and
-// reports false once the scan is over.
+// leaf. It calls fn with the key of each entry (kb must be set) or, if fn is nil, yield with each
+// value, which the page hands out itself (ScanValues), and reports false once the scan is over.
 func (m *Map[T]) scanPage(n *header, pathLen int, b *Bounds, lo, hi bool, kb *keyBuf, fn func(key []byte) bool, yield func(T) bool) bool {
+	if fn == nil { // a scan of values: the page hands them out itself, one call a value (docs/redesign/scan-design.md)
+		pb := page.Bounds{HasLo: lo, HasHi: hi, LoIncl: b.FromIncl, HiIncl: b.ToIncl}
+		if lo {
+			pb.Lo = b.From[pathLen:]
+		}
+		if hi {
+			pb.Hi = b.To[pathLen:]
+		}
+		if m.flat == 3 {
+			return asMKStr(n).ScanValues(&pb, *(*func(string) bool)(unsafe.Pointer(&yield)))
+		}
+		return asMKFix(n).ScanValues(&pb, yield)
+	}
 	over, in := false, false // in: the key of the value before is within the bounds
-	visit := func(cp, rem []byte, v T, first bool) bool {
-		if first {
-			in = true
-			if lo {
-				if c := cmpParts(cp, rem, b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
-					in = false
-				}
+	visit := func(cp, rem []byte, first bool) bool {
+		if !first {
+			return true
+		}
+		in = true
+		if lo {
+			if c := cmpParts(cp, rem, b.From[pathLen:]); c < 0 || (c == 0 && !b.FromIncl) {
+				in = false
 			}
-			if in && hi {
-				if c := cmpParts(cp, rem, b.To[pathLen:]); c > 0 || (c == 0 && !b.ToIncl) {
-					over = true
-					return false
-				}
+		}
+		if in && hi {
+			if c := cmpParts(cp, rem, b.To[pathLen:]); c > 0 || (c == 0 && !b.ToIncl) {
+				over = true
+				return false
 			}
 		}
 		if !in {
 			return true
 		}
-		if fn != nil {
-			if !first {
-				return true
-			}
-			kb.key = append(append(append(kb.key[:0], kb.path[:pathLen]...), cp...), rem...)
-			return fn(kb.key)
-		}
-		return yield(v)
+		kb.key = append(append(append(kb.key[:0], kb.path[:pathLen]...), cp...), rem...)
+		return fn(kb.key)
 	}
 	var done bool
 	if m.flat == 3 {
 		p := asMKStr(n)
 		cp := p.CP()
-		done = p.Each(func(rem, val []byte, first bool) bool {
-			var v T
-			if fn == nil {
-				v = fromStr[T](string(val))
-			}
-			return visit(cp, rem, v, first)
-		})
+		done = p.Each(func(rem, _ []byte, first bool) bool { return visit(cp, rem, first) })
 	} else {
 		p := asMKFix(n)
 		cp := p.CP()
-		done = p.Each(func(rem []byte, v T, first bool) bool { return visit(cp, rem, v, first) })
+		done = p.Each(func(rem []byte, _ T, first bool) bool { return visit(cp, rem, first) })
 	}
 	return done && !over
 }

@@ -35,3 +35,22 @@ values); lookups and writes unchanged.
 Both steps keep the semantics (bounds inclusive and exclusive, prefix scans, early stop) and are tested by the existing tests of the scans
 and the reference tests; 100 %, race, lint 0. Each step is measured on its own (range probe, read probe, and the bench on the PC for the
 ranges against `btree-map` and `btree-sets`).
+
+## Step 1 result (2026-10-07)
+
+`page.Fixed.ScanValues` and `page.Str.ScanValues` (new, `internal/page/scan.go`): the page walks its slots itself, a plain loop over the
+values when it lies wholly inside the bounds, the bound compare of each first slot inside the same loop otherwise; `scanPage` hands a scan
+of values to them and keeps `Each` with `visit` only for the scan of keys. New test `TestPageScanValues`; 100 %, race, lint 0.
+
+Range probe (WSL, medians of 9), ns a value before → after, `btree-map` alongside:
+
+| case | before | after | `btree-map` |
+|---|--:|--:|--:|
+| street single-value 4,096 | 10.95 | **6.70** | 5.25 |
+| `u64` single-value 4,096 | 8.80 | **4.39** | 4.43 |
+| dirs single-value 4,096 | 13.94 | **9.46** | 5.87 |
+| street single-value 65,536 | 13.44 | **9.01** | 7.53 |
+| street natural 4,096 | 7.19 | **4.32** | (not the competitor of the natural mix) |
+
+**Prediction met or beaten:** street 6 to 7.5 (6.70), `u64` 5 to 6 (4.39: as fast as `btree-map`), dirs 8 to 10 (9.46), street 65,536
+8.5 to 10 (9.01); natural -10 to -30 % (-40 %). Against `btree-map` now 0.62 to 1.01.

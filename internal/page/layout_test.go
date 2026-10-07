@@ -565,3 +565,59 @@ func TestPageEachSingle(t *testing.T) {
 		t.Errorf("words stopped after %d values", n)
 	}
 }
+
+// TestPageScanValues shows the values a range scan gets from a page of several keys.
+//
+// A user who asks for the values of a key range gets, from each page the range touches, the values of the
+// keys inside the range in key order, a key with several values all of them, and can stop after any value;
+// the tree passes the bounds behind the path to the page and stops the scan when a page reports a key above
+// the upper bound.
+//
+// Expected: for pages of uint64 and of strings with the keys pa, pb (two values), pc and pd, ScanValues gives
+// every value without bounds, the values from or after a lower bound and up to or before an upper bound
+// (inclusive and exclusive), nothing for an upper bound below the page and everything for bounds shorter or
+// longer than the key part; it answers false when a key above the upper bound was reached or yield stopped.
+func TestPageScanValues(t *testing.T) {
+	rests := bs("pa", "pb", "pb", "pc", "pd")
+	fp := BuildFixed(rests, []uint64{1, 2, 3, 4, 5})
+	sp := BuildStrings(rests, bs("1", "2", "3", "4", "5"))
+	for _, tc := range []struct {
+		name string
+		b    Bounds
+		want string
+		ok   bool
+	}{
+		{"no bounds", Bounds{}, "12345", true},
+		{"from pb inclusive", Bounds{Lo: []byte("pb"), HasLo: true, LoIncl: true}, "2345", true},
+		{"from pb exclusive", Bounds{Lo: []byte("pb"), HasLo: true}, "45", true},
+		{"to pc inclusive", Bounds{Hi: []byte("pc"), HasHi: true, HiIncl: true}, "1234", false},
+		{"to pc exclusive", Bounds{Hi: []byte("pc"), HasHi: true}, "123", false},
+		{"pb to pb", Bounds{Lo: []byte("pb"), Hi: []byte("pb"), HasLo: true, HasHi: true, LoIncl: true, HiIncl: true}, "23", false},
+		{"from a bound shorter than the key part", Bounds{Lo: []byte(""), HasLo: true}, "12345", true},
+		{"to a bound below the page", Bounds{Hi: []byte("o"), HasHi: true, HiIncl: true}, "", false},
+		{"to a bound above the page", Bounds{Hi: []byte("q"), HasHi: true}, "12345", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []byte
+			ok := fp.ScanValues(&tc.b, func(v uint64) bool { got = append(got, byte('0'+v)); return true })
+			if string(got) != tc.want || ok != tc.ok {
+				t.Errorf("uint64: %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			}
+			got = got[:0]
+			ok = sp.ScanValues(&tc.b, func(v string) bool { got = append(got, v...); return true })
+			if string(got) != tc.want || ok != tc.ok {
+				t.Errorf("strings: %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+	for _, b := range []Bounds{{}, {Lo: []byte("pa"), HasLo: true, LoIncl: true}} {
+		n := 0
+		if fp.ScanValues(&b, func(uint64) bool { n++; return n < 2 }) || n != 2 {
+			t.Errorf("uint64 stopped after %d values", n)
+		}
+		n = 0
+		if sp.ScanValues(&b, func(string) bool { n++; return n < 2 }) || n != 2 {
+			t.Errorf("strings stopped after %d values", n)
+		}
+	}
+}
