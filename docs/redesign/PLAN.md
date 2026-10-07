@@ -268,6 +268,15 @@ Starting point: the parked branch `mkmv-experiment` (`internal/artstr` with `Map
 entries that repeat the key before them) and its measurements in step3-tree-pages.md. If it works,
 the promote and the fall back go. Design note with prediction first.
 
+## Open after step 5 (credo gaps and tuning, entered 2026-10-07 from gate m46)
+
+Not part of a step yet; each gets a design note with a prediction before any code, and is decided after the report of gate 5 (5.5d).
+
+- **Strings against `btree-sets` at 4,096 keys.** Churn and build of the real mix (street, dirs) are 0.89 to 0.96 times `btree-sets` in m46 (credo 1 asks for at least 1.0; m44: 0.89 to 0.97). The string pages gained nothing in churn since m44 and lost 6 to 10 % in build; above 16,384 keys the credo holds (1.04 to 1.26). To find out: where the string page's `Add` and `Remove` lose against the `uint64` page (value lengths as a list of their own, the values moved at the end of the object), with the probe's profile on `street natural 4096` strings.
+- **Single value a key against `btree-map` at 4,096 and 16,384 keys.** In m46 the ordered map is 0.65 to 0.98 times `btree-map` for `uint64` street and dirs and for strings (as in m43; m46: `uint64` street 0.75 / 0.83 at 4,096, 0.98 / 0.96 at 16,384; dirs 0.70 / 0.70 and 0.86 / 0.80; strings 0.65 to 0.83), and above it only for the full corpus (1.06 to 1.18, strings dirs 0.89). A small map of one value a key is the case in which a B-tree is a single array of cache lines; to find out: how much of the gap is the descent through byte nodes (three or four objects) and how much the page, with the `Each` and the `Add` profile of a single-value tree of 4,096 keys.
+- **The fast path of the one-key page** (see below): +13 % build and +11 % replay for `uint64` single-value in the probe (5.5c), +1 to +3 % build in the gate; belongs to the two points above.
+- **Reads** were measured late (5.5e); the probes of later steps include `readprobe_test.go`.
+
 ## Step 6: the routing layer
 
 - **Remove the smallest byte node** (N5, 64 bytes). The smallest is then N12 with 128 bytes. N5
