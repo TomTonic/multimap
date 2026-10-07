@@ -620,10 +620,14 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 	}
 	cp := min(len(pre), page.MaxKeyPart)
 	if m.flat == 3 {
-		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= 512
+		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= mergeFill
 	}
-	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= 512
+	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= mergeFill
 }
+
+// mergeFill is the most bytes a merged page may need (experiment E6, docs/redesign/review-2026-10.md): half of
+// the largest page, so that a merged page has room for as many entries again before it bursts.
+const mergeFill = 256
 
 // leafItem returns the entry of single-key page l, which is not a value overflow, with its
 // values, for the key rest.
