@@ -625,13 +625,15 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= mergeFill
 }
 
-// mergeFill is the most bytes a merged page may need: half of the largest page, so that the merged page has
-// room for as many entries again before it bursts. A merge into a page that is nearly full made the same
-// subtrees burst and merge back and forth (8 bursts and 8 merges of some 25 entries in 1,000 operations of a
-// small single-value tree); with half of it as the limit there are none, and the churn of small trees is 10
-// to 40 % faster (docs/redesign/review-2026-10.md, E6). The same half brings a value overflow back into a
-// page (page.BackFits).
-const mergeFill = 256
+// mergeFill is the most bytes a merged page may need: half of the largest page, the size at which a page bursts.
+// A page bursts only beyond the largest class (below it, it moves from class to class with the shrink rule of
+// internal/page), so the distance to the next burst is measured from the largest page whatever class the merged
+// page lands in, and half of it leaves room for as many entries again. A merge into a page that is nearly full
+// made the same subtrees burst and merge back and forth (8 bursts and 8 merges of some 25 entries in 1,000
+// operations of a small single-value tree); with half of it as the limit there are none, and the churn of small
+// trees is 10 to 40 % faster (docs/redesign/review-2026-10.md, E6). The same half brings a value overflow back
+// into a page (page.BackFits).
+const mergeFill = page.Largest / 2
 
 // leafItem returns the entry of single-key page l, which is not a value overflow, with its
 // values, for the key rest.

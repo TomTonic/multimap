@@ -65,8 +65,12 @@ const (
 	TypeManyKeys uint8 = 16
 )
 
+// Largest is the size of the largest page: a page bursts only when its content would need more (or a limit of
+// its parts is reached); below it a page grows and shrinks from class to class.
+const Largest = 512
+
 // sizes are the object sizes of the classes.
-var sizes = [...]int{32, 64, 128, 256, 384, 512}
+var sizes = [...]int{32, 64, 128, 256, 384, Largest}
 
 // Classes is the number of size classes.
 const Classes = len(sizes)
@@ -386,7 +390,7 @@ func toOneKey(p *head, m []byte, la lay, e int) int {
 
 // Room returns the bytes that the largest page has for the values of a key behind a key part of l bytes: 512 less
 // the head and the key part.
-func Room(l int) int { return sizes[Classes-1] - Header - l }
+func Room(l int) int { return Largest - Header - l }
 
 // BackFits reports whether the values of a key whose value overflow they have left, which take valueBytes (for
 // strings with their length bytes), go back into a page of the largest class that holds a key part of l bytes: when
