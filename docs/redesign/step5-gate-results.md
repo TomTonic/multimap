@@ -265,3 +265,124 @@ Credo 2 (ranges, ordered over `btree-sets`, ranges over the sizes): `uint64` str
 2. **What it costs: reads got slower, typically by 5 to 12 %,** in every build and case (single-value `uint64` `valuesFor` +12 %, strings +6 to +8 %, `valuesBetween` and `prefix` +5 to +20 %), not by a few cells: it is the same direction everywhere. The page-level benchmarks (hot) had Get at -1 to -11 % against `mkpage` and `skpage`, and the probe measured writes only: **reads in the tree were not measured between m44 and now**, so the prediction ("Get ±3 %, strings 0 to +5 %") is missed by the tree, not by the page. Open question (not answered here, nothing was changed): where the 5 to 12 % of a lookup in the tree go. Candidates, to be checked with a profile of `valuesFor` and of a scan: the `lay` set-up in `Get` and `Each` of the many-key form (the page level measured it hot, the tree reads cold pages), the compare of the key part in the one-key form (`matches` against the head's length), the form check, and the 4-byte head against the 3-byte one of m44 (one more byte before the key part in every many-key page, a different alignment of the lists).
 3. **The credo of strings** at 4,096 keys is still below 1.0 for churn and build over `btree-sets` (0.89 to 0.96; m44 0.89 to 0.97): the string pages gained nothing in churn and lost 6 to 10 % in build.
 4. **The tuning candidate "fast path for the one-key add and remove of a value"** (+13 % `uint64` single-value in the probe) shows in the gate as +1 to +3 % build, +0 to +5 % churn: smaller than the reads.
+
+
+## Gate 5, third measurement `m47` (2026-10-07): the tree on the one page with the reads fixed (5.5e), commit `36f4765`
+
+Same cases, machine and script as `m44` and `m46` (`run-m47.cmd`, 10:25 to 12:50, 2 h 25 min; no crash; no warning but the usual "stopped after 8 processes"). Results in `bench/results-layout/step5-gate/pc-m47/` with `tables.txt` and `gate47.py`. Tables as in the section of m46; "m44" is `pc-m44` (`dirs real` from `pc-m45`).
+
+### Speed: time m47 over m46 (the effect of the fix; below 1.00 is faster)
+
+| build | case | valuesFor | valuesBetween | prefix | churn | build |
+|---|---|--|--|--|--|--|
+| u64 | street-real | 0.85–0.99 | 0.93–1.03 | 0.93–0.98 | 1.01–1.04 | 1.00–1.02 |
+| u64 | dirs-real | 0.89–0.95 | 0.93–0.97 | 0.93–0.94 | 1.00–1.12 | 1.01–1.08 |
+| u64 | street-single | 0.84–0.94 | 0.90–0.98 | 0.89–0.95 | 1.01–1.05 | 1.02–1.05 |
+| u64 | dirs-single | 0.88–0.98 | 0.87–0.95 | 0.82–0.95 | 0.99–1.03 | 1.01–1.06 |
+| u64 | u64keys-real | 0.85–0.91 | 0.83–1.01 | – | 1.00–1.02 | 1.02–1.04 |
+| u64 | u64keys-single | 0.73–0.85 | 0.75–0.97 | – | 1.01–1.16 | 1.03–1.11 |
+| str | street-real | 0.93–0.99 | 0.97–1.00 | 0.97–0.98 | 1.01–1.14 | 1.02–1.08 |
+| str | dirs-real | 0.95–1.01 | 0.97–0.99 | 0.91–0.96 | 0.99–1.12 | 1.05–1.08 |
+| str | street-single | 0.92–0.98 | 0.96–0.96 | 0.95–0.98 | 1.00–1.05 | 1.03–1.05 |
+| str | dirs-single | 0.95–0.96 | 0.94–0.97 | 0.90–0.93 | 1.02–1.08 | 1.03–1.08 |
+| ptr | street-real | 0.85–0.92 | 0.91–0.97 | 0.92–0.95 | 1.01–1.03 | 1.02–1.02 |
+| ptr | dirs-real | 0.89–0.96 | 0.91–0.97 | 0.81–0.98 | 0.98–1.10 | 0.99–1.00 |
+| ptr | street-single | 0.84–0.97 | 0.90–1.01 | 0.91–0.95 | 1.01–1.06 | 1.00–1.06 |
+| ptr | dirs-single | 0.89–0.95 | 0.87–0.96 | 0.83–0.90 | 1.00–1.08 | 1.02–1.02 |
+| ptr | u64keys-real | 0.85–0.93 | 0.83–1.00 | – | 1.00–1.04 | 1.03–1.05 |
+| ptr | u64keys-single | 0.73–0.92 | 0.76–1.13 | – | 1.00–1.07 | 1.09–1.11 |
+
+### Speed: time m47 over m44/m45
+
+| build | case | valuesFor | valuesBetween | prefix | churn | build |
+|---|---|--|--|--|--|--|
+| u64 | street-real | 0.93–1.05 | 0.99–1.02 | 0.98–1.03 | 0.96–1.05 | 0.96–0.99 |
+| u64 | dirs-real | 0.93–0.99 | 0.95–1.05 | 1.01–1.07 | 0.97–1.12 | 0.99–1.07 |
+| u64 | street-single | 0.94–1.06 | 1.00–1.08 | 0.98–1.03 | 1.01–1.07 | 1.05–1.08 |
+| u64 | dirs-single | 0.94–1.05 | 0.99–1.04 | 0.98–1.02 | 0.98–1.08 | 0.99–1.15 |
+| u64 | u64keys-real | 0.95–0.96 | 1.00–1.01 | – | 1.04–1.07 | 1.06–1.14 |
+| u64 | u64keys-single | 0.90–1.11 | 0.98–1.06 | – | 0.95–1.15 | 1.07–1.09 |
+| str | street-real | 1.02–1.07 | 1.06–1.10 | 1.03–1.06 | 1.01–1.24 | 1.12–1.17 |
+| str | dirs-real | 1.01–1.04 | 1.04–1.08 | 1.00–1.11 | 0.97–1.18 | 1.11–1.17 |
+| str | street-single | 0.99–1.04 | 1.02–1.04 | 1.01–1.07 | 1.06–1.16 | 1.14–1.19 |
+| str | dirs-single | 0.96–1.05 | 1.03–1.08 | 1.01–1.06 | 1.06–1.16 | 1.09–1.20 |
+| ptr | street-real | 0.92–1.00 | 0.94–1.00 | 0.95–0.99 | 0.70–0.84 | 0.79–0.80 |
+| ptr | dirs-real | 0.92–0.97 | 0.98–1.01 | 0.97–1.04 | 0.74–0.85 | 0.79–0.81 |
+| ptr | street-single | 0.92–1.12 | 0.99–1.14 | 0.99–1.04 | 0.74–0.80 | 0.86–0.87 |
+| ptr | dirs-single | 0.92–1.04 | 0.99–1.09 | 0.98–1.03 | 0.78–0.88 | 0.89–0.93 |
+| ptr | u64keys-real | 0.94–0.97 | 1.01–1.04 | – | 0.89–0.95 | 0.83–0.99 |
+| ptr | u64keys-single | 0.91–1.28 | 0.97–1.21 | – | 0.56–0.90 | 0.84–0.90 |
+
+### Speed: time m47 over m43
+
+| build | case | valuesFor | valuesBetween | prefix | churn | build |
+|---|---|--|--|--|--|--|
+| u64 | street-real | 0.82–1.06 | 0.69–0.85 | 0.69–1.12 | 0.90–1.03 | 0.98–1.00 |
+| u64 | dirs-real | 0.92–1.07 | 0.71–0.95 | 0.78–0.99 | 0.91–1.15 | 1.08–1.09 |
+| u64 | street-single | 0.93–1.08 | 1.04–1.15 | 1.06–1.12 | 1.05–1.11 | 1.11–1.14 |
+| u64 | dirs-single | 0.94–1.05 | 1.02–1.08 | 1.00–1.07 | 1.02–1.11 | 1.05–1.21 |
+| u64 | u64keys-real | 0.92–1.18 | 0.86–1.05 | – | 1.04–1.21 | 1.26–1.49 |
+| u64 | u64keys-single | 0.87–1.14 | 1.05–1.23 | – | 0.99–1.23 | 1.14–1.26 |
+| str | street-real | 0.93–1.16 | 0.85–1.04 | 0.85–1.22 | 0.90–1.28 | 1.22–1.25 |
+| str | dirs-real | 0.97–1.12 | 0.89–1.09 | 0.99–1.07 | 0.92–1.18 | 1.21–1.23 |
+| str | street-single | 1.04–1.06 | 1.06–1.10 | 1.06–1.08 | 1.14–1.24 | 1.24–1.27 |
+| str | dirs-single | 1.04–1.08 | 1.05–1.10 | 1.01–1.10 | 1.14–1.20 | 1.17–1.27 |
+
+### Memory (heap bytes a key; step 3.5 baseline, m43, m44, m47)
+
+| build | case | n | baseline | m43 | m44 | m47 | scannable m44 -> m47 | after half m44 -> m47 |
+|---|---|--:|--|--|--|--|--|--|
+| u64 | street-real | 212449 | 90 | 73 | 54 | **54** | 5 → 6 | 34 → 33 |
+| u64 | dirs-real | 86215 | 108 | 96 | 74 | **73** | 8 → 8 | 47 → 46 |
+| u64 | street-single | 212449 | 67 | 27 | 27 | **27** | 3 → 3 | 20 → 18 |
+| u64 | dirs-single | 86215 | 77 | 41 | 40 | **40** | 5 → 5 | 30 → 28 |
+| u64 | u64keys-real | 262144 | 125 | 123 | 102 | **102** | 7 → 7 | 61 → 59 |
+| u64 | u64keys-single | 262144 | 53 | 24 | 24 | **24** | 2 → 2 | 20 → 18 |
+| str | street-real | 212449 | 114 | 98 | 79 | **80** | 36 → 36 | 47 → 46 |
+| str | dirs-real | 86215 | 165 | 153 | 131 | **133** | 52 → 52 | 75 → 75 |
+| str | street-single | 212449 | 69 | 31 | 31 | **31** | 4 → 4 | 23 → 21 |
+| str | dirs-single | 86215 | 87 | 51 | 51 | **52** | 6 → 6 | 37 → 35 |
+| ptr | street-real | 212449 | 90 | – | 53 | **54** | 52 → 52 | 34 → 33 |
+| ptr | dirs-real | 86215 | 108 | – | 73 | **73** | 72 → 71 | 46 → 45 |
+| ptr | street-single | 212449 | 66 | – | 27 | **28** | 27 → 27 | 20 → 18 |
+| ptr | dirs-single | 86215 | 78 | – | 40 | **40** | 40 → 40 | 30 → 28 |
+| ptr | u64keys-real | 262144 | 125 | – | 101 | **101** | 96 → 96 | 61 → 58 |
+| ptr | u64keys-single | 262144 | 53 | – | 24 | **24** | 24 → 24 | 20 → 18 |
+
+### Credo (ordered speed over the competitor, churn / build, m44 → m47)
+
+Real mix against `btree-sets`:
+
+| build | keys | 4,096 | 16,384 | large |
+|---|---|--|--|--|
+| u64 | street | 1.12 / 1.13 → **1.18 / 1.22** | 1.29 / 1.29 → **1.31 / 1.39** | 1.40 / – → **1.41 / –** |
+| u64 | dirs | 1.00 / 0.98 → **1.09 / 1.09** | 1.22 / 1.12 → **1.24 / 1.24** | 1.30 / – → **1.33 / –** |
+| u64 | u64keys | 2.12 / 1.63 → **2.10 / 1.64** | 2.33 / 2.20 → **2.28 / 2.13** | 1.66 / – → **1.58 / –** |
+| str | street | 0.93 / 0.97 → **0.89 / 0.97** | 1.22 / 1.18 → **1.11 / 1.11** | 1.23 / – → **1.22 / –** |
+| str | dirs | 0.91 / 0.89 → **0.94 / 0.94** | 1.12 / 1.04 → **1.08 / 1.03** | 1.11 / – → **1.15 / –** |
+| ptr | street | 0.79 / 0.82 → **1.17 / 1.11** | 0.95 / 0.89 → **1.30 / 1.29** | 1.10 / – → **1.35 / –** |
+| ptr | dirs | 0.73 / 0.74 → **1.07 / 1.03** | 0.92 / 0.81 → **1.21 / 1.14** | 1.03 / – → **1.24 / –** |
+| ptr | u64keys | 1.83 / 1.19 → **2.00 / 1.50** | 1.99 / 1.86 → **2.29 / 2.09** | 1.42 / – → **1.55 / –** |
+
+Single value against `btree-map`:
+
+| build | keys | 4,096 | 16,384 | large |
+|---|---|--|--|--|
+| u64 | street | 0.73 / 0.84 → **0.75 / 0.83** | 0.96 / 0.94 → **0.98 / 0.97** | 1.13 / – → **1.17 / –** |
+| u64 | dirs | 0.68 / 0.67 → **0.71 / 0.71** | 0.83 / 0.77 → **0.88 / 0.82** | 1.00 / – → **1.04 / –** |
+| u64 | u64keys | 1.62 / 1.57 → **1.55 / 1.53** | 1.99 / 1.54 → **2.15 / 1.54** | 1.61 / – → **1.80 / –** |
+| str | street | 0.71 / 0.72 → **0.67 / 0.67** | 0.89 / 0.88 → **0.82 / 0.81** | 1.05 / – → **1.03 / –** |
+| str | dirs | 0.65 / 0.60 → **0.64 / 0.59** | 0.75 / 0.70 → **0.75 / 0.69** | 0.90 / – → **0.90 / –** |
+| ptr | street | 0.52 / 0.61 → **0.73 / 0.75** | 0.66 / 0.67 → **0.92 / 0.83** | 0.82 / – → **1.15 / –** |
+| ptr | dirs | 0.51 / 0.54 → **0.68 / 0.64** | 0.61 / 0.60 → **0.82 / 0.72** | 0.76 / – → **0.99 / –** |
+| ptr | u64keys | 0.83 / 0.93 → **1.54 / 1.21** | 1.81 / 1.17 → **2.00 / 1.37** | 1.27 / – → **1.74 / –** |
+
+Credo 2 (ranges, ordered over `btree-sets`, over the sizes): `uint64` street `valuesBetween` 2.5 to 4.5, prefix 2.1 to 4.9; dirs 2.2 to 3.2 and 2.6 to 3.5; `u64` keys 2.1 to 3.6; strings street 1.5 to 3.0 and 1.4 to 3.0, dirs 1.7 to 2.2 and 2.1 to 2.5; pointers as `uint64`.
+
+### Findings
+
+1. **The fix of the reads holds on the PC.** Against m46: `valuesFor` 0.73 to 1.01 (typically 0.85 to 0.95), `valuesBetween` 0.75 to 1.13 (typically 0.90 to 0.97), `prefix` 0.81 to 0.98 in every build; the single-value `u64` keys cells (the worst of m46) 0.73 to 0.85. Against m44 the reads are back to where they were: `uint64` and pointers 0.91 to 1.08 (outliers: `ptr u64keys single` `valuesFor` up to 1.28 and `valuesBetween` 1.21 at one size), **strings still +1 to +11 %** (`valuesBetween` 1.02 to 1.10, `prefix` 1.00 to 1.11).
+2. **The writes did not change with the fix, as predicted** (m47 over m46: churn 0.98 to 1.16, build 1.00 to 1.11; the whole range is above 1.0 for build, i.e. +2 to +5 % in the typical cell: either the difference between two runs of the PC or the larger code; there is no repetition of one commit to tell which). **Strings build is +9 to +20 % against m44** (m46: +6 to +11 %) and is the largest remaining loss of speed.
+3. **Memory** as m44 and m46 (±1 to 2 B a key; strings dirs real 131 → 133, single-value strings dirs 51 → 52).
+4. **Credo 1 (real mix over `btree-sets`):** `uint64` 1.09 to 1.41 at the sizes (dirs 4,096: 1.09 / 1.09, where m44 had 1.00 / 0.98), pointers 1.07 to 2.29 (m44: 0.73 to 0.89 at 4,096 and 16,384), **strings street 0.89 / 0.97 at 4,096 still below 1.0**, dirs 0.94 / 0.94; above 16,384 keys 1.03 to 1.22. Credo 2 holds (1.4 to 4.9).
+5. **Single value against `btree-map`:** unchanged from m46 (`uint64` street 0.75 / 0.83 and dirs 0.71 / 0.71 at 4,096, 0.98 / 0.97 and 0.88 / 0.82 at 16,384; strings 0.59 to 0.82; pointers 0.64 to 0.92 up to 16,384); above it only for the full corpus (1.03 to 1.80, strings dirs 0.90, pointers dirs 0.99). These are the two open points of the plan ("Open after step 5").
