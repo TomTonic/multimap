@@ -38,6 +38,10 @@ func TestReadProbe(t *testing.T) {
 			nvals++
 		}
 	}
+	if os.Getenv("MKSHAPE") != "" { // the shape of the routing part only (build tag mkstats)
+		fmt.Printf("\n### shape %s %s n=%d (%d keys, %d values)\n\n%s", kind, profile, n, len(f.c.Keys.B), nvals, m.Shape())
+		return
+	}
 	order := rand.New(rand.NewPCG(1, 2)).Perm(len(f.c.Keys.B))
 	sink := 0
 	each := func() {
