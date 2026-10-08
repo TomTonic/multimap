@@ -3,7 +3,10 @@
 package art
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math/bits"
+	"slices"
 	"strings"
 )
 
@@ -90,6 +93,131 @@ func (m *Map[T]) Shape() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(sel)
+	b.WriteString(m.fingerprints())
+	return b.String()
+}
+
+// wyMix, wh64Det and fingerprint are the fingerprint under study (review, page-search-design.md): wyhash's mixing of the
+// Set3 project (hashing.WH64Det), applied to a block of 16 bytes: the length of the input (2 bytes) and its last up to
+// 14 bytes, right-aligned with zeros in front, as two words; the hash of the first word is the seed of the second.
+func wyMix(a, b uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	return hi ^ lo
+}
+
+func wh64Det(val, seed uint64) uint64 {
+	const m5, p1 = 0x1d8e4e27c47d124f, 0xf20a3e5e0b7b9731
+	return wyMix(m5^8, wyMix(val^p1, bits.RotateLeft64(val, 32)^seed))
+}
+
+// fingerprintEnds is fingerprint with the first 6 and the last 8 bytes of an input longer than 14 bytes, instead of
+// its last 14: the keys of a page differ near the start of their remainders as often as at the end.
+func fingerprintEnds(in []byte) uint64 {
+	if len(in) <= 14 {
+		return fingerprint(in)
+	}
+	var block [16]byte
+	binary.BigEndian.PutUint16(block[:], uint16(len(in)))
+	copy(block[2:8], in[:6])
+	copy(block[8:], in[len(in)-8:])
+	return wh64Det(binary.LittleEndian.Uint64(block[8:]), wh64Det(binary.LittleEndian.Uint64(block[:8]), 0))
+}
+
+func fingerprint(in []byte) uint64 {
+	var block [16]byte
+	binary.BigEndian.PutUint16(block[:], uint16(len(in)))
+	tail := in[max(0, len(in)-14):]
+	copy(block[16-len(tail):], tail)
+	w1, w2 := binary.LittleEndian.Uint64(block[:8]), binary.LittleEndian.Uint64(block[8:])
+	return wh64Det(w2, wh64Det(w1, 0))
+}
+
+// fingerprints counts, over the keys of every multi-key page, how many other keys of the same page share a key's
+// fingerprint in its lowest 7 or 8 bits: the compares a lookup would make in vain. Two inputs: (A) the remainder of
+// the key in its page, (B) the whole key. Chance would give (keys of the page - 1) / 128 or / 256.
+func (m *Map[T]) fingerprints() string {
+	type tally struct{ others, hit, chance float64 }
+	var res [3][2]tally // input A/B/A', bits 7/8
+	keys, worst := 0, [3][2]int{}
+	var example []string // the remainders that share the fingerprint (A, 8 bits) in the worst page
+	var visit func(n *header, path []byte)
+	visit = func(n *header, path []byte) {
+		if isPage(n.objType) {
+			if !isMultiKey(n.objType) {
+				return
+			}
+			var cp []byte
+			var rems [][]byte
+			each := func(rem []byte, first bool) {
+				if first {
+					rems = append(rems, rem)
+				}
+			}
+			if m.flat == 3 {
+				p := asMKStr(n)
+				cp = p.CP()
+				p.Each(func(rem, _ []byte, first bool) bool { each(rem, first); return true })
+			} else {
+				p := asMKFix(n)
+				cp = p.CP()
+				p.Each(func(rem []byte, _ T, first bool) bool { each(rem, first); return true })
+			}
+			var fp [3][]uint64
+			for _, r := range rems {
+				fp[0] = append(fp[0], fingerprint(r))
+				fp[1] = append(fp[1], fingerprint(append(append(append([]byte{}, path...), cp...), r...)))
+				fp[2] = append(fp[2], fingerprintEnds(r))
+			}
+			k := len(rems)
+			keys += k
+			for in := range 3 {
+				for bi, mask := range []uint64{0x7f, 0xff} {
+					for i := range k {
+						same := 0
+						for j := range k {
+							if j != i && fp[in][i]&mask == fp[in][j]&mask {
+								same++
+							}
+						}
+						res[in][bi].others += float64(same)
+						if same > 0 {
+							res[in][bi].hit++
+						}
+						if in == 0 && bi == 1 && same > worst[0][1] {
+							example = example[:0]
+							for j := range k {
+								if fp[0][i]&0xff == fp[0][j]&0xff {
+									example = append(example, fmt.Sprintf("%q", append(append([]byte{}, cp...), rems[j]...)))
+								}
+							}
+						}
+						worst[in][bi] = max(worst[in][bi], same)
+						res[in][bi].chance += float64(k-1) / float64(mask+1)
+					}
+				}
+			}
+			return
+		}
+		path = appendPrefix(path, n)
+		if e := endPageOf(n); e != nil {
+			visit(singleKeyHdr(e), path)
+		}
+		eachByteNode(n, func(b byte, c *header) { visit(c, append(slices.Clip(path), b)) })
+	}
+	visit(m.t.root, nil)
+	if keys == 0 {
+		return ""
+	}
+	var b strings.Builder
+	k := float64(keys)
+	for in, name := range []string{"(A) remainder, last 14", "(B) whole key, last 14", "(A') remainder, first 6 and last 8"} {
+		for bi, bitsN := range []int{7, 8} {
+			r := res[in][bi]
+			fmt.Fprintf(&b, "fingerprint %s, %d bits: other keys of the page with the same fingerprint %.4f a key (chance %.4f), keys with one or more %.2f %%, most %d\n",
+				name, bitsN, r.others/k, r.chance/k, 100*r.hit/k, worst[in][bi])
+		}
+	}
+	fmt.Fprintf(&b, "the keys (key part and remainder) that share a fingerprint (A, 8 bits) in the worst page: %s\n", strings.Join(example, " "))
 	return b.String()
 }
 

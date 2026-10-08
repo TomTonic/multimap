@@ -71,3 +71,29 @@ mask and the compare lines alone took 19 % of the time). **The cost of the searc
 compare**: each slot is a serial chain (its key length, the offset of its remainder, a load from there, a compare). The code is back as it
 was; the lever left is to walk fewer slots: option 2 (a fingerprint, on average one candidate) or a search that does not walk (offsets of
 the remainders, a binary search).
+
+## The fingerprint: collisions within the pages of the real corpora (2026-10-08)
+
+**Hash** (the user's proposal): wyhash's mixing as optimized in the Set3 project (`hashing.WH64Det`, 2.72 ns a call on the M1), on a block
+of 16 bytes: the length of the input (2 bytes) and its last up to 14 bytes, right-aligned with zeros in front (the length tells `"a"` from
+`"\x00a"`), as two words; the hash of the first word is the seed of the second. Measured in `Map.Shape` (tag mkstats, `shape_on.go`) on the
+trees as built from the corpora: for every key of a multi-key page, how many **other keys of the same page** have the same fingerprint (the
+compares a lookup would make in vain), against chance ((keys of the page − 1) / 128 or / 256). Three inputs: (A) the remainder of the key in
+its page; (B) the whole key; (A') the remainder, but its first 6 and last 8 bytes when it is longer than 14.
+
+| corpus | keys a page | (A) 7 bits | (A) 8 bits | (B) 8 bits | (A') 8 bits | chance 8 bits | keys with a twin (A, 8 bits) | most twins in a page |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| street natural 212,449 | 5.6 | 0.066 | 0.033 | 0.033 | 0.033 | 0.033 | 3.2 % | 3 |
+| street single-value 212,449 | 7.1 | 0.092 | 0.045 | 0.046 | 0.046 | 0.046 | 4.4 % | 3 |
+| dirs natural 86,215 | 4.9 | 0.061 | 0.038 | 0.038 | 0.044 | 0.025 | 3.4 % | 8 |
+| dirs single-value 86,215 | 5.9 | 0.080 | 0.049 | 0.048 | 0.055 | 0.032 | 4.4 % | 8 |
+| street single-value 4,096 | 7.1 | 0.092 | 0.041 | 0.038 | 0.042 | 0.043 | 3.9 % | 2 |
+| dirs natural 4,096 | 4.0 | 0.044 | 0.024 | 0.031 | 0.022 | 0.017 | 2.3 % | 2 |
+
+**What it says:** for street the fingerprint collides exactly as often as chance; for dirs about 1.5 times as often, because path keys of
+the same length and the same last 14 bytes differ only in the middle — the worst page holds nine keys like
+`ervice/mgmt/2019-08-01/containerservice/`, `…/2020-03-01/containerservice/`, …, which share length and ending (16 bytes of
+`/containerservice/`). Taking the first 6 bytes instead of 6 of the last (A') does not help there (the dates differ at the seventh byte)
+and is a little worse elsewhere. The whole key (B) is no better than the remainder (A), as expected (the path and the key part are the same
+for all keys of a page). **In numbers:** with 8 bits a lookup compares on average 0.02 to 0.05 keys in vain (today: half the page, 3 to 4);
+3 to 4 % of the keys have a twin in their page; the worst page (nine twins) is searched as today. 8 bits halve the collisions of 7.
