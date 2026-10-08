@@ -133,12 +133,13 @@ Every object that stores entries stores only the end of their keys. The tree spe
 
 The single-key page and the multi-key page are **one structure** in two forms; the value overflow is its one-key form with a pointer for the values. Every leaf of the tree has the same head. Offsets are bytes from the start of the object.
 
-- **one page**: the object that holds entries inline: head, key area, key lengths, value lengths, free zeros, values. The package is `internal/page`, with `Str` (values of variable length: strings) and `Fixed` (values of one size: words, pointers) as its two flavors.
+- **one page**: the object that holds entries inline: head, key area, key lengths, fingerprints, value lengths, free zeros, values. The package is `internal/page`, with `Str` (values of variable length: strings) and `Fixed` (values of one size: words, pointers) as its two flavors.
 - **one-key form** (the *single-key page*): the page of one key. Its key part is the whole remainder of the key; it has **no key-length list**. A page with many keys left with one key turns into it in place.
 - **many-key form** (the *multi-key page*): the page of several keys. Its key part is the common prefix of the keys; behind the lists come the remainders.
 - **head** (4 bytes): `type | len | n | rawWords`. `len` has nine bits (bit 8 is the lowest bit of the type byte); `n` is the number of slots (1 to 255; 0 in a value overflow); `rawWords` is the size of the byte area in words for a page of pointers, and in a value overflow the offset of its value set in words.
 - **key part**: the `len` bytes at byte 4: the remainder in the one-key form, the common prefix in the many-key form. A page begins exactly at its path length: when the path changes, `Skip` and `Prepend` change the key part in place.
 - **key lengths**: many-key form only, one byte per slot: the length of the slot's remainder, or `Further` (255) for a further value of the key before it (the *continuation*).
+- **fingerprints**: many-key form only, one byte per slot, behind the key lengths: the lowest 8 bits of a wyhash mix of the slot's remainder (`page.Fingerprint`: its length and its last 14 bytes), 0 for a slot with `Further`. A search compares the fingerprint byte of the key it looks for with all of them (eight at a time) and compares keys only where it is equal. Not stable across versions; never leaves memory.
 - **value lengths**: `Str` only, one byte per slot, a list of its own in front of the remainders.
 - **byte area**: the bytes of the object in front of the values (head, key part, lists, remainders, free zeros); for a page of pointers the first `rawWords` words, whose size is fixed for the life of the object.
 - **pointer area**: for a page of pointers, the words behind the byte area: the values, moved as `T` so that the garbage collector keeps its barrier. The values of every flavor end the object (`Fixed`: the array of `T` at `Size-(n-i)*w`).

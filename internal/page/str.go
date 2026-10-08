@@ -27,7 +27,7 @@ func BuildStrings(rests, vals [][]byte) *Str {
 	need := Header + l + n
 	vb := 0
 	if !one {
-		need += n
+		need += 2 * n // key lengths and fingerprints
 	}
 	for i, r := range rests {
 		if !one && !further(rests, i) {
@@ -58,6 +58,7 @@ func BuildStrings(rests, vals [][]byte) *Str {
 			m[la.kl+i] = Further
 		default:
 			m[la.kl+i] = uint8(len(r) - l)
+			m[la.fp+i] = Fingerprint(r[l:])
 			off += copy(m[off:], r[l:])
 		}
 		m[la.vl+i] = uint8(len(vals[i]))
@@ -114,10 +115,10 @@ func (p *Str) Get(rest []byte) ([]byte, bool) {
 			return nil, false
 		}
 		var found bool
-		if pos, _, found = locate(m, Header+l, n, Header+l+n+n, rest[l:]); !found {
+		if pos, _, found = locate(m, Header+l, n, Header+l+3*n, rest[l:]); !found {
 			return nil, false
 		}
-		vl += n
+		vl += 2 * n
 	}
 	s := len(m) - sum(m[vl+pos:vl+n])
 	return m[s : s+int(m[vl+pos])], true
@@ -138,12 +139,12 @@ func (p *Str) EachValue(rest []byte, fn func(val []byte) bool) bool {
 			return false
 		}
 		var found bool
-		if pos, _, found = locate(m, Header+l, n, Header+l+n+n, rest[l:]); !found {
+		if pos, _, found = locate(m, Header+l, n, Header+l+3*n, rest[l:]); !found {
 			return false
 		}
 		for end = pos + 1; end < n && m[Header+l+end] == Further; end++ {
 		}
-		vl += n
+		vl += 2 * n
 	}
 	s := len(m) - sum(m[vl+pos:vl+n])
 	for i := pos; i < end; i++ {
@@ -176,7 +177,7 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 	m := p.mem()
 	la := p.lay(true)
 	var slot, ro int
-	var kl byte
+	var kl, fp byte
 	var r []byte
 	res := AddedValue
 	e := la.rem
@@ -213,12 +214,12 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 			if len(r) > MaxRemainder || len(val) > MaxValue {
 				return p, Full
 			}
-			kl, res = uint8(len(r)), Added
+			kl, fp, res = uint8(len(r)), Fingerprint(r), Added
 			e = la.keyEndFrom(m, pos, off)
 		}
 	}
 	vb := sum(m[la.vl : la.vl+la.n])
-	need := e + b2i(la.many) + 1 + len(r) + vb + len(val)
+	need := e + 2*b2i(la.many) + 1 + len(r) + vb + len(val)
 	q := p
 	if need > p.Size() {
 		c := classFor(need)
@@ -235,12 +236,14 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 	copy(m[len(m)-tail-len(val):], val)
 	if la.many { // insertSlot of the many-key form, written out
 		rlen := len(r)
-		copy(m[la.rem+ro+2+rlen:e+2+rlen], m[la.rem+ro:e])
-		copy(m[la.vl+slot+2:la.rem+ro+2], m[la.vl+slot:la.rem+ro])
-		copy(m[la.kl+slot+1:la.vl+slot+1], m[la.kl+slot:la.vl+slot])
+		copy(m[la.rem+ro+3+rlen:e+3+rlen], m[la.rem+ro:e])
+		copy(m[la.vl+slot+3:la.rem+ro+3], m[la.vl+slot:la.rem+ro])
+		copy(m[la.fp+slot+2:la.vl+slot+2], m[la.fp+slot:la.vl+slot])
+		copy(m[la.kl+slot+1:la.fp+slot+1], m[la.kl+slot:la.fp+slot])
 		m[la.kl+slot] = kl
-		m[la.vl+1+slot] = uint8(len(val))
-		copy(m[la.rem+2+ro:], r)
+		m[la.fp+1+slot] = fp
+		m[la.vl+2+slot] = uint8(len(val))
+		copy(m[la.rem+3+ro:], r)
 	} else { // the one-key form: the value length goes to the end of the list
 		m[la.vl+slot] = uint8(len(val))
 	}
@@ -324,7 +327,7 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 		e = la.keyEndFrom(m, pos, off)
 		if slot == pos {
 			if end > pos+1 { // the next value takes the key's place: its slot becomes the key's
-				m[la.kl+slot+1] = uint8(len(r))
+				m[la.kl+slot+1], m[la.fp+slot+1] = uint8(len(r)), m[la.fp+slot]
 			} else { // (a many-key page has two keys at least)
 				remLen, res = len(r), Gone
 				ro = off - la.rem
@@ -338,16 +341,17 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 	copy(m[front+vlen:start+vlen], m[front:start])
 	clear(m[front : front+vlen])
 	if la.many { // removeSlot of the many-key form, written out
-		copy(m[la.kl+slot:la.vl+slot-1], m[la.kl+slot+1:la.vl+slot])
-		copy(m[la.vl-1+slot:la.rem+ro-2], m[la.vl+slot+1:la.rem+ro])
-		copy(m[la.rem-2+ro:e-2-remLen], m[la.rem+ro+remLen:e])
-		clear(m[e-2-remLen : e])
+		copy(m[la.kl+slot:la.fp+slot-1], m[la.kl+slot+1:la.fp+slot])
+		copy(m[la.fp-1+slot:la.vl+slot-2], m[la.fp+slot+1:la.vl+slot])
+		copy(m[la.vl-2+slot:la.rem+ro-3], m[la.vl+slot+1:la.rem+ro])
+		copy(m[la.rem-3+ro:e-3-remLen], m[la.rem+ro+remLen:e])
+		clear(m[e-3-remLen : e])
 	} else { // the one-key form: the value lengths close up
 		copy(m[la.vl+slot:la.rem-1], m[la.vl+slot+1:la.rem])
 		clear(m[e-1 : e])
 	}
 	p.n--
-	e -= b2i(la.many) + 1 + remLen
+	e -= 2*b2i(la.many) + 1 + remLen
 	vb -= vlen
 	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.n)) {
 		e = toOneKey(&p.head, m, p.lay(true), e)
@@ -406,7 +410,7 @@ func (p *Str) Each(fn func(rem, val []byte, first bool) bool) bool {
 		}
 		return true
 	}
-	vl := kl + n
+	vl := kl + 2*n
 	off := vl + n
 	s := len(m) - sum(m[vl:vl+n])
 	var rem []byte
@@ -502,7 +506,7 @@ func (p *Str) Widen(rest, val []byte) *Str {
 	if longest+d > MaxRemainder {
 		return nil
 	}
-	nk := Header + mis + 2*(la.n+1) + (e - la.rem) + heads*d + len(newRem)
+	nk := Header + mis + 3*(la.n+1) + (e - la.rem) + heads*d + len(newRem)
 	c := classFor(nk + vb + len(val))
 	if c < 0 {
 		return nil
@@ -526,6 +530,7 @@ func (p *Str) Widen(rest, val []byte) *Str {
 		out[nl.vl+i+b2i(i >= at)] = m[la.vl+i]
 	}
 	out[nl.kl+at] = uint8(len(newRem))
+	out[nl.fp+at] = Fingerprint(newRem)
 	out[nl.vl+at] = uint8(len(val))
 	off := nl.rem
 	if first {
@@ -535,9 +540,11 @@ func (p *Str) Widen(rest, val []byte) *Str {
 	src := la.rem
 	for i := range la.n {
 		if rl := int(m[la.kl+i]); rl != Further {
+			start := off
 			off += copy(out[off:], extra)
 			off += copy(out[off:], m[src:src+rl])
 			src += rl
+			out[nl.fp+i+b2i(i >= at)] = Fingerprint(out[start:off]) // the remainder grew: its fingerprint is new
 		}
 	}
 	if !first {

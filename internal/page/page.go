@@ -18,6 +18,8 @@
 //
 //	key lengths    n bytes, many-key form only: the length of the remainder of slot i, or Further (255)
 //	               for a slot that holds a further value of the key before it (no remainder)
+//	fingerprints   n bytes, many-key form only: Fingerprint of the remainder of slot i, or 0 for a slot with
+//	               Further; a search compares only the remainders whose fingerprint is the one searched for
 //	value lengths  n bytes, Str only: the length of value i
 //	remainders     many-key form only: the remainders of the keys, one behind the other
 //	free           zero
@@ -177,17 +179,18 @@ func lcp(a, b []byte) int {
 
 // lay holds the offsets of the parts behind the key part of a page with n slots.
 type lay struct {
-	n, l        int  // slots, length of the key part
-	kl, vl, rem int  // offsets: key lengths, value lengths, remainders
-	many, str   bool // the many-key form has key lengths and remainders; Str has value lengths
+	n, l            int  // slots, length of the key part
+	kl, fp, vl, rem int  // offsets: key lengths, fingerprints, value lengths, remainders
+	many, str       bool // the many-key form has key lengths, fingerprints and remainders; Str has value lengths
 }
 
 func (p *head) lay(str bool) lay {
 	la := lay{n: int(p.n), l: p.cpl(), many: !p.one(), str: str}
 	la.kl = Header + la.l
-	la.vl = la.kl
+	la.fp, la.vl = la.kl, la.kl
 	if la.many {
-		la.vl += la.n
+		la.fp += la.n
+		la.vl += 2 * la.n
 	}
 	la.rem = la.vl
 	if str {
@@ -287,15 +290,16 @@ func classFor(need int) int {
 
 // NeedStrings returns the bytes a many-key Str page takes for n slots (values) whose remainders (after a key part
 // of cpl bytes) are remBytes in all (the slots with Further have none) and whose values are valBytes in all.
+// Besides the remainders and values it needs three bytes a slot: key length, fingerprint and value length.
 // The tree calls it to decide, before it builds anything, whether the entries of a subtree fit a page (at
 // most 512).
 func NeedStrings(n, cpl, remBytes, valBytes int) int {
-	return Header + cpl + 2*n + remBytes + valBytes
+	return Header + cpl + 3*n + remBytes + valBytes
 }
 
-// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths, values of the size of T.
+// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths (two bytes a slot), values of the size of T.
 func NeedFixed[T comparable](n, cpl, remBytes int) int {
-	return Header + cpl + n + remBytes + n*size[T]()
+	return Header + cpl + 2*n + remBytes + n*size[T]()
 }
 
 // ShrinkLimit returns how much of the room of a smaller class the content of a page may fill for
@@ -367,7 +371,7 @@ func (p *head) setHead(many bool, c, n, l, raw int) {
 }
 
 // toOneKey turns the many-key form of the object m with one key into the one-key form in place: the
-// remainder joins the key part, the key lengths go. The page has la.n slots, the key part la.l bytes and the
+// remainder joins the key part, the key lengths and the fingerprints go. The page has la.n slots, the key part la.l bytes and the
 // key area ends at e. It returns the new end of the key area. (The new key part fits nine bits: the page is
 // at most 512 bytes.)
 func toOneKey(p *head, m []byte, la lay, e int) int {
