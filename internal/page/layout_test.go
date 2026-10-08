@@ -3,6 +3,7 @@ package page
 import (
 	"bytes"
 	"encoding/binary"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -637,5 +638,54 @@ func TestPageValuesIn(t *testing.T) {
 	}
 	if ss, over := ones.AppendStrings(nil, &b); strings.Join(ss, "") != "ab" || over {
 		t.Errorf("one key, strings: %q, %v", ss, over)
+	}
+}
+
+// TestPageCompareOrdersAsBytes shows that the compare of remainders orders keys as bytes.Compare does.
+//
+// A user's keys are found and kept in order whatever their length: the search in a page compares the remainders
+// with its own compare (a word-wide variant was measured and dropped, docs/redesign/page-search-design.md), which
+// must agree with bytes.Compare at every length and every position of the first difference.
+//
+// Expected: for every pair of lengths from 0 to 24 and every position of a first difference (up or down), compare
+// has the sign of bytes.Compare; locate finds each key of a page of keys of lengths 0 to 24, also at the very end of
+// the page, and the place of a key that is not there.
+func TestPageCompareOrdersAsBytes(t *testing.T) {
+	sign := func(c int) int { return min(max(c, -1), 1) }
+	base := []byte("abcdefghijklmnopqrstuvwxyz")
+	for la := 0; la <= 24; la++ {
+		for lb := 0; lb <= 24; lb++ {
+			for d := -1; d < min(la, lb); d++ {
+				for _, up := range []bool{false, true} {
+					a := slices.Clone(base[:la])
+					b := slices.Clone(base[:lb])
+					if d >= 0 {
+						if up {
+							b[d]++
+						} else {
+							b[d]--
+						}
+					}
+					if got, want := sign(compare(a, b)), bytes.Compare(a, b); got != want {
+						t.Fatalf("compare(%q, %q) = %d, want %d", a, b, got, want)
+					}
+				}
+			}
+		}
+	}
+	var rests [][]byte
+	for l := range 25 {
+		rests = append(rests, append([]byte("k"), base[:l]...))
+	}
+	vals := make([]uint8, len(rests)) // one byte a value: 25 keys of up to 25 bytes fit one page
+	p := BuildFixed(rests, vals)
+	m, la := p.mem(), p.lay(false)
+	for i, r := range rests {
+		if pos, _, found := locate(m, la.kl, la.n, la.rem, r[la.l:]); !found || pos != i {
+			t.Errorf("key of %d bytes: slot %d, found %v", len(r), pos, found)
+		}
+	}
+	if pos, _, found := locate(m, la.kl, la.n, la.rem, []byte("kz")[la.l:]); found || pos != len(rests) {
+		t.Errorf("a key after all: slot %d, found %v", pos, found)
 	}
 }

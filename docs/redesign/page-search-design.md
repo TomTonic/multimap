@@ -55,3 +55,19 @@ The lookup probe against `main` (`lookprobe_test.go`: `u64`, street, dirs; singl
 (build and replay), the memory of the probe, the range probe (it must not get slower); then the cells of E5 on the PC (`main`, `node-layout`,
 `btree`). Tests: the model tests of the page (`TestPageAgainstModel` and the fuzz) cover the search through every operation; a test of the
 word compare at every length 0 to 24 and every position of the first difference, and at the end of the object.
+
+## Option 1 result (2026-10-08): missed, dropped
+
+Built as described (the key's first word once, one 8-byte load from the page a slot, masked to the shorter length; the rest word by word),
+all tests and a new test of the compare at every length and difference (`TestPageCompareOrdersAsBytes`, kept) passing. Lookup probe against
+`main` (WSL, medians of 9), ns a lookup, before → option 1: `u64` single-value 4,096 32.8 → **40.5** (+23 %), street single-value 57.9 →
+59.6, dirs 86.4 → 86.5, `u64` natural 45.2 → 46.4, street natural 65.9 → 67.8, `u64` 65,536 35.4 → 36.5, street 65,536 85.6 → 87.1.
+**Prediction missed in the sign** (predicted -10 to -20 %).
+
+**Cause** (profile, `u64` single-value): the byte-wise compare was already cheap where it runs: random keys differ in the first byte, and
+the remainders of a real page differ within the first bytes after the page's common prefix, so the loop ends after one or two bytes. The
+word path adds work to every slot (a variable shift for the mask, `min`, a bounds-checked load with a byte swap, two more branches: the
+mask and the compare lines alone took 19 % of the time). **The cost of the search is the number of slots it walks, not the width of a
+compare**: each slot is a serial chain (its key length, the offset of its remainder, a load from there, a compare). The code is back as it
+was; the lever left is to walk fewer slots: option 2 (a fingerprint, on average one candidate) or a search that does not walk (offsets of
+the remainders, a binary search).
