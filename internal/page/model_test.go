@@ -26,7 +26,7 @@ func (m mvModel) find(key string) (int, bool) {
 	return i, i < len(m) && m[i].key == key
 }
 
-func (m mvModel) slots() (n int) {
+func (m mvModel) nValues() (n int) {
 	for _, e := range m {
 		n += len(e.vals)
 	}
@@ -127,12 +127,12 @@ type mvPage interface {
 	gone() bool
 	cp() string
 	oneKey() bool
-	need(slots, remBytes, valBytes int) int
+	need(nValues, remBytes, valBytes int) int
 	tooLong(key, val string) bool
 	flat() []mvFlat
 	values(key string) ([]string, bool)
 	get(key string) (string, bool)
-	counts() (slots, keys int)
+	counts() (nValues, keys int)
 	invariants(t *testing.T)
 	build(m mvModel) mvPage
 	value(r *rand.Rand) string
@@ -202,11 +202,11 @@ func (s *strPage) prepend(pre string) bool {
 func (s *strPage) gone() bool   { return s.p == nil }
 func (s *strPage) cp() string   { return string(s.p.CP()) }
 func (s *strPage) oneKey() bool { return s.p.OneKey() }
-func (s *strPage) need(slots, remBytes, valBytes int) int {
+func (s *strPage) need(nValues, remBytes, valBytes int) int {
 	if s.p.OneKey() {
-		return Header + s.p.PrefixLen() + slots + valBytes
+		return Header + s.p.PrefixLen() + nValues + valBytes
 	}
-	return Header + s.p.PrefixLen() + 3*slots + remBytes + valBytes
+	return Header + s.p.PrefixLen() + 3*nValues + remBytes + valBytes
 }
 func (s *strPage) tooLong(key, val string) bool { return len(val) > MaxValue }
 func (s *strPage) flat() (out []mvFlat) {
@@ -231,7 +231,7 @@ func (s *strPage) invariants(t *testing.T) {
 	m := s.p.mem()
 	la := s.p.lay(true)
 	used := la.keyEnd(m)
-	vb := sum(m[la.vl : la.vl+la.n])
+	vb := sum(m[la.vl : la.vl+la.currentValues])
 	if used+vb > s.p.Size() {
 		t.Fatalf("used %d and values %d exceed the size %d", used, vb, s.p.Size())
 	}
@@ -242,21 +242,21 @@ func (s *strPage) invariants(t *testing.T) {
 }
 
 // checkFingerprints checks the list of fingerprints of a many-key page: the fingerprint of the remainder of
-// every first slot, and 0 for the slots with Further.
+// every first value, and 0 for the values with Further.
 func checkFingerprints(t *testing.T, m []byte, la lay) {
 	t.Helper()
 	if !la.many {
 		return
 	}
 	off := la.rem
-	for i := range la.n {
+	for i := range la.currentValues {
 		want := byte(0)
 		if rl := int(m[la.kl+i]); rl != Further {
 			want = Fingerprint(m[off : off+rl])
 			off += rl
 		}
 		if m[la.fp+i] != want {
-			t.Fatalf("fingerprint of slot %d is %d, want %d", i, m[la.fp+i], want)
+			t.Fatalf("fingerprint of idx %d is %d, want %d", i, m[la.fp+i], want)
 		}
 	}
 }
@@ -280,8 +280,8 @@ func checkMV(t *testing.T, pg mvPage, m mvModel) {
 	if got := pg.flat(); !slices.Equal(got, want) {
 		t.Fatalf("entries %v, model %v", got, want)
 	}
-	if slots, keys := pg.counts(); slots != m.slots() || keys != len(m) {
-		t.Fatalf("Len %d Keys %d, model %d and %d", slots, keys, m.slots(), len(m))
+	if nValues, keys := pg.counts(); nValues != m.nValues() || keys != len(m) {
+		t.Fatalf("Len %d Keys %d, model %d and %d", nValues, keys, m.nValues(), len(m))
 	}
 	if pg.oneKey() != (len(m) == 1) {
 		t.Fatalf("a page of %d keys has OneKey %v", len(m), pg.oneKey())
@@ -325,7 +325,7 @@ func expectAdd(pg mvPage, m mvModel, key, val string) Result {
 	if !exists {
 		rems += len(key) - len(cp)
 	}
-	if pg.tooLong(key, val) || (!exists && len(key)-len(cp) > MaxRemainder) || pg.need(m.slots()+1, rems, vals) > sizes[Classes-1] {
+	if pg.tooLong(key, val) || (!exists && len(key)-len(cp) > MaxRemainder) || pg.need(m.nValues()+1, rems, vals) > sizes[Classes-1] {
 		return Full
 	}
 	if exists {
@@ -492,11 +492,11 @@ func (f *fixedPage) prepend(pre string) bool {
 func (f *fixedPage) gone() bool   { return f.p == nil }
 func (f *fixedPage) cp() string   { return string(f.p.CP()) }
 func (f *fixedPage) oneKey() bool { return f.p.OneKey() }
-func (f *fixedPage) need(slots, remBytes, _ int) int {
+func (f *fixedPage) need(nValues, remBytes, _ int) int {
 	if f.p.OneKey() {
-		return Header + f.p.PrefixLen() + 8*slots
+		return Header + f.p.PrefixLen() + 8*nValues
 	}
-	return Header + f.p.PrefixLen() + 2*slots + remBytes + 8*slots
+	return Header + f.p.PrefixLen() + 2*nValues + remBytes + 8*nValues
 }
 func (f *fixedPage) tooLong(string, string) bool { return false }
 func (f *fixedPage) flat() (out []mvFlat) {
@@ -579,11 +579,11 @@ func (f *ptrPage) prepend(pre string) bool {
 func (f *ptrPage) gone() bool   { return f.p == nil }
 func (f *ptrPage) cp() string   { return string(f.p.CP()) }
 func (f *ptrPage) oneKey() bool { return f.p.OneKey() }
-func (f *ptrPage) need(slots, remBytes, _ int) int {
+func (f *ptrPage) need(nValues, remBytes, _ int) int {
 	if f.p.OneKey() {
-		return Header + f.p.PrefixLen() + 8*slots
+		return Header + f.p.PrefixLen() + 8*nValues
 	}
-	return Header + f.p.PrefixLen() + 2*slots + remBytes + 8*slots
+	return Header + f.p.PrefixLen() + 2*nValues + remBytes + 8*nValues
 }
 func (f *ptrPage) tooLong(string, string) bool { return false }
 func (f *ptrPage) flat() (out []mvFlat) {

@@ -8,7 +8,7 @@
 //
 //	byte 0  type     the size class (plus TypeOneKey or TypeManyKeys, in steps of two); bit 0 is bit 8 of len
 //	byte 1  len      the length of the key part, nine bits
-//	byte 2  n        the number of slots, which is the number of values (1 to 255)
+//	byte 2  currentValues  the number of values the page holds now (1 to 255), not its capacity
 //	byte 3  rawWords the size of the byte area in 8-byte words, for a page whose values are pointers; else 0
 //
 // and the key part from byte 4: in the many-key form the common prefix of all keys (the bytes
@@ -16,15 +16,15 @@
 // remainder of the one key. A page begins exactly at its path length: when the path changes, Skip
 // and Prepend change the key part in place. Behind the key part, as far as the page has them:
 //
-//	key lengths    n bytes, many-key form only: the length of the remainder of slot i, or Further (255)
-//	               for a slot that holds a further value of the key before it (no remainder)
-//	fingerprints   n bytes, many-key form only: Fingerprint of the remainder of slot i, or 0 for a slot with
-//	               Further; a search compares only the remainders whose fingerprint is the one searched for
-//	value lengths  n bytes, Str only: the length of value i
+//	key lengths    currentValues bytes, many-key form only: the length of the remainder of value i, or Further (255)
+//	               for a value that is a further value of the key before it (no remainder)
+//	fingerprints   currentValues bytes, many-key form only: Fingerprint of the remainder of value i, or 0 for a value
+//	               with Further; a search compares only the remainders whose fingerprint is the one searched for
+//	value lengths  currentValues bytes, Str only: the length of value i
 //	remainders     many-key form only: the remainders of the keys, one behind the other
 //	free           zero
-//	values         they end with the object: Str: the bytes of the values of all slots, in order; Fixed:
-//	               an array of T, value i at Size - (n - i) * size of T
+//	values         they end with the object: Str: the bytes of all the values, in order; Fixed:
+//	               an array of T, value i at Size - (currentValues - i) * size of T
 //
 // So a one-key page is a many-key page with the key part of the whole key and without key
 // lengths and remainders; a page of fixed-size values has no value lengths. The type byte says
@@ -44,11 +44,11 @@ import (
 )
 
 const (
-	// Header is the size of the head: type, len, n, rawWords.
+	// Header is the size of the head: type, len, currentValues, rawWords.
 	Header = 4
-	// MaxEntries is the largest number of slots (values) of a page: n is one byte.
+	// MaxEntries is the largest number of values of a page: currentValues is one byte.
 	MaxEntries = 255
-	// Further is the key length of a slot that holds a further value of the key before it.
+	// Further is the key length of a value that is a further value of the key before it.
 	// A remainder of that length would be taken for it, so MaxRemainder is one less.
 	Further = 255
 	// MaxRemainder is the longest remainder of a key of the many-key form; MaxKeyPart is the
@@ -112,10 +112,10 @@ const (
 
 // head is the first four bytes of every page of either flavor; the page is the object they start.
 type head struct {
-	objType uint8 // TypeOneKey or TypeManyKeys plus twice the size class, plus bit 8 of the length of the key part
-	klen    uint8 // bits 0 to 7 of the length of the key part
-	n       uint8 // the number of slots
-	raw     uint8 // rawWords
+	objType       uint8 // TypeOneKey or TypeManyKeys plus twice the size class, plus bit 8 of the length of the key part
+	klen          uint8 // bits 0 to 7 of the length of the key part
+	currentValues uint8 // the number of values the page holds now (not its capacity)
+	raw           uint8 // rawWords
 }
 
 // Str is the page of values of variable length (strings); Fixed is the page of values of one size.
@@ -149,8 +149,8 @@ func (p *head) Size() int { return sizes[p.class()] }
 // Class returns the index of the page's size class, 0 for 32 bytes.
 func (p *head) Class() int { return p.class() }
 
-// Len returns the number of values (slots) of the page.
-func (p *head) Len() int { return int(p.n) }
+// Len returns the number of values of the page.
+func (p *head) Len() int { return int(p.currentValues) }
 
 // OneKey reports whether the page has the one-key form: its key part is the whole key and it
 // has no key lengths and remainders.
@@ -179,24 +179,24 @@ func lcp(a, b []byte) int {
 	return i
 }
 
-// lay holds the offsets of the parts behind the key part of a page with n slots.
+// lay holds the offsets of the parts behind the key part of a page with currentValues values.
 type lay struct {
-	n, l            int  // slots, length of the key part
-	kl, fp, vl, rem int  // offsets: key lengths, fingerprints, value lengths, remainders
-	many, str       bool // the many-key form has key lengths, fingerprints and remainders; Str has value lengths
+	currentValues, l int  // the number of values the page holds, length of the key part
+	kl, fp, vl, rem  int  // offsets: key lengths, fingerprints, value lengths, remainders
+	many, str        bool // the many-key form has key lengths, fingerprints and remainders; Str has value lengths
 }
 
 func (p *head) lay(str bool) lay {
-	la := lay{n: int(p.n), l: p.cpl(), many: !p.one(), str: str}
+	la := lay{currentValues: int(p.currentValues), l: p.cpl(), many: !p.one(), str: str}
 	la.kl = Header + la.l
 	la.fp, la.vl = la.kl, la.kl
 	if la.many {
-		la.fp += la.n
-		la.vl += 2 * la.n
+		la.fp += la.currentValues
+		la.vl += 2 * la.currentValues
 	}
 	la.rem = la.vl
 	if str {
-		la.rem += la.n
+		la.rem += la.currentValues
 	}
 	return la
 }
@@ -210,20 +210,20 @@ func (la *lay) keyEnd(m []byte) int {
 }
 
 // keyEndFrom returns where the remainders end, given the offset off of the remainder of the
-// key at slot pos (the first slot of a key, or n).
+// key at value pos (the first value of a key, or n).
 func (la *lay) keyEndFrom(m []byte, pos, off int) int {
 	sum, further := 0, 0
-	for _, rl := range m[la.kl+pos : la.kl+la.n] {
+	for _, rl := range m[la.kl+pos : la.kl+la.currentValues] {
 		sum += int(rl)
 		further += (int(rl) + 1) >> 8 // 1 for Further
 	}
 	return off + sum - Further*further
 }
 
-// locate returns the position (slot) where the key whose remainder is r (after the key part) belongs in a many-key
-// page in which it is not (find said so): the first slot of the key that follows it, or n, with the offset of that
+// locate returns the position (value index) where the key whose remainder is r (after the key part) belongs in a many-key
+// page in which it is not (find said so): the first value of the key that follows it, or n, with the offset of that
 // key's remainder in the object (the end of the key area, if it goes at the end). kl is the offset of the key
-// lengths, n the number of slots, rem the offset of the remainders.
+// lengths, n the number of values, rem the offset of the remainders.
 func locate(m []byte, kl, n, rem int, r []byte) (pos, off int) {
 	off = rem
 	pos = n
@@ -240,30 +240,30 @@ func locate(m []byte, kl, n, rem int, r []byte) (pos, off int) {
 	return pos, off
 }
 
-// find returns the position (slot) of the first value of the key whose remainder is r (after the key part) in a
+// find returns the position (value index) of the first value of the key whose remainder is r (after the key part) in a
 // many-key page, with the offset of its remainder in the object, or false. kl is the offset of the key lengths, n
-// the number of slots, rem the offset of the remainders. It compares the fingerprint of r with the n fingerprints
+// the number of values, rem the offset of the remainders. It compares the fingerprint of r with the n fingerprints
 // of the page, eight at a time, and compares a remainder only where the fingerprint and the length are equal
 // (docs/redesign/page-search-design.md).
 func find(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
-	if len(r) > MaxRemainder { // no slot has this key length (Further is not one)
+	if len(r) > MaxRemainder { // no value has this key length (Further is not one)
 		return 0, 0, false
 	}
 	f := Fingerprint(r)
 	fp := kl + n
-	off, at := rem, 0 // the offset of the remainder of the first slot at or after at
+	off, at := rem, 0 // the offset of the remainder of the first value at or after at
 	for g := 0; g < n; g += 8 {
 		w := fingerprintWord(m, fp, g, n, f)
 		for i := swar.Index8(w, f); i < 8; i = swar.Index8(w, f) {
-			slot := g + i
-			if int(m[kl+slot]) == len(r) {
-				for ; at < slot; at++ {
+			idx := g + i
+			if int(m[kl+idx]) == len(r) {
+				for ; at < idx; at++ {
 					if rl := m[kl+at]; rl != Further {
 						off += int(rl)
 					}
 				}
 				if string(m[off:off+len(r)]) == string(r) {
-					return slot, off, true
+					return idx, off, true
 				}
 			}
 			w = w&^(0xff<<(8*i)) | uint64(^f)<<(8*i) // look past this candidate
@@ -272,7 +272,7 @@ func find(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
 	return 0, 0, false
 }
 
-// fingerprintWord returns the fingerprints of the slots g to g+7 of the page m, whose fingerprint list begins at fp
+// fingerprintWord returns the fingerprints of the values g to g+7 of the page m, whose fingerprint list begins at fp
 // and has n bytes, as a little-endian word; the places beyond the list hold ^f, which is not the fingerprint
 // searched for. It reads a whole word (the bytes behind the list are part of the object) unless the object ends too
 // soon.
@@ -292,10 +292,10 @@ func fingerprintWord(m []byte, fp, g, n int, f byte) uint64 {
 	return w
 }
 
-// runEnd returns the slot after the last value of the key whose first slot is pos.
+// runEnd returns the value after the last value of the key whose first value is pos.
 func (la *lay) runEnd(m []byte, pos int) int {
 	i := pos + 1
-	for i < la.n && m[la.kl+i] == Further {
+	for i < la.currentValues && m[la.kl+i] == Further {
 		i++
 	}
 	return i
@@ -341,16 +341,16 @@ func classFor(need int) int {
 	return -1
 }
 
-// NeedStrings returns the bytes a many-key Str page takes for n slots (values) whose remainders (after a key part
-// of cpl bytes) are remBytes in all (the slots with Further have none) and whose values are valBytes in all.
-// Besides the remainders and values it needs three bytes a slot: key length, fingerprint and value length.
+// NeedStrings returns the bytes a many-key Str page takes for n values whose remainders (after a key part
+// of cpl bytes) are remBytes in all (the values with Further have none) and whose values are valBytes in all.
+// Besides the remainders and values it needs three bytes a value: key length, fingerprint and value length.
 // The tree calls it to decide, before it builds anything, whether the entries of a subtree fit a page (at
 // most 512).
 func NeedStrings(n, cpl, remBytes, valBytes int) int {
 	return Header + cpl + 3*n + remBytes + valBytes
 }
 
-// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths (two bytes a slot), values of the size of T.
+// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths (two bytes a value), values of the size of T.
 func NeedFixed[T comparable](n, cpl, remBytes int) int {
 	return Header + cpl + 2*n + remBytes + n*size[T]()
 }
@@ -383,8 +383,8 @@ func shrinkClass(c, used int) int {
 	}
 }
 
-// oneKeyLeft reports, for the many-key page of the object m whose key lengths begin at kl and which has n slots,
-// whether all its slots belong to one key: no slot but the first has a key length other than Further.
+// oneKeyLeft reports, for the many-key page of the object m whose key lengths begin at kl and which has n values,
+// whether all its values belong to one key: no value but the first has a key length other than Further.
 func oneKeyLeft(m []byte, kl, n int) bool {
 	for _, rl := range m[kl+1 : kl+n] {
 		if rl != Further {
@@ -412,19 +412,19 @@ func allocRaw(c int) unsafe.Pointer {
 	return unsafe.Pointer(new([64]uint64))
 }
 
-// setHead sets the head of a new page of class c: many-key form or one-key form, n slots, a key part
+// setHead sets the head of a new page of class c: many-key form or one-key form, n values, a key part
 // of l bytes, and raw rawWords.
 func (p *head) setHead(many bool, c, n, l, raw int) {
 	base := TypeOneKey
 	if many {
 		base = TypeManyKeys
 	}
-	p.objType, p.n, p.raw = base+uint8(c)<<1, uint8(n), uint8(raw)
+	p.objType, p.currentValues, p.raw = base+uint8(c)<<1, uint8(n), uint8(raw)
 	p.setCpl(l)
 }
 
 // toOneKey turns the many-key form of the object m with one key into the one-key form in place: the
-// remainder joins the key part, the key lengths and the fingerprints go. The page has la.n slots, the key part la.l bytes and the
+// remainder joins the key part, the key lengths and the fingerprints go. The page has la.currentValues values, the key part la.l bytes and the
 // key area ends at e. It returns the new end of the key area. (The new key part fits nine bits: the page is
 // at most 512 bytes.)
 func toOneKey(p *head, m []byte, la lay, e int) int {
@@ -434,14 +434,14 @@ func toOneKey(p *head, m []byte, la lay, e int) int {
 	nl := la.l + rl
 	nvl := Header + nl
 	if la.str {
-		copy(m[nvl:nvl+la.n], m[la.vl:la.vl+la.n])
+		copy(m[nvl:nvl+la.currentValues], m[la.vl:la.vl+la.currentValues])
 	}
 	copy(m[Header+la.l:], tmp[:rl])
-	ne := nvl + b2i(la.str)*la.n
+	ne := nvl + b2i(la.str)*la.currentValues
 	if ne < e {
 		clear(m[ne:e])
 	}
-	p.setHead(false, p.class(), la.n, nl, int(p.raw))
+	p.setHead(false, p.class(), la.currentValues, nl, int(p.raw))
 	return ne
 }
 

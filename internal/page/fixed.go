@@ -7,13 +7,13 @@ import (
 
 // Fixed is the page of values of one size, see the package comment: for the maps whose values are small
 // and hold no pointer (a uint64), or are a word with a pointer (a *X). The values are an array of T at the
-// end of the object, one for each slot in the order of the slots, and compared as T (a == b), not as
+// end of the object, one for each value in the order of the values, and compared as T (a == b), not as
 // bytes. Between the key area and the values the bytes are zero.
 //
 // A page of a T with a pointer is a typed object (allocPtr): the first rawWords words are
-// the byte area (head, key part, key lengths, remainders: no pointer in them), the rest are slots that hold
+// the byte area (head, key part, key lengths, remainders: no pointer in them), the rest are values that hold
 // a value or nil. The type of an object cannot change, so the byte area of such a page is fixed for
-// its life: a key that does not fit it makes a new object, a value that has a free slot does not.
+// its life: a key that does not fit it makes a new object, a value that has a free value place does not.
 // Values are moved as T (never as bytes: a byte move of pointers hides them from the write barrier);
 // for a T without a pointer the same code is a plain memmove.
 //
@@ -36,7 +36,7 @@ func valuesIn[T comparable](m []byte, n int) []T {
 	return unsafe.Slice((*T)(unsafe.Pointer(&m[len(m)-n*size[T]()])), n)
 }
 
-// newFixed returns a zeroed object of class c, with its head set for n slots and a key part of l
+// newFixed returns a zeroed object of class c, with its head set for n values and a key part of l
 // bytes; for a T with a pointer (ptr) the typed object whose byte area is the first words that hold e bytes.
 func newFixed[T comparable](many bool, c, n, l, e int, ptr bool) *Fixed {
 	var p *Fixed
@@ -138,7 +138,7 @@ func (p *Fixed) Used() int {
 func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 	var zero T
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	pos := 0
 	if p.one() {
 		if string(m[Header:Header+l]) != string(rest) {
@@ -160,7 +160,7 @@ func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 // false, and reports whether the page holds the key.
 func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	pos, end := 0, n
 	if p.one() {
 		if string(m[Header:Header+l]) != string(rest) {
@@ -196,7 +196,7 @@ func indexOf[T comparable](vs []T, pos, end int, v T) int {
 }
 
 // fits reports whether a page of p's object can take a key area that ends at ne and n+d values in
-// place: for a page of pointers the byte area (rawWords) and the slots must hold them, for the others the
+// place: for a page of pointers the byte area (rawWords) and the values must hold them, for the others the
 // object.
 func (p *Fixed) fits(ne, n, w int) bool {
 	if p.raw != 0 {
@@ -206,12 +206,12 @@ func (p *Fixed) fits(ne, n, w int) bool {
 }
 
 // regrow returns a new page of class c with the key area (the first e bytes, the new end ne) and the values
-// of p, for a key area that ends at ne and n slots.
+// of p, for a key area that ends at ne and n values.
 func regrow[T comparable](p *Fixed, c, e, ne int, ptr bool) *Fixed {
-	q := newFixed[T](!p.one(), c, int(p.n), p.cpl(), ne, ptr)
+	q := newFixed[T](!p.one(), c, int(p.currentValues), p.cpl(), ne, ptr)
 	pm, qm := p.mem(), q.mem()
 	copy(qm[Header:e], pm[Header:e])
-	copy(valuesIn[T](qm, int(p.n)), valuesIn[T](pm, int(p.n)))
+	copy(valuesIn[T](qm, int(p.currentValues)), valuesIn[T](pm, int(p.currentValues)))
 	return q
 }
 
@@ -224,37 +224,37 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 	m := p.mem()
 	la := p.lay(false)
 	w := size[T]()
-	var slot, ro int
+	var idx, ro int
 	var kl, fp byte
 	var r []byte
 	res := AddedValue
 	e := la.rem
-	vs := valuesIn[T](m, la.n)
+	vs := valuesIn[T](m, la.currentValues)
 	switch {
 	case !la.many:
 		if !bytes.Equal(m[Header:Header+la.l], rest) {
 			return pairWithFixed(p, rest, v, ptr)
 		}
-		if indexOf(vs, 0, la.n, v) >= 0 {
+		if indexOf(vs, 0, la.currentValues, v) >= 0 {
 			return p, Present
 		}
-		slot = la.n
+		idx = la.currentValues
 	default:
 		if p.Match(rest) < la.l {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := find(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.currentValues, la.rem, r)
 		if !found {
-			pos, off = locate(m, la.kl, la.n, la.rem, r)
+			pos, off = locate(m, la.kl, la.currentValues, la.rem, r)
 		}
-		ro, slot = off-la.rem, pos
+		ro, idx = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
 			if indexOf(vs, pos, end, v) >= 0 {
 				return p, Present
 			}
-			slot, kl, r = end, Further, nil
+			idx, kl, r = end, Further, nil
 		} else {
 			if len(r) > MaxRemainder {
 				return p, Full
@@ -263,33 +263,33 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 		}
 		e = la.keyEndFrom(m, pos, off)
 	}
-	if la.n >= MaxEntries {
+	if la.currentValues >= MaxEntries {
 		return p, Full
 	}
 	ne := e + 2*b2i(la.many) + len(r)
 	q := p
-	if !p.fits(ne, la.n+1, w) {
-		c := classFor(ne + (la.n+1)*w)
+	if !p.fits(ne, la.currentValues+1, w) {
+		c := classFor(ne + (la.currentValues+1)*w)
 		if c < 0 {
 			return p, Full
 		}
 		q = regrow[T](p, c, e, ne, ptr)
 		m = q.mem()
 	}
-	// the array grows at its front: the values before the new one move down by one slot
-	nv := valuesIn[T](m, la.n+1)
-	copy(nv[:slot], nv[1:slot+1])
-	nv[slot] = v
-	if la.many { // insertSlot of the page without value lengths, written out: the key lengths and the head of the remainders move together
+	// the array grows at its front: the values before the new one move down by one value
+	nv := valuesIn[T](m, la.currentValues+1)
+	copy(nv[:idx], nv[1:idx+1])
+	nv[idx] = v
+	if la.many { // insertion of a value in the page without value lengths, written out: the key lengths and the head of the remainders move together
 		rlen := len(r)
 		copy(m[la.rem+ro+2+rlen:e+2+rlen], m[la.rem+ro:e])
-		copy(m[la.fp+slot+2:la.rem+ro+2], m[la.fp+slot:la.rem+ro])
-		copy(m[la.kl+slot+1:la.fp+slot+1], m[la.kl+slot:la.fp+slot])
-		m[la.kl+slot] = kl
-		m[la.fp+1+slot] = fp
+		copy(m[la.fp+idx+2:la.rem+ro+2], m[la.fp+idx:la.rem+ro])
+		copy(m[la.kl+idx+1:la.fp+idx+1], m[la.kl+idx:la.fp+idx])
+		m[la.kl+idx] = kl
+		m[la.fp+1+idx] = fp
 		copy(m[la.rem+2+ro:], r)
 	}
-	q.n++
+	q.currentValues++
 	return q, res
 }
 
@@ -306,7 +306,7 @@ func pairWithFixed[T comparable](p *Fixed, rest []byte, v T, ptr bool) (*Fixed, 
 	if first {
 		rests, vals = append(rests, rest), append(vals, v)
 	}
-	for _, x := range valuesIn[T](m, la.n) {
+	for _, x := range valuesIn[T](m, la.currentValues) {
 		rests, vals = append(rests, key), append(vals, x)
 	}
 	if !first {
@@ -329,18 +329,18 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 	m := p.mem()
 	la := p.lay(false)
 	w := size[T]()
-	var slot, ro, remLen int
+	var idx, ro, remLen int
 	res := Removed
 	e := la.rem
-	vs := valuesIn[T](m, la.n)
+	vs := valuesIn[T](m, la.currentValues)
 	if !la.many {
 		if !bytes.Equal(m[Header:Header+la.l], rest) {
 			return p, Absent
 		}
-		if slot = indexOf(vs, 0, la.n, v); slot < 0 {
+		if idx = indexOf(vs, 0, la.currentValues, v); idx < 0 {
 			return p, Absent
 		}
-		if la.n == 1 {
+		if la.currentValues == 1 {
 			return nil, Gone
 		}
 	} else {
@@ -348,40 +348,40 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := find(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.currentValues, la.rem, r)
 		if !found {
 			return p, Absent
 		}
 		end := la.runEnd(m, pos)
-		if slot = indexOf(vs, pos, end, v); slot < 0 {
+		if idx = indexOf(vs, pos, end, v); idx < 0 {
 			return p, Absent
 		}
 		e = la.keyEndFrom(m, pos, off)
-		if slot == pos {
-			if end > pos+1 { // the next value takes the key's place: its slot becomes the key's
-				m[la.kl+slot+1], m[la.fp+slot+1] = uint8(len(r)), m[la.fp+slot]
+		if idx == pos {
+			if end > pos+1 { // the next value takes the key's place: its value becomes the key's
+				m[la.kl+idx+1], m[la.fp+idx+1] = uint8(len(r)), m[la.fp+idx]
 			} else { // (a many-key page has two keys at least)
 				remLen, res = len(r), Gone
 				ro = off - la.rem
 			}
 		}
 	}
-	// the array shrinks at its front: the values before the removed one move up by one slot
+	// the array shrinks at its front: the values before the removed one move up by one value
 	var zero T
-	copy(vs[1:slot+1], vs[:slot])
+	copy(vs[1:idx+1], vs[:idx])
 	vs[0] = zero
-	if la.many { // removeSlot of the page without value lengths, written out
-		copy(m[la.kl+slot:la.fp+slot-1], m[la.kl+slot+1:la.fp+slot])
-		copy(m[la.fp-1+slot:la.rem+ro-2], m[la.fp+slot+1:la.rem+ro])
+	if la.many { // removal of a value from the page without value lengths, written out
+		copy(m[la.kl+idx:la.fp+idx-1], m[la.kl+idx+1:la.fp+idx])
+		copy(m[la.fp-1+idx:la.rem+ro-2], m[la.fp+idx+1:la.rem+ro])
 		copy(m[la.rem-2+ro:e-2-remLen], m[la.rem+ro+remLen:e])
 		clear(m[e-2-remLen : e])
 	}
-	p.n--
+	p.currentValues--
 	e -= 2*b2i(la.many) + remLen
-	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.n)) {
+	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.currentValues)) {
 		e = toOneKey(&p.head, m, p.lay(false), e)
 	}
-	if c := shrinkClass(p.class(), e+int(p.n)*w); c < p.class() {
+	if c := shrinkClass(p.class(), e+int(p.currentValues)*w); c < p.class() {
 		return regrow[T](p, c, e, e, ptr), res
 	}
 	return p, res
@@ -393,7 +393,7 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 // empty.
 func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bool {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	vs := valuesIn[T](m, n)
 	if p.one() {
 		for i, v := range vs {
@@ -419,11 +419,11 @@ func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bo
 	return true
 }
 
-// EachSingle calls fn with every value of a page of the one-key form, in slot order, until fn returns false, and
+// EachSingle calls fn with every value of a page of the one-key form, in value order, until fn returns false, and
 // reports whether it ran to completion. It is Each without the remainders for the tree's scans of the single-key
 // pages, which would otherwise call a closure around a closure for every value.
 func (p *Fixed) EachSingle[T comparable](fn func(v T) bool) bool {
-	for _, v := range valuesIn[T](p.mem(), int(p.n)) {
+	for _, v := range valuesIn[T](p.mem(), int(p.currentValues)) {
 		if !fn(v) {
 			return false
 		}
@@ -452,12 +452,12 @@ func (p *Fixed) Prepend[T comparable](pre []byte, ptr bool) *Fixed {
 	w := size[T]()
 	e := la.keyEnd(m)
 	ne := e + len(pre)
-	if classFor(ne+la.n*w) < 0 {
+	if classFor(ne+la.currentValues*w) < 0 {
 		return nil
 	}
 	q := p
-	if !p.fits(ne, la.n, w) {
-		q = regrow[T](p, classFor(ne+la.n*w), e, ne, ptr)
+	if !p.fits(ne, la.currentValues, w) {
+		q = regrow[T](p, classFor(ne+la.currentValues*w), e, ne, ptr)
 		m = q.mem()
 	}
 	copy(m[Header+len(pre):ne], m[Header:e])
@@ -485,7 +485,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	w := size[T]()
 	e := la.keyEnd(m)
 	heads, longest := 0, 0
-	for _, rl := range m[la.kl : la.kl+la.n] {
+	for _, rl := range m[la.kl : la.kl+la.currentValues] {
 		if rl != Further {
 			heads++
 			longest = max(longest, int(rl))
@@ -494,21 +494,21 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	if longest+d > MaxRemainder {
 		return nil
 	}
-	nk := Header + mis + 2*(la.n+1) + (e - la.rem) + heads*d + len(newRem)
-	c := classFor(nk + (la.n+1)*w)
+	nk := Header + mis + 2*(la.currentValues+1) + (e - la.rem) + heads*d + len(newRem)
+	c := classFor(nk + (la.currentValues+1)*w)
 	if c < 0 {
 		return nil
 	}
 	first := len(newRem) == 0 || newRem[0] < p.CP()[mis]
 	at := 0
 	if !first {
-		at = la.n
+		at = la.currentValues
 	}
-	q := newFixed[T](true, c, la.n+1, mis, nk, ptr)
+	q := newFixed[T](true, c, la.currentValues+1, mis, nk, ptr)
 	out := q.mem()
 	copy(out[Header:], m[Header:Header+mis])
 	nl := q.lay(false)
-	for i := range la.n {
+	for i := range la.currentValues {
 		rl := m[la.kl+i]
 		if rl != Further {
 			rl += uint8(d)
@@ -523,7 +523,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	}
 	extra := p.CP()[mis:]
 	src := la.rem
-	for i := range la.n {
+	for i := range la.currentValues {
 		if rl := int(m[la.kl+i]); rl != Further {
 			start := off
 			off += copy(out[off:], extra)
@@ -535,8 +535,8 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	if !first {
 		copy(out[off:], newRem)
 	}
-	vals := valuesIn[T](out, la.n+1)
-	copy(vals[b2i(first):], valuesIn[T](m, la.n))
+	vals := valuesIn[T](out, la.currentValues+1)
+	copy(vals[b2i(first):], valuesIn[T](m, la.currentValues))
 	vals[at] = v
 	return q
 }

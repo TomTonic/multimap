@@ -11,7 +11,7 @@ type Bounds struct {
 	LoIncl, HiIncl bool
 }
 
-// in reports, for the key cp+rem of a first slot, whether it is below the lower bound (skip) or above the upper
+// in reports, for the key cp+rem of a first value, whether it is below the lower bound (skip) or above the upper
 // bound (over: the scan is done).
 func (b *Bounds) in(cp, rem []byte) (skip, over bool) {
 	if b.HasLo {
@@ -39,11 +39,11 @@ func cmpKey(a, b, bound []byte) int {
 	return bytes.Compare(b, bound[len(a):])
 }
 
-// slotRange returns the slots [start, end) whose keys lie within b, for a page of the many-key form whose key lengths
+// valueRange returns the values [start, end) whose keys lie within b, for a page of the many-key form whose key lengths
 // begin at kl and remainders at rem, and whether a key above the upper bound follows (over: the scan is done
-// after this page). The keys are in order, so the slots below the lower bound come first and those above the
+// after this page). The keys are in order, so the values below the lower bound come first and those above the
 // upper bound last: the lower bound is compared until the first key at or above it, the upper bound from there on.
-func slotRange(m []byte, kl, n, rem int, b *Bounds) (start, end int, over bool) {
+func valueRange(m []byte, kl, n, rem int, b *Bounds) (start, end int, over bool) {
 	cp := m[Header:kl]
 	off := rem
 	start = n
@@ -77,12 +77,12 @@ func slotRange(m []byte, kl, n, rem int, b *Bounds) (start, end int, over bool) 
 // (docs/redesign/scan-design.md): the scan hands the slice to its caller's loop as it is.
 func (p *Fixed) ValuesIn[T comparable](b *Bounds) ([]T, bool) {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	vs := valuesIn[T](m, n)
 	if p.one() || !b.HasLo && !b.HasHi {
 		return vs, false
 	}
-	start, end, over := slotRange(m, Header+l, n, Header+l+2*n, b)
+	start, end, over := valueRange(m, Header+l, n, Header+l+2*n, b)
 	return vs[start:end], over
 }
 
@@ -91,13 +91,13 @@ func (p *Fixed) ValuesIn[T comparable](b *Bounds) ([]T, bool) {
 // Fixed.ValuesIn).
 func (p *Str) AppendStrings(dst []string, b *Bounds) ([]string, bool) {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	vl := Header + l // the value lengths of the one-key form follow the key part
 	start, end, over := 0, n, false
 	if !p.one() {
 		vl += 2 * n
 		if b.HasLo || b.HasHi {
-			start, end, over = slotRange(m, Header+l, n, vl+n, b)
+			start, end, over = valueRange(m, Header+l, n, vl+n, b)
 		}
 	}
 	s := len(m) - sum(m[vl+start:vl+n])
@@ -113,7 +113,7 @@ func (p *Str) AppendStrings(dst []string, b *Bounds) ([]string, bool) {
 // follows. It is the range scan of the keys of a page.
 func (p *head) AppendKeys(buf []byte, ends []int, pre []byte, b *Bounds, str bool) ([]byte, []int, bool) {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	kl := Header + l
 	rem := kl + 2*n
 	if str {

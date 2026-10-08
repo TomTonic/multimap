@@ -26,7 +26,7 @@ func frontPage(p *Fixed) (*Fixed, int) {
 // getFront is Get of a page whose values start at vs.
 func getFront(p *Fixed, vs int, rest []byte) (uint64, bool) {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	if lcp(m[Header:Header+l], rest) < l {
 		return 0, false
 	}

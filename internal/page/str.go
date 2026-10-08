@@ -2,10 +2,10 @@ package page
 
 import "bytes"
 
-// valueStart returns where the value of slot pos begins in the object m of a Str page: the values
+// valueStart returns where value pos begins in the object m of a Str page: the values
 // end with the object, so it is the end less the lengths of the values from pos on.
 func (la *lay) valueStart(m []byte, pos int) int {
-	return len(m) - sum(m[la.vl+pos:la.vl+la.n])
+	return len(m) - sum(m[la.vl+pos:la.vl+la.currentValues])
 }
 
 // BuildStrings returns a page for the values vals of the keys rests (the keys from the end of the
@@ -104,7 +104,7 @@ func (p *Str) Used() int {
 // page does not hold it. The slice aliases the page.
 func (p *Str) Get(rest []byte) ([]byte, bool) {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	pos, vl := 0, Header+l // the value lengths of the one-key form follow the key part
 	if p.one() {
 		if string(m[Header:Header+l]) != string(rest) {
@@ -128,7 +128,7 @@ func (p *Str) Get(rest []byte) ([]byte, bool) {
 // false, and reports whether the page holds the key.
 func (p *Str) EachValue(rest []byte, fn func(val []byte) bool) bool {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	pos, end, vl := 0, n, Header+l // the value lengths of the one-key form follow the key part
 	if p.one() {
 		if string(m[Header:Header+l]) != string(rest) {
@@ -157,7 +157,7 @@ func (p *Str) EachValue(rest []byte, fn func(val []byte) bool) bool {
 	return true
 }
 
-// hasValue returns the slot among pos..end-1 whose value is val, or -1.
+// hasValue returns the value among pos..end-1 whose value is val, or -1.
 func (la *lay) hasValue(m []byte, pos, end int, val []byte) int {
 	s := la.valueStart(m, pos)
 	for i := pos; i < end; i++ {
@@ -176,7 +176,7 @@ func (la *lay) hasValue(m []byte, pos, end int, val []byte) int {
 func (p *Str) Add(rest, val []byte) (*Str, Result) {
 	m := p.mem()
 	la := p.lay(true)
-	var slot, ro int
+	var idx, ro int
 	var kl, fp byte
 	var r []byte
 	res := AddedValue
@@ -186,23 +186,23 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 		if !bytes.Equal(m[Header:Header+la.l], rest) {
 			return p.pairWith(rest, val)
 		}
-		if la.hasValue(m, 0, la.n, val) >= 0 {
+		if la.hasValue(m, 0, la.currentValues, val) >= 0 {
 			return p, Present
 		}
 		if len(val) > MaxValue {
 			return p, Full
 		}
-		slot = la.n
+		idx = la.currentValues
 	default:
 		if p.Match(rest) < la.l {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := find(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.currentValues, la.rem, r)
 		if !found {
-			pos, off = locate(m, la.kl, la.n, la.rem, r)
+			pos, off = locate(m, la.kl, la.currentValues, la.rem, r)
 		}
-		ro, slot = off-la.rem, pos
+		ro, idx = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
 			if la.hasValue(m, pos, end, val) >= 0 {
@@ -211,7 +211,7 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 			if len(val) > MaxValue {
 				return p, Full
 			}
-			slot, kl, r = end, Further, nil
+			idx, kl, r = end, Further, nil
 			e = la.keyEndFrom(m, pos, off)
 		} else {
 			if len(r) > MaxRemainder || len(val) > MaxValue {
@@ -221,7 +221,7 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 			e = la.keyEndFrom(m, pos, off)
 		}
 	}
-	vb := sum(m[la.vl : la.vl+la.n])
+	vb := sum(m[la.vl : la.vl+la.currentValues])
 	need := e + 2*b2i(la.many) + 1 + len(r) + vb + len(val)
 	q := p
 	if need > p.Size() {
@@ -232,25 +232,25 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 		q = p.regrow(c, e, vb)
 		m = q.mem()
 	}
-	// the values area: the values of the slots before the new one move down by its length
-	tail := sum(m[la.vl+slot : la.vl+la.n])
+	// the values area: the values of the values before the new one move down by its length
+	tail := sum(m[la.vl+idx : la.vl+la.currentValues])
 	front := len(m) - vb
 	copy(m[front-len(val):len(m)-tail-len(val)], m[front:len(m)-tail])
 	copy(m[len(m)-tail-len(val):], val)
-	if la.many { // insertSlot of the many-key form, written out
+	if la.many { // insertion of a value in the many-key form, written out
 		rlen := len(r)
 		copy(m[la.rem+ro+3+rlen:e+3+rlen], m[la.rem+ro:e])
-		copy(m[la.vl+slot+3:la.rem+ro+3], m[la.vl+slot:la.rem+ro])
-		copy(m[la.fp+slot+2:la.vl+slot+2], m[la.fp+slot:la.vl+slot])
-		copy(m[la.kl+slot+1:la.fp+slot+1], m[la.kl+slot:la.fp+slot])
-		m[la.kl+slot] = kl
-		m[la.fp+1+slot] = fp
-		m[la.vl+2+slot] = uint8(len(val))
+		copy(m[la.vl+idx+3:la.rem+ro+3], m[la.vl+idx:la.rem+ro])
+		copy(m[la.fp+idx+2:la.vl+idx+2], m[la.fp+idx:la.vl+idx])
+		copy(m[la.kl+idx+1:la.fp+idx+1], m[la.kl+idx:la.fp+idx])
+		m[la.kl+idx] = kl
+		m[la.fp+1+idx] = fp
+		m[la.vl+2+idx] = uint8(len(val))
 		copy(m[la.rem+3+ro:], r)
 	} else { // the one-key form: the value length goes to the end of the list
-		m[la.vl+slot] = uint8(len(val))
+		m[la.vl+idx] = uint8(len(val))
 	}
-	q.n++
+	q.currentValues++
 	return q, res
 }
 
@@ -258,7 +258,7 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 // bytes) of p.
 func (p *Str) regrow(c, e, vb int) *Str {
 	q := (*Str)(allocRaw(c))
-	q.setHead(!p.one(), c, int(p.n), p.cpl(), 0)
+	q.setHead(!p.one(), c, int(p.currentValues), p.cpl(), 0)
 	pm, qm := p.mem(), q.mem()
 	copy(qm[Header:e], pm[Header:e])
 	copy(qm[len(qm)-vb:], pm[len(pm)-vb:])
@@ -279,7 +279,7 @@ func (p *Str) pairWith(rest, val []byte) (*Str, Result) {
 		rests, vals = append(rests, rest), append(vals, val)
 	}
 	s := la.valueStart(m, 0)
-	for i := range la.n {
+	for i := range la.currentValues {
 		l := int(m[la.vl+i])
 		rests, vals = append(rests, key), append(vals, m[s:s+l])
 		s += l
@@ -301,17 +301,17 @@ func (p *Str) pairWith(rest, val []byte) (*Str, Result) {
 func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 	m := p.mem()
 	la := p.lay(true)
-	var slot, ro, remLen int
+	var idx, ro, remLen int
 	res := Removed
 	e := la.rem
 	if !la.many {
 		if !bytes.Equal(m[Header:Header+la.l], rest) {
 			return p, Absent
 		}
-		if slot = la.hasValue(m, 0, la.n, val); slot < 0 {
+		if idx = la.hasValue(m, 0, la.currentValues, val); idx < 0 {
 			return p, Absent
 		}
-		if la.n == 1 {
+		if la.currentValues == 1 {
 			return nil, Gone
 		}
 	} else {
@@ -319,44 +319,44 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := find(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.currentValues, la.rem, r)
 		if !found {
 			return p, Absent
 		}
 		end := la.runEnd(m, pos)
-		if slot = la.hasValue(m, pos, end, val); slot < 0 {
+		if idx = la.hasValue(m, pos, end, val); idx < 0 {
 			return p, Absent
 		}
 		e = la.keyEndFrom(m, pos, off)
-		if slot == pos {
-			if end > pos+1 { // the next value takes the key's place: its slot becomes the key's
-				m[la.kl+slot+1], m[la.fp+slot+1] = uint8(len(r)), m[la.fp+slot]
+		if idx == pos {
+			if end > pos+1 { // the next value takes the key's place: its value becomes the key's
+				m[la.kl+idx+1], m[la.fp+idx+1] = uint8(len(r)), m[la.fp+idx]
 			} else { // (a many-key page has two keys at least)
 				remLen, res = len(r), Gone
 				ro = off - la.rem
 			}
 		}
 	}
-	vb := sum(m[la.vl : la.vl+la.n])
-	vlen := int(m[la.vl+slot])
-	start := la.valueStart(m, slot)
+	vb := sum(m[la.vl : la.vl+la.currentValues])
+	vlen := int(m[la.vl+idx])
+	start := la.valueStart(m, idx)
 	front := len(m) - vb
 	copy(m[front+vlen:start+vlen], m[front:start])
 	clear(m[front : front+vlen])
-	if la.many { // removeSlot of the many-key form, written out
-		copy(m[la.kl+slot:la.fp+slot-1], m[la.kl+slot+1:la.fp+slot])
-		copy(m[la.fp-1+slot:la.vl+slot-2], m[la.fp+slot+1:la.vl+slot])
-		copy(m[la.vl-2+slot:la.rem+ro-3], m[la.vl+slot+1:la.rem+ro])
+	if la.many { // removal of a value from the many-key form, written out
+		copy(m[la.kl+idx:la.fp+idx-1], m[la.kl+idx+1:la.fp+idx])
+		copy(m[la.fp-1+idx:la.vl+idx-2], m[la.fp+idx+1:la.vl+idx])
+		copy(m[la.vl-2+idx:la.rem+ro-3], m[la.vl+idx+1:la.rem+ro])
 		copy(m[la.rem-3+ro:e-3-remLen], m[la.rem+ro+remLen:e])
 		clear(m[e-3-remLen : e])
 	} else { // the one-key form: the value lengths close up
-		copy(m[la.vl+slot:la.rem-1], m[la.vl+slot+1:la.rem])
+		copy(m[la.vl+idx:la.rem-1], m[la.vl+idx+1:la.rem])
 		clear(m[e-1 : e])
 	}
-	p.n--
+	p.currentValues--
 	e -= 2*b2i(la.many) + 1 + remLen
 	vb -= vlen
-	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.n)) {
+	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.currentValues)) {
 		e = toOneKey(&p.head, m, p.lay(true), e)
 	}
 	if c := shrinkClass(p.class(), e+vb); c < p.class() {
@@ -385,7 +385,7 @@ func (p *head) KeysUpTo(limit int) int {
 	m := p.mem()
 	lo := Header + p.cpl()
 	k := 0
-	for _, rl := range m[lo : lo+int(p.n)] {
+	for _, rl := range m[lo : lo+int(p.currentValues)] {
 		if k += b2i(rl != Further); k >= limit {
 			break
 		}
@@ -400,7 +400,7 @@ func (p *head) KeysUpTo(limit int) int {
 // then the remainder.
 func (p *Str) Each(fn func(rem, val []byte, first bool) bool) bool {
 	m := p.mem()
-	n, l := int(p.n), p.cpl()
+	n, l := int(p.currentValues), p.cpl()
 	kl := Header + l
 	if p.one() {
 		s := len(m) - sum(m[kl:kl+n])
@@ -432,12 +432,12 @@ func (p *Str) Each(fn func(rem, val []byte, first bool) bool) bool {
 	return true
 }
 
-// EachSingle calls fn with every value of a page of the one-key form, in slot order, until fn returns false, and
+// EachSingle calls fn with every value of a page of the one-key form, in value order, until fn returns false, and
 // reports whether it ran to completion. It is Each without the remainders, for the tree's scans of the
 // single-key pages.
 func (p *Str) EachSingle(fn func(val []byte) bool) bool {
 	m := p.mem()
-	n, vl := int(p.n), Header+p.cpl()
+	n, vl := int(p.currentValues), Header+p.cpl()
 	s := len(m) - sum(m[vl:vl+n])
 	for _, l := range m[vl : vl+n] {
 		if !fn(m[s : s+int(l)]) {
@@ -465,7 +465,7 @@ func (p *Str) Prepend(pre []byte) *Str {
 	m := p.mem()
 	la := p.lay(true)
 	e := la.keyEnd(m)
-	vb := sum(m[la.vl : la.vl+la.n])
+	vb := sum(m[la.vl : la.vl+la.currentValues])
 	nk := e + len(pre)
 	c := classFor(nk + vb)
 	if c < 0 {
@@ -498,9 +498,9 @@ func (p *Str) Widen(rest, val []byte) *Str {
 		return nil
 	}
 	e := la.keyEnd(m)
-	vb := sum(m[la.vl : la.vl+la.n])
+	vb := sum(m[la.vl : la.vl+la.currentValues])
 	heads, longest := 0, 0
-	for _, rl := range m[la.kl : la.kl+la.n] {
+	for _, rl := range m[la.kl : la.kl+la.currentValues] {
 		if rl != Further {
 			heads++
 			longest = max(longest, int(rl))
@@ -509,7 +509,7 @@ func (p *Str) Widen(rest, val []byte) *Str {
 	if longest+d > MaxRemainder {
 		return nil
 	}
-	nk := Header + mis + 3*(la.n+1) + (e - la.rem) + heads*d + len(newRem)
+	nk := Header + mis + 3*(la.currentValues+1) + (e - la.rem) + heads*d + len(newRem)
 	c := classFor(nk + vb + len(val))
 	if c < 0 {
 		return nil
@@ -517,14 +517,14 @@ func (p *Str) Widen(rest, val []byte) *Str {
 	first := len(newRem) == 0 || newRem[0] < p.CP()[mis]
 	at := 0
 	if !first {
-		at = la.n
+		at = la.currentValues
 	}
 	q := (*Str)(allocRaw(c))
-	q.setHead(true, c, la.n+1, mis, 0)
+	q.setHead(true, c, la.currentValues+1, mis, 0)
 	out := q.mem()
 	copy(out[Header:], m[Header:Header+mis])
 	nl := q.lay(true)
-	for i := range la.n {
+	for i := range la.currentValues {
 		rl := m[la.kl+i]
 		if rl != Further {
 			rl += uint8(d)
@@ -541,7 +541,7 @@ func (p *Str) Widen(rest, val []byte) *Str {
 	}
 	extra := p.CP()[mis:]
 	src := la.rem
-	for i := range la.n {
+	for i := range la.currentValues {
 		if rl := int(m[la.kl+i]); rl != Further {
 			start := off
 			off += copy(out[off:], extra)

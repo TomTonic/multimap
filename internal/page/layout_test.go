@@ -19,12 +19,12 @@ var exampleKeys = bs("Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofstras
 // TestPageLayout pins the bytes of the pages of the example of the design note.
 //
 // The layout is what the tree and every later change of the page rely on: the head of four bytes
-// (type, the length of the key part, the number of slots, rawWords), the key part right behind it,
+// (type, the length of the key part, the number of values, rawWords), the key part right behind it,
 // then, as far as the page has them, the key lengths with 255 for a further value of the key before
 // it, the fingerprints of the remainders (0 for a further value), the value lengths, the remainders, free
 // bytes, and the values, which end with the object.
 //
-// Expected: the six slots of the example are the 128-byte page of strings (69 bytes, the fingerprints made
+// Expected: the six values of the example are the 128-byte page of strings (69 bytes, the fingerprints made
 // the page larger than class 64) and the 128-byte page of `uint64` with the bytes of the design note; a key with three values is the 32-byte page of
 // strings and the 64-byte page of `uint64` in the one-key form, without key lengths; a page of
 // pointers has rawWords of its byte area.
@@ -120,7 +120,7 @@ func TestPageLayout(t *testing.T) {
 // TestPageLimits shows what the page refuses and where its limits are.
 //
 // The tree asks the page for entries of a subtree and must be told when they do not make a page: no
-// entry, too many slots, a remainder, a value or a key part beyond the limits, content beyond 512 bytes.
+// entry, too many values, a remainder, a value or a key part beyond the limits, content beyond 512 bytes.
 //
 // Expected: nil for those, a page at the borders (254 bytes of remainder and of value are taken), and the
 // page of a type without a Fixed page is nil.
@@ -132,7 +132,7 @@ func TestPageLimits(t *testing.T) {
 		big[i], vals[i] = []byte{'k'}, []byte{'v'}
 	}
 	if BuildStrings(nil, nil) != nil || BuildStrings(bs("a"), nil) != nil || BuildStrings(big, vals) != nil || BuildFixed(big, one) != nil || BuildFixed[uint64](nil, nil) != nil {
-		t.Error("no entry, another number of values, or 256 slots gave a page")
+		t.Error("no entry, another number of values, or 256 values gave a page")
 	}
 	if BuildStrings(bs("a"), bs(strings.Repeat("v", MaxValue+1))) != nil || BuildStrings(bs("a"), bs(strings.Repeat("v", MaxValue))) == nil {
 		t.Error("value of 255 or 254 bytes")
@@ -292,7 +292,7 @@ func TestPageSkipAndPrepend(t *testing.T) {
 // them all.
 //
 // The tree decides on a removal whether one key is left or at most two; for a page of one value each the scan
-// stops after the third slot.
+// stops after the third value.
 //
 // Expected: for pages of 1, 2, 3 and 5 keys, some with several values, KeysUpTo(limit) is the smaller of the
 // number of keys and limit, and Keys is the number of keys.
@@ -468,8 +468,8 @@ func TestPageLookupsAndRemovals(t *testing.T) {
 // building anything; a difference to the real page would make it build pages that do not fit, or refuse
 // pages that do.
 //
-// Expected: for the six slots of the example, NeedStrings and NeedFixed are the bytes the pages use (the key area
-// and the values), 69 and 87: three bytes a slot of Str (key length, fingerprint, value length) and two of Fixed.
+// Expected: for the six values of the example, NeedStrings and NeedFixed are the bytes the pages use (the key area
+// and the values), 69 and 87: three bytes a value of Str (key length, fingerprint, value length) and two of Fixed.
 func TestPageNeed(t *testing.T) {
 	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
 	f := BuildFixed(exampleKeys, []uint64{7, 1, 2, 5, 9, 4})
@@ -516,15 +516,15 @@ func TestPageNew(t *testing.T) {
 	}
 }
 
-// TestPageSlotLimit shows that a page of tiny values stops at 255 slots.
+// TestPageValueLimit shows that a page of tiny values stops at 255 values.
 //
-// A user who gives one key many values of one byte each fills a page with 255 slots (the head holds n
+// A user who gives one key many values of one byte each fills a page with 255 values (the head holds n
 // in one byte) before the 512 bytes are used up, and has to be told that the page is full, not get
 // a corrupt one; a value that is already there is still found.
 //
 // Expected: the 256th value of a key in a Fixed page of bytes is refused with Full, the page keeps its 255
 // values, and Add of one of them answers Present.
-func TestPageSlotLimit(t *testing.T) {
+func TestPageValueLimit(t *testing.T) {
 	p := NewFixed[uint8](bs("key")[0], 0, false)
 	if p == nil {
 		t.Fatal("no page for the first value")
@@ -549,7 +549,7 @@ func TestPageSlotLimit(t *testing.T) {
 // A user who lists the values of a key that has its own page gets them in the order they came in, and
 // can stop the listing after any value; the tree does this for every key of a scan.
 //
-// Expected: EachSingle of a Str and of a Fixed page of one key calls fn with each value in slot order,
+// Expected: EachSingle of a Str and of a Fixed page of one key calls fn with each value in value order,
 // stops when fn says so (and says so), and runs to completion otherwise.
 func TestPageEachSingle(t *testing.T) {
 	sp := BuildStrings(bs("key", "key", "key"), bs("a", "bcd", "ef"))
@@ -685,15 +685,15 @@ func TestPageCompareOrdersAsBytes(t *testing.T) {
 	p := BuildFixed(rests, vals)
 	m, la := p.mem(), p.lay(false)
 	for i, r := range rests {
-		if pos, _, found := find(m, la.kl, la.n, la.rem, r[la.l:]); !found || pos != i {
-			t.Errorf("key of %d bytes: slot %d, found %v", len(r), pos, found)
+		if pos, _, found := find(m, la.kl, la.currentValues, la.rem, r[la.l:]); !found || pos != i {
+			t.Errorf("key of %d bytes: idx %d, found %v", len(r), pos, found)
 		}
-		// the place of the key that follows it (in front of it, if the key is not there): its own slot
-		if pos, _ := locate(m, la.kl, la.n, la.rem, r[la.l:]); pos != i {
-			t.Errorf("place of the key of %d bytes: slot %d", len(r), pos)
+		// the place of the key that follows it (in front of it, if the key is not there): its own value
+		if pos, _ := locate(m, la.kl, la.currentValues, la.rem, r[la.l:]); pos != i {
+			t.Errorf("place of the key of %d bytes: idx %d", len(r), pos)
 		}
 	}
-	if pos, off := locate(m, la.kl, la.n, la.rem, []byte("kz")[la.l:]); pos != len(rests) || off != p.Used() {
-		t.Errorf("a key after all: slot %d, offset %d", pos, off)
+	if pos, off := locate(m, la.kl, la.currentValues, la.rem, []byte("kz")[la.l:]); pos != len(rests) || off != p.Used() {
+		t.Errorf("a key after all: idx %d, offset %d", pos, off)
 	}
 }

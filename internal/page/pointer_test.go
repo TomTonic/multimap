@@ -140,9 +140,9 @@ func ptrDeref(t *testing.T, p *Fixed, key string, id int) *ptrRec {
 //
 // A user whose map holds *Record values adds and removes values all the time; a typed object cannot change
 // its type, so the page keeps its byte area (rawWords) for its life and a change that fits the byte area and the
-// free slots happens in place, which saves an allocation of up to 512 bytes and the work of the collector.
+// free values happens in place, which saves an allocation of up to 512 bytes and the work of the collector.
 //
-// Expected: for a page of 37 bytes of keys (5 words of byte area, a class of 128 bytes with free slots) a further
+// Expected: for a page of 37 bytes of keys (5 words of byte area, a class of 128 bytes with free values) a further
 // value of a key, the removal of a value, and a key whose remainder fits the slack of the last word are in place; a key
 // that does not fit the byte area is a new object with a larger byte area, and the keys and values of the new
 // object are all there.

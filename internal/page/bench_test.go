@@ -126,7 +126,7 @@ func BenchmarkFixed(b *testing.B) {
 }
 
 // BenchmarkFixedPointers is BenchmarkFixed for values that are pointers: a page of pointers changes in
-// place while the byte area and the free slots hold (docs/redesign/step5-one-page.md).
+// place while the byte area and the free values hold (docs/redesign/step5-one-page.md).
 func BenchmarkFixedPointers(b *testing.B) {
 	for _, n := range []int{3, 7, 20} {
 		keys, _ := pageSet(n)
@@ -179,7 +179,7 @@ func BenchmarkFixedScan(b *testing.B) {
 			for i := range b.N {
 				p := pages[i&255]
 				p.Each(func(rem []byte, v uint64, _ bool) bool { sum += v + uint64(len(rem)); return true })
-				values += int(p.n)
+				values += int(p.currentValues)
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(values), "ns/value")
 			sink = sum
@@ -201,7 +201,7 @@ func BenchmarkPageScan(b *testing.B) {
 			for i := range b.N {
 				p := pages[i&255]
 				p.Each(func(rem, v []byte, _ bool) bool { sum += uint64(len(v) + len(rem)); return true })
-				values += int(p.n)
+				values += int(p.currentValues)
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(values), "ns/value")
 			sink = sum

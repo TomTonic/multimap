@@ -70,12 +70,12 @@ func TestFindKeysWithTheSameFingerprint(t *testing.T) {
 	p, in, e := pageWithCollisions(t)
 	m, la := p.mem(), p.lay(true)
 	if m[la.fp] != m[la.fp+11] || m[la.fp] != m[la.fp+20] || m[la.fp] != Fingerprint(e) {
-		t.Fatalf("setup: the fingerprints of the slots 0, 11 and 20 are %d, %d, %d; of e %d", m[la.fp], m[la.fp+11], m[la.fp+20], Fingerprint(e))
+		t.Fatalf("setup: the fingerprints of the values 0, 11 and 20 are %d, %d, %d; of e %d", m[la.fp], m[la.fp+11], m[la.fp+20], Fingerprint(e))
 	}
 	for i, r := range in {
-		pos, off, ok := find(m, la.kl, la.n, la.rem, r)
+		pos, off, ok := find(m, la.kl, la.currentValues, la.rem, r)
 		if !ok || pos != i || !bytes.Equal(m[off:off+len(r)], r) {
-			t.Errorf("find(%q) = %d, %d, %v; want slot %d", r, pos, off, ok, i)
+			t.Errorf("find(%q) = %d, %d, %v; want idx %d", r, pos, off, ok, i)
 		}
 		if v, ok := p.Get(append([]byte("K"), r...)); !ok || !bytes.Equal(v, r) {
 			t.Errorf("Get(K%q) = %q, %v", r, v, ok)
@@ -88,7 +88,7 @@ func TestFindKeysWithTheSameFingerprint(t *testing.T) {
 	if _, ok := p.Get(append([]byte("K"), e...)); ok {
 		t.Errorf("Get found %q, which is not in the page but has the fingerprint of three keys that are", e)
 	}
-	if _, _, ok := find(m, la.kl, la.n, la.rem, e); ok {
+	if _, _, ok := find(m, la.kl, la.currentValues, la.rem, e); ok {
 		t.Errorf("find found %q", e)
 	}
 	for _, r := range []string{"", "b", "bx", "bxyz", strings.Repeat("b", 300)} {
@@ -129,15 +129,15 @@ func TestFindKeysWithTheSameFingerprint(t *testing.T) {
 	}
 }
 
-// TestFindFurtherValues shows that a key with several values is found by its first slot, and that the fingerprint
+// TestFindFurtherValues shows that a key with several values is found by its first value, and that the fingerprint
 // of a further value cannot be taken for a key.
 //
-// A user adds several values to a key; the page keeps the key once and marks the further slots, which have no
+// A user adds several values to a key; the page keeps the key once and marks the further values, which have no
 // remainder and the fingerprint 0, so a key whose own fingerprint is 0 must not find them.
 //
 // Expected: in a page whose second key has three values, the first and the second key are found with the right
 // values in the right order; a remainder with the fingerprint 0 that is not in the page is not found, and one
-// that is in the page (added with that fingerprint) is found next to the slots with Further; after a Remove of
+// that is in the page (added with that fingerprint) is found next to the values with Further; after a Remove of
 // the first value of the second key, the next value takes its place and the key is still found.
 func TestFindFurtherValues(t *testing.T) {
 	var zero []byte // a remainder of three bytes with the fingerprint 0
@@ -152,7 +152,7 @@ func TestFindFurtherValues(t *testing.T) {
 	}
 	p := BuildStrings(bs("Ka", "Kb", "Kb", "Kb", "Kd"), bs("1", "2", "3", "4", "5"))
 	if _, ok := p.Get(append([]byte("K"), zero...)); ok {
-		t.Error("a remainder with the fingerprint 0 found a slot with Further")
+		t.Error("a remainder with the fingerprint 0 found a idx with Further")
 	}
 	var vs []string
 	p.EachValue([]byte("Kb"), func(v []byte) bool { vs = append(vs, string(v)); return true })
