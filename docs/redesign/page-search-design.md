@@ -204,7 +204,8 @@ instead of `locate`, then the run of the key (`runEnd`) as today.
   fingerprint matches a `Further` slot's 0 is not confused with it; groups of more than 8 slots (a page of 20 keys) with matches in the second
   and third word.
 - `Widen`: after a widen every key of the page is still found (its fingerprint was recomputed).
-- The model test (`TestPageAgainstModel` and its fuzz test `FuzzPage…`, run the fuzz for 60 s) must pass unchanged: they drive every
+- `TestPageNeed` (layout_test.go) checks `NeedStrings`/`NeedFixed`: update its expected numbers by n.
+- The model test (`TestPageAgainstModel` and its fuzz test `FuzzPage` in model_test.go, run with `go test -run ^$ -fuzz FuzzPage -fuzztime 60s ./internal/page`) must pass unchanged: they drive every
   operation through the new search.
 - The tree (`internal/art`): tests that build pages of an exact size (e.g. values of 237 bytes so that a page is full, the tests of
   `mergeFill`) may need other numbers, since a page now needs n more bytes; change the numbers, not the logic, and list each such change in
