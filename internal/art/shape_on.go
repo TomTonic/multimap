@@ -97,6 +97,7 @@ func (m *Map[T]) Shape() string {
 	b.WriteString(sel)
 	b.WriteString(m.fingerprints())
 	b.WriteString(m.valueCoding())
+	b.WriteString(m.cheapKeys())
 	return b.String()
 }
 
@@ -309,5 +310,80 @@ func (m *Map[T]) valueCoding() string {
 	fmt.Fprintf(&b, "  bytes a key, key lengths: with Further (n) %.3f, lengths and counts per key (2K) %.3f; pages where Further is smaller %.1f %%, equal %.1f %%\n",
 		sl/k, 2.0, 100*float64(ffWins)/float64(pages), 100*float64(tie)/float64(pages))
 	fmt.Fprintf(&b, "  bytes a key, key lengths and fingerprints: per slot both (today, 2n) %.3f, Further and a fingerprint per key (n+K) %.3f, all per key (3K) %.3f\n", 2*sl/k, sl/k+1, 3.0)
+	return b.String()
+}
+
+// cheapKeys counts, over the keys of every multi-key page, how many other keys of the same page agree with a key in
+// a signature that needs no hash: (length of the remainder, first byte), (length, first byte, last byte), (length,
+// first two bytes). Like the fingerprint statistics (a fingerprint of 8 bits gives 0.04 a key on street): the
+// compares a lookup would make in vain.
+func (m *Map[T]) cheapKeys() string {
+	names := []string{"length, first byte", "length, first and last byte", "length, first two bytes"}
+	sig := func(r []byte, i int) uint32 {
+		get := func(j int) uint32 {
+			if j < 0 || j >= len(r) {
+				return 0x100 // no byte
+			}
+			return uint32(r[j])
+		}
+		switch i {
+		case 0:
+			return uint32(len(r))<<9 | get(0)
+		case 1:
+			return (uint32(len(r))<<9|get(0))<<9 | get(len(r)-1)
+		}
+		return (uint32(len(r))<<9|get(0))<<9 | get(1)
+	}
+	var others, hit [3]float64
+	var worst [3]int
+	keys := 0
+	var visit func(n *header)
+	visit = func(n *header) {
+		if isPage(n.objType) {
+			if !isMultiKey(n.objType) {
+				return
+			}
+			var rems [][]byte
+			each := func(rem []byte, first bool) {
+				if first {
+					rems = append(rems, rem)
+				}
+			}
+			if m.flat == 3 {
+				asMKStr(n).Each(func(rem, _ []byte, first bool) bool { each(rem, first); return true })
+			} else {
+				asMKFix(n).Each(func(rem []byte, _ T, first bool) bool { each(rem, first); return true })
+			}
+			keys += len(rems)
+			for i := range 3 {
+				for a := range rems {
+					same := 0
+					for c := range rems {
+						if c != a && sig(rems[a], i) == sig(rems[c], i) {
+							same++
+						}
+					}
+					others[i] += float64(same)
+					if same > 0 {
+						hit[i]++
+					}
+					worst[i] = max(worst[i], same)
+				}
+			}
+			return
+		}
+		if e := endPageOf(n); e != nil {
+			visit(singleKeyHdr(e))
+		}
+		eachByteNode(n, func(_ byte, c *header) { visit(c) })
+	}
+	visit(m.t.root)
+	if keys == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, name := range names {
+		fmt.Fprintf(&b, "signature %s: other keys of the page with the same signature %.4f a key, keys with one or more %.2f %%, most %d\n", name, others[i]/float64(keys), 100*hit[i]/float64(keys), worst[i])
+	}
 	return b.String()
 }

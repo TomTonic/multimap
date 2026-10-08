@@ -286,3 +286,54 @@ array is indexed by slot), where counts need a prefix sum for it. A fingerprint 
 start at 11+K), so one byte of the page must hold K, and a match at key k must be mapped to a slot (one pass over the key lengths
 counting keys, the pass that sums the lengths for the offset anyway). Not built: the fingerprint has not yet paid in speed (see
 "Option 2 result").
+
+---
+
+## Search without a hash: (length, first byte) with SWAR (2026-10-08, thought through on the user's question; not built)
+
+**Why a hash is not needed.** Collisions within a page of another key's signature, single-value profile, 65,536 keys (`cheapKeys` in
+`shape_on.go`, other keys of the page with the same signature a key; "≥1" is the share of keys that have one or more):
+
+| keys | fingerprint, 8 bits | length + first byte | length + first and last byte | length + first two bytes |
+|---|--:|--:|--:|--:|
+| street (real) | 0.041 (4.0 % ≥1) | 0.360 (23.4 %) | 0.093 (7.6 %) | 0.178 (12.3 %) |
+| dirs (real) | 0.044 (4.0 %) | 0.332 (17.2 %) | 0.332 (all end in `/`) | 0.286 (14.2 %) |
+| path (real keys) | 0.034 | 0.330 (15.9 %) | 0.269 | 0.269 |
+| url | 0.016 | 0.071 | 0.012 | 0.050 |
+| u64 | 0.006 | 0.004 | 0.000 | 0.000 |
+| str / uuid / email (generated) | 0.058 / 0.009 / 0.015 | 0.112 / 0.120 / 0.011 | 0.010 / 0.006 / 0.005 | 0.022 / 0.007 / 0.000 |
+
+A false candidate costs one failed compare (about 2 ns); 0.36 of them (street) cost less than one hash (4 ns at best, 8.6 ns as built:
+`Fingerprint` of 7 bytes measured alone, 6.0 ns with the block built in registers, 4.1 ns the two `wh64` alone).
+
+**Kernel measured alone** (scratch benchmark, not in the repository; `internal/page`, a page of K street-like remainders of 8 to
+11 bytes with 6 first letters, 65,536 random lookups of present keys, ns a lookup, medians of 3, WSL):
+
+| K | `locate` (today's order search) | hash + `Index8` (as committed) | SWAR on first byte and length, both lists | SWAR on first byte, length per candidate |
+|--:|--:|--:|--:|--:|
+| 4 | 12.0 | 19.9 | **9.9** | 10.3 |
+| 7 | 15.3 | 22.4 | **11.2** | 13.1 |
+| 12 | 19.4 | 25.4 | **13.8** | 15.7 |
+| 16 | 21.6 | 26.2 | **17.7** | 19.9 |
+
+So the hash search is slower than `locate` in the kernel by 7 ns, as in the lookup probe, and the hash-free SWAR search on both
+lists is 2 to 6 ns faster than `locate`. Of a lookup of 57 ns on street (4.9 nodes on the way) that is at most 4 to 10 %: the page
+search is a part of the lookup, the descent is the larger one.
+
+**Layout that follows (smallest change from the committed one).** The list of fingerprints keeps its place and its length (one byte for
+every value, 0 for a continuation); the byte is the first byte of the remainder (0 for the empty remainder) instead of the hash. The
+key lengths are the second list, parallel to it, and a continuation's `Further` (255) is never a length searched for. The search is
+`zero bytes of (list ^ first) & zero bytes of (key lengths ^ length)` per eight values, exact (no borrow false positives), the lowest set
+byte is the candidate; the offset of its remainder is the byte sum of the key lengths before it, less 255 for each `Further`
+(`sum8(w) - 255 * count of FF bytes`); then one compare of the remainder. Nothing else changes: no byte for the number of keys, no
+change of the head, `Fingerprint` and `wh64` go.
+
+**The "simple way" (a byte for the number of keys K, lists per key).** It saves n-K bytes a page (0 for single-value, 0.7 B a key
+on street natural, 1.2 on dirs natural) and costs a byte a page and a mapping from the key's index to its value (a pass over the key
+lengths counting keys, unless the page has no continuation, V = K, where they are the same). The lists are then no longer parallel
+for pages with continuations. Not now; it is a memory optimization of 1 to 2 %.
+
+**Prediction for the hash-free search** (lookup probe, ns, today → predicted, `main`): u64 single-value 4,096 33.5 → 28 to 31 (17);
+street 57.8 → 52 to 55 (47); dirs 87.4 → 82 to 86 (75). The ceiling is the share of the page search in a lookup, about a third on
+street: even a free search would not reach `main`. Writes: the add of a new key shifts the same lists as the committed layout, no hash:
+better than the committed layout, about as `locate`. Memory: as the committed layout (+1.5 to +2.9 B a key against 5a63bd0).
