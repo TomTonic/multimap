@@ -255,3 +255,34 @@ resp. `-ref 7b8a8d8`, run through a `.cmd` file started with `powershell.exe Sta
 3. `find`, used by `Get`, `EachValue`, `Add`, `Remove`; its tests (commit).
 4. The probes against the prediction, results written into this file under "Option 2 result" (commit), push, and report to the user before
    the PC run.
+
+---
+
+## Coding of further values and fingerprints per key (2026-10-08, on the user's question)
+
+Question: could the fingerprints start right behind the key part with one entry per key (not per slot), and is the `Further`
+(FF) coding of the key lengths worth it against "every key gets a byte with its number of values"? Measured with `Shape()`
+(`valueCoding`, tag `mkstats`) over the multi-key pages of 65,536 keys as built at 52b785c, `MKREAD=1 MKSHAPE=1`. n slots (values), K
+keys of a page; bytes a key = bytes of the lists over all keys of all multi-key pages.
+
+| keys | values | values a key | FF: key lengths n | counts: lengths + counts 2K | today kl+fp 2n | fp per key: n+K | all per key 3K |
+|---|---|--:|--:|--:|--:|--:|--:|
+| street (real keys and values) | single-value | 1.00 | 1.00 | 2.00 | 2.00 | 2.00 | 3.00 |
+| street | natural (the localities) | 1.72 | 1.72 | 2.00 | 3.45 | 2.72 | 3.00 |
+| dirs (real keys and values) | single-value | 1.00 | 1.00 | 2.00 | 2.00 | 2.00 | 3.00 |
+| dirs | natural (the file names) | 2.18 | 2.18 | 2.00 | 4.36 | 3.18 | 3.00 |
+| path (real keys, generated values) | single-value / natural | 1.00 / 2.95 | 1.00 / 2.95 | 2.00 | 2.00 / 5.90 | 2.00 / 3.95 | 3.00 |
+| url (real hosts, shaped paths; generated values) | single-value / natural | 1.00 / 2.93 | 1.00 / 2.93 | 2.00 | 2.00 / 5.86 | 2.00 / 3.93 | 3.00 |
+| u64, str, uuid, email (generated) | single-value / natural | 1.00 / 2.91 to 3.03 | 1.00 / 2.91 to 3.03 | 2.00 | 2.00 / 5.8 to 6.1 | 2.00 / 3.9 to 4.0 | 3.00 |
+
+Pages where FF is smaller than the counts (n < 2K): single-value 100 %; street natural 77 %; dirs natural 61 %; the generated
+natural profiles 33 to 37 % (equal in 11 to 13 %). The generated natural profile has 2.9 to 3.0 values a key; the two real
+profiles have 1.7 and 2.2, so the counts look better on generated keys than they are on real ones.
+
+Reading: the break-even of FF and counts is 2 values a key. With one value a key (the profile of the typical index) FF costs half;
+on street natural it is smaller too; on dirs natural the counts save 0.18 B a key. FF also keeps the slot of a match direct (the value
+array is indexed by slot), where counts need a prefix sum for it. A fingerprint per key (n+K instead of 2n) saves n-K bytes a page:
+0 for single-value, 0.72 B a key on street natural, 1.18 on dirs natural. Cost of it: K is not in the head (the lists behind it
+start at 11+K), so one byte of the page must hold K, and a match at key k must be mapped to a slot (one pass over the key lengths
+counting keys, the pass that sums the lengths for the offset anyway). Not built: the fingerprint has not yet paid in speed (see
+"Option 2 result").

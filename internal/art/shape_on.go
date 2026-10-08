@@ -4,8 +4,10 @@ package art
 
 import (
 	"fmt"
+	"math/bits"
 	"slices"
 	"strings"
+	"unsafe"
 
 	"github.com/TomTonic/multimap/internal/page"
 )
@@ -94,6 +96,7 @@ func (m *Map[T]) Shape() string {
 	b.WriteString("\n")
 	b.WriteString(sel)
 	b.WriteString(m.fingerprints())
+	b.WriteString(m.valueCoding())
 	return b.String()
 }
 
@@ -242,4 +245,69 @@ func (m *Map[T]) selectivity() string {
 	k := float64(keys)
 	return fmt.Sprintf("first bytes of the remainders in multi-key pages (%d keys in %d pages, %.1f keys a page, remainder %.1f bytes): keys sharing the first byte with a key %.2f (alone %.0f %%), the first two bytes %.2f (alone %.0f %%)\n",
 		keys, len(pageKeys), k/float64(len(pageKeys)), float64(remBytes)/k, float64(share[1])/k, 100*float64(alone[1])/k, float64(share[2])/k, 100*float64(alone[2])/k)
+}
+
+// valueCoding compares, over the multi-key pages, the bytes of the per-slot lists of the page layout with the codings
+// that count per key (docs/redesign/page-search-design.md, "Coding of further values"): with n slots and K keys in a
+// page, the key lengths with Further cost n bytes (one for every value), the key lengths and the number of values
+// of each key cost 2K; one fingerprint per slot costs n, one per key K. It also prints how many values the keys of
+// these pages have.
+func (m *Map[T]) valueCoding() string {
+	var pages, slots, keys int
+	var hist [5]int // keys with 1, 2, 3-4, 5-8, 9+ values
+	var ffWins, tie int
+	var visit func(n *header)
+	visit = func(n *header) {
+		if isPage(n.objType) {
+			if !isMultiKey(n.objType) {
+				return
+			}
+			pg := (*page.Fixed)(unsafe.Pointer(n))
+			pages++
+			slots += pg.Len()
+			keys += pg.Keys()
+			switch ff, cnt := pg.Len(), 2*pg.Keys(); {
+			case ff < cnt:
+				ffWins++
+			case ff == cnt:
+				tie++
+			}
+			run := 0
+			flush := func() {
+				if run > 0 {
+					hist[min(4, max(0, bits.Len(uint(run-1))))]++
+				}
+			}
+			each := func(first bool) {
+				if first {
+					flush()
+					run = 0
+				}
+				run++
+			}
+			if m.flat == 3 {
+				asMKStr(n).Each(func(_, _ []byte, first bool) bool { each(first); return true })
+			} else {
+				asMKFix(n).Each(func(_ []byte, _ T, first bool) bool { each(first); return true })
+			}
+			flush()
+			return
+		}
+		if e := endPageOf(n); e != nil {
+			visit(singleKeyHdr(e))
+		}
+		eachByteNode(n, func(_ byte, c *header) { visit(c) })
+	}
+	visit(m.t.root)
+	if pages == 0 {
+		return ""
+	}
+	k, sl := float64(keys), float64(slots)
+	var b strings.Builder
+	fmt.Fprintf(&b, "coding of further values, %d multi-key pages with %d keys and %d values (%.3f values a key, %.1f keys a page)\n", pages, keys, slots, sl/k, k/float64(pages))
+	fmt.Fprintf(&b, "  values a key: 1: %.1f %%, 2: %.1f %%, 3-4: %.1f %%, 5-8: %.1f %%, 9+: %.1f %%\n", 100*float64(hist[0])/k, 100*float64(hist[1])/k, 100*float64(hist[2])/k, 100*float64(hist[3])/k, 100*float64(hist[4])/k)
+	fmt.Fprintf(&b, "  bytes a key, key lengths: with Further (n) %.3f, lengths and counts per key (2K) %.3f; pages where Further is smaller %.1f %%, equal %.1f %%\n",
+		sl/k, 2.0, 100*float64(ffWins)/float64(pages), 100*float64(tie)/float64(pages))
+	fmt.Fprintf(&b, "  bytes a key, key lengths and fingerprints: per slot both (today, 2n) %.3f, Further and a fingerprint per key (n+K) %.3f, all per key (3K) %.3f\n", 2*sl/k, sl/k+1, 3.0)
+	return b.String()
 }
