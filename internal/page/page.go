@@ -39,6 +39,8 @@ package page
 
 import (
 	"unsafe"
+
+	"github.com/TomTonic/multimap/internal/swar"
 )
 
 const (
@@ -218,25 +220,76 @@ func (la *lay) keyEndFrom(m []byte, pos, off int) int {
 	return off + sum - Further*further
 }
 
-// locate returns the position (slot) of the first value of the key whose remainder is r (after the key
-// part), or of the key that would follow it, with the offset of its remainder in the object (the end of the
-// key area, if it goes at the end). Many-key form only; kl is the offset of the key lengths, n the number
-// of slots, rem the offset of the remainders.
-func locate(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
+// locate returns the position (slot) where the key whose remainder is r (after the key part) belongs in a many-key
+// page in which it is not (find said so): the first slot of the key that follows it, or n, with the offset of that
+// key's remainder in the object (the end of the key area, if it goes at the end). kl is the offset of the key
+// lengths, n the number of slots, rem the offset of the remainders.
+func locate(m []byte, kl, n, rem int, r []byte) (pos, off int) {
 	off = rem
 	pos = n
 	for i, rl := range m[kl : kl+n] {
 		if rl == Further {
 			continue
 		}
-		c := compare(m[off:off+int(rl)], r)
-		if c >= 0 {
-			pos, found = i, c == 0
+		if compare(m[off:off+int(rl)], r) >= 0 {
+			pos = i
 			break
 		}
 		off += int(rl)
 	}
-	return pos, off, found
+	return pos, off
+}
+
+// find returns the position (slot) of the first value of the key whose remainder is r (after the key part) in a
+// many-key page, with the offset of its remainder in the object, or false. kl is the offset of the key lengths, n
+// the number of slots, rem the offset of the remainders. It compares the fingerprint of r with the n fingerprints
+// of the page, eight at a time, and compares a remainder only where the fingerprint and the length are equal
+// (docs/redesign/page-search-design.md).
+func find(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
+	if len(r) > MaxRemainder { // no slot has this key length (Further is not one)
+		return 0, 0, false
+	}
+	f := Fingerprint(r)
+	fp := kl + n
+	off, at := rem, 0 // the offset of the remainder of the first slot at or after at
+	for g := 0; g < n; g += 8 {
+		w := fingerprintWord(m, fp, g, n, f)
+		for i := swar.Index8(w, f); i < 8; i = swar.Index8(w, f) {
+			slot := g + i
+			if int(m[kl+slot]) == len(r) {
+				for ; at < slot; at++ {
+					if rl := m[kl+at]; rl != Further {
+						off += int(rl)
+					}
+				}
+				if string(m[off:off+len(r)]) == string(r) {
+					return slot, off, true
+				}
+			}
+			w = w&^(0xff<<(8*i)) | uint64(^f)<<(8*i) // look past this candidate
+		}
+	}
+	return 0, 0, false
+}
+
+// fingerprintWord returns the fingerprints of the slots g to g+7 of the page m, whose fingerprint list begins at fp
+// and has n bytes, as a little-endian word; the places beyond the list hold ^f, which is not the fingerprint
+// searched for. It reads a whole word (the bytes behind the list are part of the object) unless the object ends too
+// soon.
+func fingerprintWord(m []byte, fp, g, n int, f byte) uint64 {
+	pad := uint64(^f) * 0x0101010101010101
+	if g+8 <= n {
+		return swar.Word(m[fp+g:])
+	}
+	if fp+g+8 <= len(m) {
+		keep := ^uint64(0) >> (8 * (8 - (n - g))) // the n-g bytes of the list
+		return swar.Word(m[fp+g:])&keep | pad&^keep
+	}
+	w := pad
+	for j := g; j < n; j++ {
+		w = w&^(0xff<<(8*(j-g))) | uint64(m[fp+j])<<(8*(j-g))
+	}
+	return w
 }
 
 // runEnd returns the slot after the last value of the key whose first slot is pos.

@@ -685,11 +685,15 @@ func TestPageCompareOrdersAsBytes(t *testing.T) {
 	p := BuildFixed(rests, vals)
 	m, la := p.mem(), p.lay(false)
 	for i, r := range rests {
-		if pos, _, found := locate(m, la.kl, la.n, la.rem, r[la.l:]); !found || pos != i {
+		if pos, _, found := find(m, la.kl, la.n, la.rem, r[la.l:]); !found || pos != i {
 			t.Errorf("key of %d bytes: slot %d, found %v", len(r), pos, found)
 		}
+		// the place of the key that follows it (in front of it, if the key is not there): its own slot
+		if pos, _ := locate(m, la.kl, la.n, la.rem, r[la.l:]); pos != i {
+			t.Errorf("place of the key of %d bytes: slot %d", len(r), pos)
+		}
 	}
-	if pos, _, found := locate(m, la.kl, la.n, la.rem, []byte("kz")[la.l:]); found || pos != len(rests) {
-		t.Errorf("a key after all: slot %d, found %v", pos, found)
+	if pos, off := locate(m, la.kl, la.n, la.rem, []byte("kz")[la.l:]); pos != len(rests) || off != p.Used() {
+		t.Errorf("a key after all: slot %d, offset %d", pos, off)
 	}
 }

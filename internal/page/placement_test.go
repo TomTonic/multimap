@@ -30,7 +30,7 @@ func getFront(p *Fixed, vs int, rest []byte) (uint64, bool) {
 	if lcp(m[Header:Header+l], rest) < l {
 		return 0, false
 	}
-	pos, _, found := locate(m, Header+l, n, Header+l+n, rest[l:])
+	pos, _, found := find(m, Header+l, n, Header+l+2*n, rest[l:])
 	if !found {
 		return 0, false
 	}

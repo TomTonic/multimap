@@ -149,7 +149,7 @@ func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 			return zero, false
 		}
 		var found bool
-		if pos, _, found = locate(m, Header+l, n, Header+l+2*n, rest[l:]); !found {
+		if pos, _, found = find(m, Header+l, n, Header+l+2*n, rest[l:]); !found {
 			return zero, false
 		}
 	}
@@ -171,7 +171,7 @@ func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 			return false
 		}
 		var found bool
-		if pos, _, found = locate(m, Header+l, n, Header+l+2*n, rest[l:]); !found {
+		if pos, _, found = find(m, Header+l, n, Header+l+2*n, rest[l:]); !found {
 			return false
 		}
 		for end = pos + 1; end < n && m[Header+l+end] == Further; end++ {
@@ -244,7 +244,10 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.n, la.rem, r)
+		if !found {
+			pos, off = locate(m, la.kl, la.n, la.rem, r)
+		}
 		ro, slot = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
@@ -345,7 +348,7 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.n, la.rem, r)
 		if !found {
 			return p, Absent
 		}

@@ -115,7 +115,7 @@ func (p *Str) Get(rest []byte) ([]byte, bool) {
 			return nil, false
 		}
 		var found bool
-		if pos, _, found = locate(m, Header+l, n, Header+l+3*n, rest[l:]); !found {
+		if pos, _, found = find(m, Header+l, n, Header+l+3*n, rest[l:]); !found {
 			return nil, false
 		}
 		vl += 2 * n
@@ -139,7 +139,7 @@ func (p *Str) EachValue(rest []byte, fn func(val []byte) bool) bool {
 			return false
 		}
 		var found bool
-		if pos, _, found = locate(m, Header+l, n, Header+l+3*n, rest[l:]); !found {
+		if pos, _, found = find(m, Header+l, n, Header+l+3*n, rest[l:]); !found {
 			return false
 		}
 		for end = pos + 1; end < n && m[Header+l+end] == Further; end++ {
@@ -198,7 +198,10 @@ func (p *Str) Add(rest, val []byte) (*Str, Result) {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.n, la.rem, r)
+		if !found {
+			pos, off = locate(m, la.kl, la.n, la.rem, r)
+		}
 		ro, slot = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
@@ -316,7 +319,7 @@ func (p *Str) Remove(rest, val []byte) (*Str, Removal) {
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := locate(m, la.kl, la.n, la.rem, r)
+		pos, off, found := find(m, la.kl, la.n, la.rem, r)
 		if !found {
 			return p, Absent
 		}
