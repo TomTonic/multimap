@@ -62,3 +62,9 @@ m48p eb4a574 fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values n
 # benchmark (values at the end of the object or behind the byte area; cold: 64 MiB of pages, 128-byte cache lines here).
 # A few minutes; the machine must be at rest.
 pg1 eb4a574 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
+# Experiment exp-maxkeys (2026-10-09, docs/redesign/autotune-design.md, "Experiment exp-maxkeys"): the curve of the autotune,
+# Ordered with at most 1, 2 and 4 keys a page (ordered-mk1/2/4) against today's form (ordered), main (baseline) and the
+# B-trees. One job for the whole night; the PC runs the same arguments. Start it with
+#   bench/remote/arm-run.sh --yes mx1
+# (on power; --yes answers the warnings, so nothing waits for an answer). About 4.5 to 5 hours; the Mac is free by 12:00.
+mx1 c69349e cc47992 300 -suite dev -keys u64,street,dirs,url -values natural,single-value -sizes 4096,16384,65536 -ops valuesFor,valuesBetween,churn,build -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map,ordered-mk1,ordered-mk2,ordered-mk4 -minprocs 4 -maxprocs 8
