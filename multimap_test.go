@@ -1,6 +1,7 @@
 package multimap
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -366,5 +367,22 @@ func TestRangeStopsInsideAKeyWithManyValues(t *testing.T) {
 	}
 	if n != 1 || all != 301 {
 		t.Fatalf("stopped after %d values, %d in all; want 1 and 301", n, all)
+	}
+}
+
+// TestOrderedSetMaxKeys shows that the experiment's limit of the keys per page can be set on an Ordered map.
+//
+// The bench of experiment exp-maxkeys builds maps with 1, 2 or 4 keys a page through the public type; the map must
+// work as without the limit.
+//
+// Expected: a map with every key its own page holds and finds its keys and values.
+func TestOrderedSetMaxKeys(t *testing.T) {
+	m := NewOrdered[int]()
+	m.SetMaxKeys(1)
+	for i := range 100 {
+		m.AddValue(Key(fmt.Sprint("key", i)), i)
+	}
+	if m.NumberOfKeys() != 100 || m.ValuesFor(Key("key42")).Size() != 1 {
+		t.Fatalf("keys %d", m.NumberOfKeys())
 	}
 }

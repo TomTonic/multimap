@@ -47,9 +47,10 @@ func implsFor(profile string) []string {
 	if baseKit != nil {
 		others = append(others, baseline)
 	}
+	others = append(others, mkNames...) // only if -vs names them
 	out := []string{ordered}
 	for _, b := range others {
-		if len(vsOnly) == 0 || slices.Contains(vsOnly, b) {
+		if (len(vsOnly) == 0 && mkKits[b] == nil) || slices.Contains(vsOnly, b) {
 			out = append(out, b)
 		}
 	}
@@ -73,8 +74,8 @@ type fixture struct {
 	bt      *btreeMM
 	gm      mapMM
 	bm      *btreeMap
-	base    any      // the baseline, see kit.go
-	others  []string // the candidates built besides ordered
+	kitMaps map[string]any // the candidates with a kit (the baseline, ordered-mkN), see kit.go
+	others  []string       // the candidates built besides ordered
 	// ranges of rangeKeys consecutive keys, as []byte and string views, and
 	// the ranges of the keys that start with the prefix of a random key (see
 	// keys.Prefix; text keys only)
@@ -104,7 +105,12 @@ func newFixture(kind keys.Kind, n int, profile string, impls []string, st stream
 		btreeSets: func() { f.bt = buildBtree(f.c.Keys.S, f.vals, f.offs) },
 		mapSets:   func() { f.gm = buildMap(f.c.Keys.S, f.vals, f.offs) },
 		btreeMapC: func() { f.bm = buildBtreeMap(f.c.Keys.S, f.vals, f.offs) },
-		baseline:  func() { f.base = baseKit.build(f.c.Keys.B, f.vals, f.offs) },
+	}
+	f.kitMaps = map[string]any{}
+	for _, name := range append([]string{baseline}, mkNames...) {
+		if k := kitOf(name); k != nil {
+			builds[name] = func() { f.kitMaps[name] = k.build(f.c.Keys.B, f.vals, f.offs) }
+		}
 	}
 	f.others = slices.DeleteFunc(slices.Clone(impls), func(s string) bool { return s == ordered })
 	order := append([]string(nil), impls...)

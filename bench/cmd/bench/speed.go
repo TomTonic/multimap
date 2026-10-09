@@ -238,7 +238,7 @@ func (f *fixture) pointSum(impl string, i int) uint64 {
 		v, _ := f.bm.Get(s)
 		return checkWeigh(v)
 	}
-	return baseKit.sum(f.base, k)
+	return kitOf(impl).sum(f.kitMaps[impl], k)
 }
 
 // rangeSum returns the sum of the values of the keys in [from[i], to[i]] in
@@ -254,7 +254,7 @@ func (f *fixture) rangeSum(impl string, from, to keys.Set, i int) uint64 {
 	case btreeMapC:
 		return btreeMapRangeSum(f.bm, from.S[i], to.S[i])
 	}
-	return baseKit.rangeSum(f.base, from.B[i], to.B[i])
+	return kitOf(impl).rangeSum(f.kitMaps[impl], from.B[i], to.B[i])
 }
 
 // verifyBuild makes sure the build stream leaves both candidates with
@@ -307,7 +307,8 @@ func (f *fixture) inspect(impl string, m any) (int, func(i int) uint64) {
 		b := m.(*btreeMap)
 		return b.Len(), func(i int) uint64 { v, _ := b.Get(ks[i]); return checkWeigh(v) }
 	}
-	return baseKit.keys(m), func(i int) uint64 { return baseKit.sum(m, kb[i]) }
+	k := kitOf(impl)
+	return k.keys(m), func(i int) uint64 { return k.sum(m, kb[i]) }
 }
 
 func sum(s func(func(V) bool)) uint64 {

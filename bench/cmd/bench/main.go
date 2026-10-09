@@ -172,7 +172,7 @@ func (c config) stream() stream { return stream{c.ratio, c.permChurn} }
 func (c *config) validate() error {
 	for _, v := range vsOnly {
 		switch {
-		case !slices.Contains([]string{hashed, btreeSets, mapSets, btreeMapC, baseline}, v):
+		case !slices.Contains(append([]string{hashed, btreeSets, mapSets, btreeMapC, baseline}, mkNames...), v):
 			return fmt.Errorf("-vs: unknown candidate %q", v)
 		case v == baseline && baseKit == nil:
 			return fmt.Errorf("-vs baseline: build the bench with -tags baseline after go run ./cmd/mkbaseline")

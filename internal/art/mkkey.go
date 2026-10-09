@@ -97,6 +97,9 @@ func (m *Map[T]) onePage(it *item[T]) *singleKeyHead {
 // do not fit, or an entry or a value is beyond a limit of the page.
 func (m *Map[T]) pageOf(items []item[T]) *header {
 	n := len(items)
+	if m.maxKeys > 0 && n > m.maxKeys {
+		return nil
+	}
 	cp := min(swar.Lcp(items[0].rest, items[n-1].rest), page.MaxKeyPart)
 	slots, rem, vals := 0, -n*cp, 0
 	for i := range items {
@@ -267,6 +270,10 @@ func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **heade
 	rest := key[pathLen:]
 	var q *header
 	var res page.Result
+	if m.atKeyLimit(n) && !m.pageHas(n, pathLen, key) { // a new key for a page that holds maxKeys keys: it bursts
+		m.burst(loc, n, key, pathLen, true)
+		return nil
+	}
 	if m.flat == 3 {
 		p := asMKStr(n)
 		if mis := p.Match(rest); mis < p.PrefixLen() {
@@ -291,15 +298,25 @@ func (m *Map[T]) reach(loc **header, n *header, key []byte, pathLen int) **heade
 		ev(evAddedValue, 1)
 		*loc = q
 	case page.Full: // the page bursts
-		fresh := !m.pageHas(n, pathLen, key)
-		items := m.itemsWithNew(n, rest)
-		ev(evBurst, len(items))
-		*loc = m.build(items, pathLen)
-		if fresh {
-			m.t.size++
-		}
+		m.burst(loc, n, key, pathLen, !m.pageHas(n, pathLen, key))
 	}
 	return nil
+}
+
+// burst replaces multi-key page n by the subtree of its entries and the new value key -> cur (fresh: of a key the
+// page does not hold).
+func (m *Map[T]) burst(loc **header, n *header, key []byte, pathLen int, fresh bool) {
+	items := m.itemsWithNew(n, key[pathLen:])
+	ev(evBurst, len(items))
+	*loc = m.build(items, pathLen)
+	if fresh {
+		m.t.size++
+	}
+}
+
+// atKeyLimit reports whether multi-key page n holds maxKeys keys, the most a page may hold (never without a limit).
+func (m *Map[T]) atKeyLimit(n *header) bool {
+	return m.maxKeys > 0 && (*page.Fixed)(unsafe.Pointer(n)).KeysUpTo(m.maxKeys) >= m.maxKeys
 }
 
 // itemsWithNew returns the entries of multi-key page n and the new value rest -> cur, in key
@@ -328,6 +345,9 @@ func (m *Map[T]) itemsWithNew(n *header, rest []byte) []item[T] {
 // a shorter common prefix (Widen); if not, a byte node goes above the page (abovePage).
 func (m *Map[T]) outside(loc **header, n *header, key []byte, pathLen, mis int) **header {
 	rest := key[pathLen:]
+	if m.atKeyLimit(n) {
+		return m.abovePage(loc, n, key, pathLen, mis)
+	}
 	var q *header
 	if m.flat == 3 {
 		if p := asMKStr(n).Widen(rest, view(strOf(m.cur))); p != nil {
@@ -551,7 +571,7 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 		collect(0, singleKeyHdr(e))
 	}
 	eachByteNode(n, func(_ byte, c *header) { collect(1, c) })
-	if !ok || keys < 2 {
+	if !ok || keys < 2 || (m.maxKeys > 0 && 2*keys > m.maxKeys) { // the hysteresis of mergeFill, in keys
 		return false
 	}
 	cp := min(len(pre), page.MaxKeyPart)

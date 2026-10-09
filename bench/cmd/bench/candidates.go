@@ -47,8 +47,6 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			}
 			sink += acc
 		}
-	case baseline:
-		return baseKit.valuesFor(f.base, p)
 	case hashed:
 		m := f.hsh
 		return func(n uint64) {
@@ -108,6 +106,9 @@ func (f *fixture) valuesFor(impl string) func(uint64) {
 			sink += acc
 		}
 	}
+	if k := kitOf(impl); k != nil {
+		return k.valuesFor(f.kitMaps[impl], p)
+	}
 	return nil
 }
 
@@ -131,8 +132,6 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 			}
 			sink += acc
 		}
-	case baseline:
-		return baseKit.between(f.base, from, to)
 	case hashed:
 		m := f.hsh
 		return func(n uint64) {
@@ -183,6 +182,9 @@ func (f *fixture) valuesBetween(impl string, from, to keys.Set) func(uint64) {
 			}
 			sink += acc
 		}
+	}
+	if k := kitOf(impl); k != nil {
+		return k.between(f.kitMaps[impl], from, to)
 	}
 	return nil
 }

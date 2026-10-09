@@ -19,6 +19,10 @@ type Map[T comparable] struct {
 	ptr  bool // the values are a word with a pointer: the multi-key pages of fixed-size values are typed objects (page.Fixed)
 	cur  T    // the value of the Add in progress, for pair and reach of mkkey.go
 
+	// maxKeys is the most keys a page may hold, 0 for no limit but the page's own (experiment exp-maxkeys, the curve
+	// of the autotune: docs/redesign/autotune-design.md). 1 is the form of E1: no multi-key pages at all.
+	maxKeys int
+
 	scrRests, scrVals [][]byte // scratch of pageOf, reused so that a burst allocates only its pages
 	scrT              []T
 }
@@ -36,9 +40,13 @@ func (m *Map[T]) decide() {
 	default:
 		m.flat = -1
 	}
-	m.mk = m.flat == 3 || (m.flat == 1 && page.Supported[T]())
+	m.mk = (m.flat == 3 || (m.flat == 1 && page.Supported[T]())) && m.maxKeys != 1
 	m.ptr = m.flat == 1 && page.HoldsPointers[T]()
 }
+
+// SetMaxKeys sets the most keys a page may hold (0: no limit but the page's own; 1: every key its own page). It must
+// be called before the first Add. Experiment exp-maxkeys only.
+func (m *Map[T]) SetMaxKeys(k int) { m.maxKeys = k }
 
 // Len returns the number of keys.
 func (m *Map[T]) Len() int { return m.t.Len() }

@@ -150,9 +150,11 @@ func (f *fixture) structure(impl string) workload.Structure[any] {
 				}
 			}
 		}
-	case baseline:
-		s.New = baseKit.empty
-		s.Apply = func(a any, run []workload.Op) { baseKit.apply(a, kb, p.key, p.val, run) }
+	default:
+		if k := kitOf(impl); k != nil {
+			s.New = k.empty
+			s.Apply = func(a any, run []workload.Op) { k.apply(a, kb, p.key, p.val, run) }
+		}
 	}
 	return s
 }

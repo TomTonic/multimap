@@ -45,6 +45,11 @@ func (m *Ordered[T]) ContainsKey(key Key) bool { return m.m.Has(key) }
 // NumberOfKeys returns the number of keys.
 func (m *Ordered[T]) NumberOfKeys() uint64 { return uint64(m.m.Len()) }
 
+// SetMaxKeys sets the most keys a page of m may hold: 0 for no limit but the page's own (the default), 1 for every
+// key its own page. It must be called before the first value is added. Experiment exp-maxkeys only (the curve of the
+// autotune of docs/redesign/autotune-design.md); not part of the API.
+func (m *Ordered[T]) SetMaxKeys(k int) { m.m.SetMaxKeys(k) }
+
 // ValuesFor returns a copy of the values of key; empty if key is absent.
 func (m *Ordered[T]) ValuesFor(key Key) *set3.Set3[T] { return collect(m.ValuesForSeq(key)) }
 
