@@ -124,8 +124,8 @@ derived from the pairs ordered/main and ordered/variant. Many cells stopped at 8
 - memory: mk1 about twice ordered (single-value 2.2 to 2.5 times, natural 1.2 to 1.65 times), every variant below `main` (met); mk4 and
   mk2 as predicted on street, more on u64.
 - the band: every variant beats the B-trees in point queries and in the writes of the natural profile (met); **single-value writes are
-  not in the band at small sizes, with any variant**: against btree-map, churn at 4K ordered 0.88 to 1.01 and mk1 0.88 to 1.01, build at
-  4K ordered 0.77 to 0.94 and mk1 0.88 to 0.99 (dirs and url lose with both); at 65K ordered wins (1.05 to 1.17), mk1 loses on dirs (0.91).
+  not in the band at small sizes, with any variant**: against btree-map (PC), churn at 4K ordered 0.88 to 1.01 and mk1 0.88 to 1.07, build at
+  4K ordered 0.77 to 0.94 and mk1 0.88 to 1.09 (dirs loses with both, url with ordered); at 65K ordered 1.00 to 1.27, mk1 loses on dirs (0.91).
 
 **What follows** (for the decision with the user):
 1. Limits between 1 and the page's own are never the best choice for any operation at any size: the autotune is a **switch** between
