@@ -17,6 +17,10 @@
   children leave the depth as it is; packing cuts objects a lookup, its maintenance is open). The descent resolved to instructions
   (descent-analysis.md): 64 to 79 % of `Tree.find` waits for dependent lines. Next (user): the write path of small maps, starting
   with a free list for pages.
+- Evening: write path counted (write-path-analysis.md): futile merge tries (11 to 16 % of a churn), the pendulum of the page forms
+  (pairs could be made in place in 70 to 99 %), a free list worth at most about 5 % of a churn. M1: c1 (the state before step 6 with
+  links, `bench/results-layout/c1-m1/matrix.md`) and lp1 (the descent by line: no second-line wait on the M1, the switch a quarter of
+  find). Next: the decision paper on the candidates.
 
 ## 2026-10-06 night: step 5.5a, 5.5b done; stopped for the user ([step5-one-page.md](step5-one-page.md), sections 6.1 and 6.2)
 

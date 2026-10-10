@@ -82,3 +82,25 @@ the byte nodes a lookup passes by class, and how many of them read the child slo
 On 64-byte lines 40 to 90 % of the nodes passed read a second line (all N26 and N58 visits but a few, N12 from the fifth child);
 on 128-byte lines a third to two thirds as many remain. The lever exists on both machines, smaller on the M1; the M1's profile
 (by source line, so that it reads on arm64) is still to be taken.
+
+## The M1 (job lp1, 2026-10-10 21:16 to 21:27)
+
+Lookup profiles of 10 seconds on the M1 (128-byte lines), the six structured kinds but links (its cache was not found by the job),
+single-value, 4K/16K/64K, the ordered map alone, code `a0e75c5` (the library of `6e76275` with the counters of the evening, which
+cost nothing without mkstats). The probe printed the source lines with the most own time (`m1-lp1.log`); `m1lines.py` sums the lines
+of `Tree.find` and what is inlined into it over the kinds (`m1-lines.txt`). Lines, not instructions: on arm64 the wait for a load
+shows on the line of the first instruction that uses it, which may be the next line, so the split is rougher than on the PC.
+
+`find` is 41, 49 and 50 % of a lookup (PC: 40, 53, 57). Inside it (% of `find`, 4K / 16K / 64K):
+
+| line | what | M1 | PC (same place) |
+|---|---|--:|--:|
+| node.go:131 (`isSingleKey`), lookup.go:34/35/38/39/43 | the type byte and header of the next object, the loop head that uses the child pointer | 38 / 39 / 35 | 34 / 46 / 57 (type byte) + 2 to 4 (loop head) |
+| lookup.go:85 | the child pointer of an N26 (second line on the PC) | 0.4 / 0.4 / 1.0 | 7.3 / 7.3 / 7.3 |
+| lookup.go:60 to 63, 80, 86 | the key byte and the switch on the node type (its targets) | 24 / 26 / 24 | in the rest of 36 / 28 / 21 |
+| swar.go, lookup.go:66/73/76 | the SWAR searches and prefix compares | 27 / 27 / 26 | in the rest |
+
+So on the M1 the second line inside an N26 costs next to nothing (as the model says: on 128-byte lines most child slots of an N26
+are in the node's first two lines, and the M1 seems to have them both), and the switch on the node type is a quarter of `find`.
+**Lever 2 (the second line inside a node) is a lever of the PC; on the M1 the dispatch of the node step is the larger part.** The
+wait for the next object is the largest part on both machines.
