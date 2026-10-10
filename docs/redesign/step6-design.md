@@ -130,3 +130,30 @@ hops" of node-pages). Against that stands only the saving of levels, and a level
 The other points of PLAN.md's step 6: removing N5 (memory only: 2 to 4 bytes a key in dirs and url, no speed) and the tails of long
 common prefixes (90 to 307 nodes with 13 bytes or more at 65K in dirs and url, few) wait until the model shows what is left of them.
 The search in the page and the value sets (profiles-2026-10.md) are separate levers after this step.
+
+## 8. Result of the model (2026-10-10): the gate is missed — fuller pages, but not one level less
+
+`bench/cmd/rangemodel` (counts, no times; uint64 values; tables in `bench/results-layout/step6-model/model-uint64.md`). Its model of
+today's tree reproduces the measured shape exactly (street single-value 65K: 4.87 nodes a lookup, 13,410 pages, 28.3 block bytes a key;
+dirs 11.37 nodes), so its counts of the proposal can be trusted as counts.
+
+| at 65K keys, single-value | nodes a lookup | compares walk / binary | cache lines walk | keys a page (mean) | one-key pages | objects a key | bytes a key |
+|---|--|--|--|--|--|--|--|
+| street: today → ranges 512 | 4.87 → **4.87** | 6.2 → 9.9 / 2.7 → 3.5 | 10.8 → 11.0 | 4.9 → 14.4 | 4,516 → 315 | 0.227 → **0.092** | 28.3 → 24.6 |
+| dirs | 11.37 → **11.37** | 4.7 → 6.7 / 2.5 → 3.0 | 18.9 → 20.6 | 4.1 → 8.4 | 5,701 → 1,168 | 0.297 → **0.173** | 40.9 → 38.7 |
+| links | 4.32 → **4.32** | 5.3 → 8.6 / 2.6 → 3.3 | 10.2 → 10.6 | 4.2 → 11.9 | 5,887 → 577 | 0.267 → **0.112** | 33.1 → 28.8 |
+| url | 8.19 → **8.19** | 2.9 → 4.0 / 2.0 → 2.4 | 15.9 → 16.0 | 2.7 → 5.2 | 10,932 → 1,633 | 0.449 → **0.268** | 76.7 → 70.5 |
+
+Splitting above 384 or 256 bytes adds levels (dirs 11.58 and 11.87) and gives back the memory. Natural and 4K alike.
+
+**Why the levels stay:** a node on the path to a key exists because the keys below its prefix do not fit one page; how the
+neighbouring subtrees are packed into pages does not change that. Ranges pack the siblings (objects a key 40 to 65 % fewer: the walk
+of a range scan, 43 to 68 % of its time), but the depth comes from the subtree sizes along the key paths, and for path-like keys
+(dirs 11.4, url 8.2) from chains of small nodes (dirs: 2,304 of its 3,291 nodes are N5 with 2.8 children on average). **The prediction
+of section 5 ("dirs 11.4 to 6 to 8 nodes") was wrong**; section 5a's risk is real: a lookup compares more and touches 1 to 9 % more
+cache lines, for the same number of nodes. The binary search in the page takes the compares back to about today's (2.4 to 3.5), not
+the lines.
+
+So the proposal is a **range-scan and memory** change (fewer objects to walk, 5 to 15 % less memory), with slightly worse point
+queries; it is not the routing change this step was meant to be. Depth for path-like keys needs nodes that discriminate on more than
+one byte position each. Stopped here for the user's decision.
