@@ -96,3 +96,23 @@ few methods). The shares over the structured keys only (str, email, url, path, s
 The order of the levers stays: the routing part first (it is the largest share of every operation and helps all four), the search
 in the page second (21 to 36 % of a lookup at every size, without growing the page), the changes of page and tree third. Point 4
 above (the u64 ranges) loses its weight under the first rule: u64 has to stay in the band, not to win.
+
+## The corpus links (added 2026-10-10, 10:20 to 10:26)
+
+The new corpus `links` (Wikipedia page links, bench/keys/testdata/README.md: the typical key holds many values, median 11, 77 % of
+the values in sets of 65 and more) profiled the same way, rows `links` in `shares.md` and `range-split.txt`:
+
+| operation | values | 4,096 | 16,384 | 65,536 |
+|---|---|---|---|---|
+| lookup | single-value | desc 33, search 43, read 14 | desc 39, search 34, read 16 | desc 49, search 33, read 14 |
+| | natural | desc 21, **sets 36**, read 8, harn 30 | desc 27, **sets 34**, harn 24 | desc 36, **sets 34**, read 13 |
+| churn | single-value | desc 20, search 17, pchg 23, tree 11 | desc 21, search 17, pchg 20 | desc 32, search 16, pchg 11 |
+| | natural | desc 25, search 12, pchg 15, tree 12, sets 11 | desc 27, sets 19, tree 11 | desc 38, sets 17, search 12 |
+| range | single-value | walk 53 % of the scan | walk 55 % | walk 51 % |
+| | natural | **sets 60**, walk 20 | **sets 57**, walk 20 | **sets 46**, walk 22 |
+
+Single-value `links` is like the other structured keys (the routing part first, the page search second; the page search is large
+here, 33 to 43 % of a lookup: titles with long common prefixes). **Natural `links` shows a lever the other corpora hardly have: the
+value sets** (the hash sets of the value overflows, `Set3`), 34 to 36 % of a lookup and 46 to 60 % of a range, because most values
+live in sets of 65 and more. A range reads them in the hash set's order, one value at a time. This is a third, separate lever
+(the value overflow, PLAN.md's step 3.4 notes), not touched by step 6.

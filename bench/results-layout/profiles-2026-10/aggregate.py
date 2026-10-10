@@ -2,7 +2,7 @@ import sys,re,os,collections
 sys.path.insert(0,'/tmp/claude-1000')
 import classify
 P='/tmp/claude-1000/prof-all'
-KINDS=['u64','str','uuid','email','url','path','street','dirs']
+KINDS=['u64','str','uuid','email','url','path','street','dirs','links']
 CATS=['descent','page search','page head','page read','page change','tree change','scan','sets','alloc/GC','mem ops','runtime other','harness','other']
 SHORT={'descent':'desc','page search':'search','page head':'head','page read':'read','page change':'pchg','tree change':'tree','scan':'scan','sets':'sets','alloc/GC':'GC','mem ops':'mem','runtime other':'rt','harness':'harn','other':'oth'}
 def num(path,rx):
