@@ -427,7 +427,6 @@ type counts struct {
 	linesLin, linesBin             int
 	pages, onePages, bigs, nodes   int
 	pageKeys                       []int
-	bytes                          int
 	nodeBytes, pageBytes, bigBytes int
 }
 
@@ -689,12 +688,15 @@ func run(w io.Writer, args []string) error {
 		}
 		limits = append(limits, l)
 	}
-	fmt.Fprintln(w, "| case | tree | nodes a lookup | compares walk / binary | lines walk / binary | pages | one-key | own objects | keys a page mean / median / p10 / p90 | objects a key | bytes a key |")
-	fmt.Fprintln(w, "|---|---|--:|--:|--:|--:|--:|--:|---|--:|--:|")
+	if _, err := fmt.Fprintln(w, "| case | tree | nodes a lookup | compares walk / binary | lines walk / binary | pages | one-key | own objects | keys a page mean / median / p10 / p90 | objects a key | bytes a key |\n|---|---|--:|--:|--:|--:|--:|--:|---|--:|--:|"); err != nil {
+		return err
+	}
 	for _, ks := range strings.Split(*kindsF, ",") {
 		kind := keys.Kind(ks)
 		if !keys.Available(kind) {
-			fmt.Fprintf(w, "| %s | not available (see keys/testdata/README.md) |\n", ks)
+			if _, err := fmt.Fprintf(w, "| %s | not available (see keys/testdata/README.md) |\n", ks); err != nil {
+				return err
+			}
 			continue
 		}
 		for _, profile := range strings.Split(*valuesF, ",") {
@@ -730,11 +732,13 @@ func run(w io.Writer, args []string) error {
 					}
 					q := func(f float64) int { return pk[min(len(pk)-1, int(f*float64(len(pk))))] }
 					l := float64(c.lookups)
-					fmt.Fprintf(w, "| %s %s %d | %s | %.2f | %.2f / %.2f | %.2f / %.2f | %d | %d | %d | %.1f / %d / %d / %d | %.3f | %.1f |\n",
+					if _, err := fmt.Fprintf(w, "| %s %s %d | %s | %.2f | %.2f / %.2f | %.2f / %.2f | %d | %d | %d | %.1f / %d / %d / %d | %.3f | %.1f |\n",
 						kind, profile, n, name, float64(c.nodesPassed)/l, float64(c.cmpLin)/l, float64(c.cmpBin)/l,
 						float64(c.linesLin)/l, float64(c.linesBin)/l, c.pages, c.onePages, c.bigs,
 						float64(sum)/float64(len(pk)), q(0.5), q(0.1), q(0.9),
-						float64(c.pages+c.nodes+c.bigs)/float64(n), float64(c.nodeBytes+c.pageBytes+c.bigBytes)/float64(n))
+						float64(c.pages+c.nodes+c.bigs)/float64(n), float64(c.nodeBytes+c.pageBytes+c.bigBytes)/float64(n)); err != nil {
+						return err
+					}
 				}
 			}
 		}
