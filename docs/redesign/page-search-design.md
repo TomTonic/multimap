@@ -337,3 +337,19 @@ for pages with continuations. Not now; it is a memory optimization of 1 to 2 %.
 street 57.8 → 52 to 55 (47); dirs 87.4 → 82 to 86 (75). The ceiling is the share of the page search in a lookup, about a third on
 street: even a free search would not reach `main`. Writes: the add of a new key shifts the same lists as the committed layout, no hash:
 better than the committed layout, about as `locate`. Memory: as the committed layout (+1.5 to +2.9 B a key against 5a63bd0).
+
+---
+
+## Option 2 result (2026-10-08, written 2026-10-10) and what the numbers of this note are worth
+
+Option 2 as specified was built (`5a63bd0`, `828bf1f`, `52b785c`) and missed: lookup probe, ns a lookup at 4,096 keys, before → after
+(`main`): u64 single-value 33.5 → 42.2 (17.3), street single-value 57.8 → 57.1 (46.5), dirs single-value 87.4 → 84.8 (75.6), u64
+natural 46.1 → 44.8 (36.6), street natural 65.9 → 67.2 (53.0); predicted u64 20 to 26, street 45 to 52. The profile: `Fingerprint`
+24 % of a u64 lookup (building the 16-byte block in memory, two wyhash mixes in a chain); memory +1.5 to +2.9 block bytes a key. Taken
+out again on 2026-10-10 (`6e76275`); the renaming to `currentValues` and the diagnostics stay.
+
+**Not rtcompare.** The speed figures of this note (options 1 and 2, the cost of `Fingerprint`, the search kernel of the last section)
+come from the lookup probe (its own loop, medians of 9 runs of 100 ms, the versions run one after the other) and from `go test -bench`
+scratch benchmarks, not from interleaved rtcompare comparisons as MEASURING.md requires for speed claims. They agree with the profiles,
+but they are not verified. If the page search is taken up again, its variants are compared as rtcompare candidates (in `cmd/bench`, as
+the `ordered-mkN` candidates of exp-maxkeys) before any decision.
