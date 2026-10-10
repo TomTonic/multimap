@@ -33,7 +33,8 @@
 # internal packages, such as  gotest ./internal/vpage ./internal/lpage -run ^$
 # -bench BenchmarkGet -benchtime 2s ); its output is run.log. A job that starts
 # with gorun runs  go run <package> <arguments>  in the bench directory of the
-# commit's worktree (a tool such as  gorun ./cmd/pagebench -keys street -validation 20 ).
+# commit's worktree (a tool such as  gorun ./cmd/pagebench -keys street -validation 20 ). A job whose -keys names
+# links builds that corpus first (it is not in the repository; once per clone, into bench/cache).
 # The duration is an
 # estimate that the script shows with the expected end.
 #
@@ -140,6 +141,13 @@ case "$args" in env=*) envs=${args%% *}; envs=${envs#env=}; envs=$(echo "$envs" 
 gotest=0 gargs="" gorun=0
 case "$args" in gotest | gotest\ *) gotest=1; gargs=${args#gotest}; gargs=${gargs# } ;; esac
 case "$args" in gorun | gorun\ *) gotest=1 gorun=1; gargs=${args#gorun}; gargs=${gargs# } ;; esac
+# links is a corpus too big for the repository (bench/keys/testdata/README.md): a job that names it in -keys gets it
+# built once into bench/cache of this clone (go run ./cmd/mkcorpora links, about 2 minutes, 1.4 GB of memory, a
+# download of 155 MB) and copied into the job's worktree, where the bench looks for it.
+links=0
+if [ "$gotest" = 0 ]; then
+	case ",$(printf '%s\n' "$args" | sed -n 's/.*-keys[ =]\([^ ]*\).*/\1/p')," in *,links,*) links=1 ;; esac
+fi
 
 # --- the machine -----------------------------------------------------------
 
@@ -196,6 +204,9 @@ if [ "$dry" = 1 ]; then
 		fi
 	else
 		echo "dry run: would build commit $sha${basesha:+ with the baseline $basesha} in a temporary worktree,"
+		if [ "$links" = 1 ]; then
+			echo "dry run: build the corpus links into $root/bench/cache unless it is there (go run ./cmd/mkcorpora links), and copy it into the worktree,"
+		fi
 		echo "dry run: run  [caffeinate -i] bench -tags '$build_tags' $args -out <dir>"
 	fi
 	echo "dry run: and push the results of $id to $remote/$rbranch"
@@ -247,6 +258,17 @@ else
 		cd "$tmp/src/bench"
 		if [ -n "$basesha" ]; then go run ./cmd/mkbaseline -ref "$basesha"; fi
 		go build ${build_tags:+-tags "$build_tags"} -o "$tmp/bench.bin" ./cmd/bench
+		if [ "$links" = 1 ]; then
+			if [ ! -f "$root/bench/cache/links.tsv.gz" ]; then
+				echo "building the corpus links (about 2 minutes) ..."
+				go run ./cmd/mkcorpora links
+				mkdir -p "$root/bench/cache"
+				cp cache/links.tsv.gz "$root/bench/cache/links.tsv.gz"
+			else
+				mkdir -p cache
+				cp "$root/bench/cache/links.tsv.gz" cache/links.tsv.gz
+			fi
+		fi
 	)
 fi
 # the build has just loaded the machine: let it settle before measuring

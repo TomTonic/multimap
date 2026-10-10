@@ -66,6 +66,12 @@ func TestRunner(t *testing.T) {
 			want: []string{"job:       t5", "go run ./cmd/pagebench -keys street -validation 20  (in bench)"},
 		},
 		{
+			name: "builds the corpus links for a job that names it",
+			env:  []string{"ARM_RUN_DONE=t1 t2 t3 t4 t5"},
+			args: []string{"--dry-run"},
+			want: []string{"job:       t6", "build the corpus links into", "go run ./cmd/mkcorpora links"},
+		},
+		{
 			name: "lists the queue with what is done",
 			env:  []string{"ARM_RUN_DONE=t1 t3"},
 			args: []string{"--list"},
@@ -102,7 +108,7 @@ func TestRunnerErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"says that no job is open when all have results", []string{"ARM_RUN_DONE=t1 t2 t3 t4 t5"}, []string{"--dry-run"}, "no open job in the queue"},
+		{"says that no job is open when all have results", []string{"ARM_RUN_DONE=t1 t2 t3 t4 t5 t6"}, []string{"--dry-run"}, "no open job in the queue"},
 		{"says that a job is not in the queue", []string{"ARM_RUN_DONE="}, []string{"--dry-run", "nope"}, "no job nope in the queue"},
 		{"rejects an unknown option", nil, []string{"--nope"}, "unknown option --nope"},
 	} {
