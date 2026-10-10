@@ -48,7 +48,7 @@ func TestNamedValues(t *testing.T) {
 	if addr(vs[0]) != addr(vs[2]) || addr(vs[0]) == addr(vs[1]) {
 		t.Error("equal numbers must be the same string, different numbers different ones")
 	}
-	for _, kind := range []keys.Kind{keys.Street, keys.Dirs} {
+	for _, kind := range []keys.Kind{keys.Street, keys.Dirs, keys.Links} {
 		c := keys.Generate(kind, 2000, 3)
 		lengths := map[int]bool{}
 		for _, v := range toVs(c.Natural[0], c.Names) {

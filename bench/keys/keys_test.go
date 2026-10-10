@@ -12,7 +12,7 @@ import (
 // on: distinct keys, misses that are really absent, hits that are the keys
 // again in another order, and the same corpus for the same seed. It covers
 // the synthetic generators and the real-world corpora of package keys, and
-// that only street names carry natural values.
+// that only the kinds with real values (street, dirs, links) carry natural values.
 func TestGenerate(t *testing.T) {
 	for _, kind := range Kinds {
 		t.Run(string(kind), func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestGenerate(t *testing.T) {
 			if again := Generate(kind, n, 42); !slices.Equal(again.Keys.S, c.Keys.S) {
 				t.Fatal("the same seed gave another corpus")
 			}
-			if natural := kind == Street || kind == Dirs; (c.Natural != nil) != natural || (c.Names != nil) != natural {
+			if natural := kind == Street || kind == Dirs || kind == Links; (c.Natural != nil) != natural || (c.Names != nil) != natural {
 				t.Fatalf("natural values: %v, names: %v", c.Natural != nil, c.Names != nil)
 			}
 			for i, vs := range c.Natural {
@@ -60,7 +60,7 @@ func TestCapacity(t *testing.T) {
 	if Capacity(UUID) < 1<<30 {
 		t.Error("synthetic kinds must have no limit")
 	}
-	for _, kind := range []Kind{Path, Street, Dirs} {
+	for _, kind := range []Kind{Path, Street, Dirs, Links} {
 		if c := Capacity(kind); c < 50_000 || c > 1_000_000 {
 			t.Errorf("%s: capacity %d", kind, c)
 		}
@@ -103,6 +103,7 @@ func TestPrefix(t *testing.T) {
 		{Street, "Hauptstr.", "Haup"},
 		{Email, "ab@x.de", "ab@x"},
 		{Street, "Ax", "Ax"},
+		{Links, "List_of_cities", "List"},
 		{Path, "/usr/share/doc/README", "/usr/share/doc/"},
 		{URL, "https://a.example/items/12?ref=1", "https://a.example/items/"},
 		{Path, "noslash", "nosl"},
@@ -120,7 +121,7 @@ func TestPrefix(t *testing.T) {
 // whole corpus may have the value 0 or no value at all.
 func TestStreetValues(t *testing.T) {
 	s := streetCorpus()
-	for i, vs := range s.locs {
+	for i, vs := range s.vals {
 		if len(vs) == 0 || slices.Contains(vs, 0) {
 			t.Fatalf("street %q has localities %v; want at least one, none of them 0", s.names[i], vs)
 		}
@@ -250,6 +251,56 @@ func TestDirs(t *testing.T) {
 	for in, want := range map[string]string{"/usr/share/doc/foo/": "/usr/share/doc/", "/bin/": "/", "/": ""} {
 		if got := string(Prefix(Dirs, []byte(in))); got != want {
 			t.Errorf("Prefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestLinks makes sure the links kind is what its description says: the page
+// links of a wiki, where the typical page links to many others and a few to
+// thousands. It covers the link corpus (corpora.go) and its use through
+// Generate: the keys are page titles in ascending order, the values of a key are
+// distinct titles of other pages in ascending order, about three in ten keys
+// hold a single value (the redirects), about one in six holds 65 or more and
+// those hold three of four values, and the biggest set holds thousands.
+func TestLinks(t *testing.T) {
+	all := linkCorpus()
+	if !slices.IsSorted(all.names) || !slices.IsSorted(all.labels) || len(all.names) < 2*65536 {
+		t.Fatalf("%d titles, sorted: %v, %d target titles sorted: %v; want at least %d titles in ascending order", len(all.names), slices.IsSorted(all.names), len(all.labels), slices.IsSorted(all.labels), 2*65536)
+	}
+	single, large, values, largeValues, biggest := 0, 0, 0, 0, 0
+	for i, vs := range all.vals {
+		if len(vs) == 0 || vs[len(vs)-1] > uint64(len(all.labels)) || vs[0] == 0 || strings.ContainsAny(all.names[i], " \t") {
+			t.Fatalf("page %q has the values %v for %d target titles", all.names[i], vs, len(all.labels))
+		}
+		if !slices.IsSorted(vs) || len(slices.Compact(slices.Clone(vs))) != len(vs) {
+			t.Fatalf("page %q links to %v; want distinct targets in ascending order", all.names[i], vs)
+		}
+		values += len(vs)
+		biggest = max(biggest, len(vs))
+		switch {
+		case len(vs) == 1:
+			single++
+		case len(vs) >= 65:
+			large++
+			largeValues += len(vs)
+		}
+	}
+	n := float64(len(all.vals))
+	if s, l, v := float64(single)/n, float64(large)/n, float64(largeValues)/float64(values); s < 0.25 || s > 0.35 || l < 0.13 || l > 0.20 || v < 0.70 || v > 0.85 || biggest < 1000 {
+		t.Errorf("%.1f%% of the pages with one link, %.1f%% with 65 or more holding %.1f%% of the links, the biggest page has %d", 100*s, 100*l, 100*v, biggest)
+	}
+
+	index := make(map[string]int, len(all.names))
+	for i, name := range all.names {
+		index[name] = i
+	}
+	c := Generate(Links, 20_000, 7)
+	if len(c.Names) != len(all.labels) {
+		t.Fatalf("%d names of values, want %d", len(c.Names), len(all.labels))
+	}
+	for i, k := range c.Keys.S {
+		if !slices.Equal(c.Natural[i], all.vals[index[k]]) {
+			t.Fatalf("page %q has the links %v in the corpus and %v in the benchmark", k, all.vals[index[k]], c.Natural[i])
 		}
 	}
 }

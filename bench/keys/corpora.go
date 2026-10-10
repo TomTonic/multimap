@@ -15,16 +15,18 @@ import (
 // The real-world corpora, made by cmd/mkcorpora. See testdata/README.md for
 // their sources and licenses.
 //
-//go:embed testdata/paths.txt.gz testdata/streets.tsv.gz testdata/hosts.txt.gz
+//go:embed testdata/paths.txt.gz testdata/streets.tsv.gz testdata/hosts.txt.gz testdata/links.tsv.gz
 var corpora embed.FS
 
-// streets is the street corpus: names in ascending order and, for each, the
-// localities that have a street of that name, as their index plus one: the
-// benchmark takes a value sum of zero for a missing key.
-type streets struct {
+// list is a corpus of keys in ascending order with natural values: for each
+// key the numbers of its values, the index plus one of the value's name (the
+// benchmark takes a value sum of zero for a missing key). Street names have the
+// localities that have a street of that name, Wikipedia pages the pages they
+// link to.
+type list struct {
 	names  []string
-	locs   [][]uint64
-	places []string // the names of the localities: value v is places[v-1]
+	vals   [][]uint64
+	labels []string // the names of the values: value v is labels[v-1]
 }
 
 // dirs is the directory corpus, derived from the file paths: the directories
@@ -41,6 +43,7 @@ var (
 	pathCorpus   = sync.OnceValue(func() []string { return readLines("testdata/paths.txt.gz") })
 	dirCorpus    = sync.OnceValue(loadDirs)
 	streetCorpus = sync.OnceValue(loadStreets)
+	linkCorpus   = sync.OnceValue(loadLinks)
 	hostCorpus   = sync.OnceValue(func() []string { return readLines("testdata/hosts.txt.gz") })
 )
 
@@ -68,29 +71,38 @@ func readLines(name string) []string {
 	return out
 }
 
-// loadStreets parses streets.tsv.gz: the number of localities, the
-// localities, then per street name the name, a tab and the comma-separated
-// indexes of its localities.
-func loadStreets() streets {
-	lines := readLines("testdata/streets.tsv.gz")
+// loadStreets parses streets.tsv.gz, see parseList.
+func loadStreets() list { return parseList("testdata/streets.tsv.gz") }
+
+// loadLinks parses links.tsv.gz, see parseList: the names of the values are
+// the titles of the link targets.
+func loadLinks() list { return parseList("testdata/links.tsv.gz") }
+
+// parseList parses a corpus file of keys with numbered values: the number of
+// names of values, the names one per line, then per key the key, a tab and the
+// comma-separated indexes of the names of its values. Every index is stored
+// plus one.
+func parseList(file string) list {
+	lines := readLines(file)
 	nl, err := strconv.Atoi(lines[0])
 	if err != nil {
-		panic(fmt.Sprintf("streets: %v", err))
+		panic(fmt.Sprintf("%s: %v", file, err))
 	}
 	rows := lines[1+nl:]
-	s := streets{names: make([]string, len(rows)), locs: make([][]uint64, len(rows)), places: lines[1 : 1+nl]}
+	s := list{names: make([]string, len(rows)), vals: make([][]uint64, len(rows)), labels: lines[1 : 1+nl]}
 	for i, row := range rows {
 		name, ids, ok := strings.Cut(row, "\t")
 		if !ok {
-			panic(fmt.Sprintf("streets: line %q", row))
+			panic(fmt.Sprintf("%s: line %q", file, row))
 		}
 		s.names[i] = name
+		s.vals[i] = make([]uint64, 0, strings.Count(ids, ",")+1)
 		for id := range strings.SplitSeq(ids, ",") {
 			v, err := strconv.ParseUint(id, 10, 64)
 			if err != nil {
-				panic(fmt.Sprintf("streets: line %q: %v", row, err))
+				panic(fmt.Sprintf("%s: line %q: %v", file, row, err))
 			}
-			s.locs[i] = append(s.locs[i], v+1)
+			s.vals[i] = append(s.vals[i], v+1)
 		}
 	}
 	return s

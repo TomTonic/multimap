@@ -78,10 +78,19 @@ const (
 	// most directories to thousands in a few (derived from
 	// testdata/paths.txt.gz, so the sample thins the directories out).
 	Dirs Kind = "dirs"
+	// Links are the titles of the pages of Simple English Wikipedia that link to
+	// other articles, with underscores, about 17 bytes, and the titles of the
+	// articles they link to as their natural values: strings, many to a key,
+	// the opposite of street and dirs, where most keys hold one value. 29% of
+	// the keys hold one (the redirects), 16% hold 2-8, 38% hold 9-64 and 17%
+	// hold 65 or more, up to 5,693, and those last keys hold 77% of the values
+	// (testdata/links.tsv.gz, see cmd/mkcorpora: a sample of 140,000 pages, with
+	// all their links).
+	Links Kind = "links"
 )
 
 // Kinds lists every key kind, the synthetic ones first.
-var Kinds = []Kind{U64, Str, UUID, Email, URL, Path, Street, Dirs}
+var Kinds = []Kind{U64, Str, UUID, Email, URL, Path, Street, Dirs, Links}
 
 // Text reports whether the keys of kind are UTF-8 text, which never contains
 // the byte 0xFF, so that [p, p+0xFF...] holds exactly the keys that start
@@ -125,6 +134,8 @@ func Capacity(kind Kind) int {
 		return len(streetCorpus().names) / 2
 	case Dirs:
 		return len(dirCorpus().names) / 2
+	case Links:
+		return len(linkCorpus().names) / 2
 	}
 	return math.MaxInt
 }
@@ -142,11 +153,12 @@ type Corpus struct {
 	Probes Set
 	Misses Set // same distribution, none of them present
 	// Natural holds the values each key of Keys has in the real world, for
-	// kinds that have them (Street: its localities, Dirs: its file names, numbered from 1), else nil.
+	// kinds that have them (Street: its localities, Dirs: its file names, Links: the
+	// pages it links to, numbered from 1), else nil.
 	Natural [][]uint64
 	// Names holds the strings that the natural values stand for: value v is
-	// Names[v-1] (Street: the locality's name; Dirs: the file's name). It is nil
-	// for kinds without natural values.
+	// Names[v-1] (Street: the locality's name; Dirs: the file's name; Links: the
+	// title of the linked page). It is nil for kinds without natural values.
 	Names []string
 }
 
@@ -159,10 +171,13 @@ func Generate(kind Kind, n int, seed uint64) Corpus {
 		return fromList(pathCorpus(), nil, nil, n, &rng)
 	case Street:
 		c := streetCorpus()
-		return fromList(c.names, c.locs, c.places, n, &rng)
+		return fromList(c.names, c.vals, c.labels, n, &rng)
 	case Dirs:
 		c := dirCorpus()
 		return fromList(c.names, c.files, c.file, n, &rng)
+	case Links:
+		c := linkCorpus()
+		return fromList(c.names, c.vals, c.labels, n, &rng)
 	}
 	gen := generator(kind, &rng)
 	seen := make(map[string]struct{}, 2*n)
