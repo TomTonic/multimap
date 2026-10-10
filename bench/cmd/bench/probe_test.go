@@ -291,6 +291,18 @@ func printEvents(what string, ops int) {
 		fmt.Printf("| %s | %d | %.1f | %s |\n", k, c.Total, 1000*float64(c.Total)/float64(ops), quantiles(c))
 	}
 	fmt.Println()
+	if os.Getenv("MKPROBE_HIST") != "" { // the whole histograms over the entries, for a closer look
+		for _, k := range names {
+			fmt.Printf("histogram | %s |", k)
+			for n, x := range ev[k].Entries {
+				if x > 0 {
+					fmt.Printf(" %d:%d", n, x)
+				}
+			}
+			fmt.Println()
+		}
+		fmt.Println()
+	}
 }
 
 func quantiles(c *art.EventCount) string {
@@ -320,6 +332,7 @@ func census(what string, m *art.Map[V]) {
 	var pageEntries []int
 	var skValues [4]int // single-key pages by number of values: 1, 2, 3-4, 5+
 	var bySize [513]row // multi-key pages by the size of the object
+	skBySize := map[int]int{} // single-key pages by the size of the object
 	total, blocks := 0, 0
 	m.Objects(func(o art.Object) {
 		r := rows[o.Label]
@@ -342,6 +355,7 @@ func census(what string, m *art.Map[V]) {
 			bySize[o.Size].values += o.Values
 		case "single-key page":
 			skValues[valueBucket(o.Values)]++
+			skBySize[o.Size]++
 		}
 	})
 	fmt.Printf("objects of the %s:\n\n| object | count | bytes | keys | share of keys |\n|---|--:|--:|--:|--:|\n", what)
@@ -375,6 +389,16 @@ func census(what string, m *art.Map[V]) {
 		fmt.Print("\n\n")
 	}
 	fmt.Printf("single-key pages by number of values: 1: %d, 2: %d, 3-4: %d, 5+: %d\n\n", skValues[0], skValues[1], skValues[2], skValues[3])
+	sizes := make([]int, 0, len(skBySize))
+	for size := range skBySize {
+		sizes = append(sizes, size)
+	}
+	slices.Sort(sizes)
+	fmt.Printf("single-key pages by size of the object:")
+	for _, size := range sizes {
+		fmt.Printf(" %d: %d;", size, skBySize[size])
+	}
+	fmt.Print("\n\n")
 }
 
 func valueBucket(n int) int {

@@ -25,11 +25,20 @@ const (
 	evBuildSingleKey
 	evSplitLeaf
 	evRekeyLeaf
+	evMergeUp
+	evMergeWide
+	evMergeNoPage
+	evMergeSlots
+	evMergeBig
+	evPairFit
 	evCount
 )
 
 // ev counts event e once, with n entries of the page it concerns.
 func ev(event, int) {}
+
+// evPairRoom counts how much of the object of a single-key page a pair fills; see events_on.go.
+func evPairRoom[T comparable](*Map[T], *singleKeyHead, *header) {}
 
 // EventsEnabled says whether this build counts the events of the multi-key pages.
 const EventsEnabled = false

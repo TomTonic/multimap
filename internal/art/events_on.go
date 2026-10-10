@@ -26,6 +26,12 @@ const (
 	evBuildSingleKey
 	evSplitLeaf
 	evRekeyLeaf
+	evMergeUp
+	evMergeWide
+	evMergeNoPage
+	evMergeSlots
+	evMergeBig
+	evPairFit
 	evCount
 )
 
@@ -48,6 +54,12 @@ var eventNames = [evCount]string{
 	evBuildSingleKey: "build: single-key page made",
 	evSplitLeaf:      "split: a node is put above a single-key page (its path length grows)",
 	evRekeyLeaf:      "rekey: a node above a single-key page goes away (its path length shrinks)",
+	evMergeUp:        "merge up started after a removal (entries: the entries left in the page)",
+	evMergeWide:      "merge refused: the node has more than mergeChildren children (entries: its children)",
+	evMergeNoPage:    "merge refused: a child is a node or a value overflow, or fewer than two keys (entries: the node's children)",
+	evMergeSlots:     "merge refused: the children hold more than mergeLimit values (entries: the values)",
+	evMergeBig:       "merge refused: the merged page would need more than mergeFill (entries: need in 64ths of mergeFill)",
+	evPairFit:        "pair: the page of two keys against the object of the single-key page (entries: its bytes in 64ths of the object)",
 }
 
 // EventsEnabled says whether this build counts the events of the multi-key pages.
@@ -80,3 +92,16 @@ func Events() map[string]*EventCount {
 
 // ResetEvents sets all counts to zero.
 func ResetEvents() { counts = [evCount]EventCount{} }
+
+// evPairRoom counts, for a pair (evPair), how much of the object of single-key page l the new page q of two
+// keys fills, in 64ths: up to 64 the two keys would have fit the object of l, so that the pair could have been
+// made in place.
+func evPairRoom[T comparable](m *Map[T], l *singleKeyHead, q *header) {
+	var used, size int
+	if m.flat == 3 {
+		used, size = asMKStr(q).Used(), asSK(l).Size()
+	} else {
+		used, size = asMKFix(q).Used(), asFixed(l).Size()
+	}
+	ev(evPairFit, used*64/size)
+}

@@ -67,6 +67,7 @@ func (m *Map[T]) Remove(key []byte, v T) {
 	before := m.t.size
 	left := m.removeValue(key, v)
 	if m.mk && m.t.size != before && left <= mergeBelow {
+		ev(evMergeUp, left)
 		m.mergeUp(&m.t.root, key, 0)
 	}
 }
@@ -113,6 +114,7 @@ func (m *Map[T]) RemoveKey(key []byte) {
 		m.t.remove(key, m.rekey)
 	}
 	if m.mk && left <= mergeBelow {
+		ev(evMergeUp, left)
 		m.mergeUp(&m.t.root, key, 0)
 	}
 }

@@ -115,3 +115,64 @@ allocation and garbage collection about 5 %. Build: allocation and garbage colle
   the objects; most of the object traffic of churn) are larger and were not on the list; both are questions of when the tree
   changes its shape (hysteresis), not of allocation;
 - the shifts inside a page (memmove 9 % with `Add`/`Remove` 12 %) and the recomputed layout (`lay` 5 %) are the page's own costs.
+
+## Follow-up (user, 2026-10-10 evening): why the merge tries fail, and what a hysteresis of the page forms would cost
+
+**What the code does.** After a removal that leaves a page at most `mergeBelow` (2) entries, `Remove` and `RemoveKey` call `mergeUp`,
+which descends from the root again along the key and tries, from the lowest node up, to merge a node whose children are all pages
+(`tryMerge`, `mergeFits`: it walks every child page with `Each` and a closure and adds up the bytes the merged page would need,
+against `mergeFill`, half of the largest page). The pendulum: a page left with one key turns into the one-key form in place (no new
+object), and then often shrinks to a smaller class (a new object); a new key beside a single-key page always makes a new page of two
+keys (`pairWithFixed` builds one), even if the two keys would fit the object it has.
+
+**Counted** (build tag mkstats, counters only, the code does not change its behaviour): what started a `mergeUp` (1 or 2 entries
+left); every refusal by its reason (the node has more than 12 children; a child is a node or a value overflow; the children hold more
+than 64 values; the merged page would need more than `mergeFill`, and by how much); for every pair, the bytes of the page of two keys
+against the object of the single-key page (whether it could have been made in place); in the census, the single-key pages by the size
+of their object (what keeping them one class larger would cost). Cases: the seven structured kinds, single-value and natural, 4,096
+and 16,384 keys, one steady-state churn cycle (TestProbe).
+
+**Prediction:**
+1. At least 70 % of the `mergeUp` calls start from a page left with one key (the pairs losing a key).
+2. At least 80 % of the refusals are by size, and the merged page would need at least twice `mergeFill` in the median: the
+   siblings hold some ten entries each, so the tries are not near misses.
+3. In 30 to 60 % of the pairs the page of two keys would fit the object of the single-key page.
+4. Keeping every single-key page one class larger (the most a hysteresis against shrinking could cost) costs at most 10 bytes a key.
+
+**Run:** PC/WSL, 2026-10-10 17:17 to 17:20, one process a kind (counts only); `bench/results-layout/write-2026-10/events-merge-pair.txt`,
+summary `merge-pair-summary.md` (`evsum.py`).
+
+**Result** (one steady-state churn cycle; single-value / natural at 4,096 keys unless said):
+
+| kind | merge ups a 1,000 writes | from 1 entry left | refused: >12 children / a child no page / too big | too big: median need, share under 1.5x | pairs a 1,000 writes | pair fits the old object | single-key pages one class larger, B a key |
+|---|--:|--:|---|---|--:|--:|--:|
+| str | 54 / 58 | 37 / 39 % | 8/0/92 / 0/32/58 % | 1.8x, 8 % | 20 / 23 | 88 / 95 % | 1.5 / 17.9 |
+| email (16,384) | 28 (462) / 47 | 23 (39) % | 73/0/27 (94/0/6) % | 1.6x, 33 % | 6 (182) / 11 | 93 (93) / 97 % | 0.9 (23.1) / 31.1 |
+| url | 280 / 70 | 32 / 30 % | 23/28/49 / 16/40/41 % | 2.2x, 12 % | 89 / 21 | 70 / 83 % | 25.0 / 40.0 |
+| path | 232 / 60 | 31 / 32 % | 28/35/37 / 20/44/35 % | 2.2x, 10 % | 70 / 19 | 79 / 88 % | 15.2 / 28.8 |
+| street | 113 / 57 | 34 / 35 % | 28/22/50 / 23/33/35 % | 2.1x, 3 % | 39 / 20 | 97 / 98 % | 3.4 / 5.9 |
+| dirs | 201 / 76 | 33 / 32 % | 35/28/37 / 29/36/34 % | 2.1x, 9 % | 66 / 24 | 84 / 92 % | 9.0 / 15.1 |
+| links | 168 / 6 | 34 / 27 % | 51/11/38 / 18/60/15 % | 2.3x, 4 % | 57 / 2 | 91 / 97 % | 5.6 / 49.7 |
+
+(The rest of the refusals, more than 64 values, is 0 to 13 %.) Every `mergeUp` tries exactly one node (1.00 tries a merge up): the
+lowest one refuses and the ones above are not tried. Where the time of a try goes (CPU profiles above, single-value 4,096): the
+size check `mergeFits` 6 to 10 % of a churn, the second descent from the root and the rest of `mergeUp` 2 to 8 %.
+
+**Against the prediction:**
+1. At least 70 % of the merge ups from a page left with one key: missed. Only 22 to 39 % are; 61 to 78 % start from a page left
+   with two entries.
+2. At least 80 % of the refusals by size: missed (6 to 92 %; the node with more than 12 children and the child that is a node are
+   as frequent). Not near misses, at least twice `mergeFill` in the median: about hit (1.6 to 4.0 times, 2.1 to 2.3 for most;
+   under 1.5 times only 1 to 12 %, links natural and email 4K about 30 %).
+3. The page of two keys fits the single-key page's object in 30 to 60 % of the pairs: missed, far more: 70 to 99 %.
+4. Keeping every single-key page one class larger costs at most 10 bytes a key: missed for url, path, email at 16,384 and all
+   natural (12 to 50 bytes a key); hit for str, street, dirs, links single-value (0.7 to 9).
+
+**What it says (no decision, for the user):**
+- the merge tries fail for reasons that are known before any page is read: a node of more than 12 children (refused at once, but
+  only after the second descent from the root), a child that is a node (found while walking the children); the walk over all
+  sibling pages (`mergeFits`, 6 to 10 % of a churn) is spent on a size that is twice the limit in the median. A trigger of one
+  entry left instead of two would take away 61 to 78 % of the tries (whether merges that matter would be lost then is not counted);
+  remembering the path of the removal would take away the second descent;
+- the pair could be made in place, in the object the single-key page already has, in 70 to 99 % of the cases: that takes away most
+  of the pendulum's objects without any memory, unlike keeping single-key pages one class larger (up to 50 bytes a key).

@@ -551,14 +551,26 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 		collect(0, singleKeyHdr(e))
 	}
 	eachByteNode(n, func(_ byte, c *header) { collect(1, c) })
-	if !ok || keys < 2 {
+	switch {
+	case !ok && slots > mergeLimit:
+		ev(evMergeSlots, slots)
+		return false
+	case !ok || keys < 2:
+		ev(evMergeNoPage, int(n.count))
 		return false
 	}
 	cp := min(len(pre), page.MaxKeyPart)
+	var need int
 	if m.flat == 3 {
-		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal) <= mergeFill
+		need = page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal)
+	} else {
+		need = page.NeedFixed[T](slots, cp, sumRest-keys*cp)
 	}
-	return page.NeedFixed[T](slots, cp, sumRest-keys*cp) <= mergeFill
+	if need > mergeFill {
+		ev(evMergeBig, need*64/mergeFill)
+		return false
+	}
+	return true
 }
 
 // mergeFill is the most bytes a merged page may need: half of the largest page, the size at which a page bursts.
@@ -599,6 +611,7 @@ func (m *Map[T]) leafItem(l *singleKeyHead, rest []byte) item[T] {
 func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	n := *loc
 	if n.count > mergeChildren {
+		ev(evMergeWide, int(n.count))
 		return false
 	}
 	var buf [prefixBuf]byte

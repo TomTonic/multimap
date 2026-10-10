@@ -207,6 +207,7 @@ func (m *Map[T]) reachLeaf(loc **header, l *singleKeyHead, key []byte, pathLen i
 	switch res {
 	case page.Added: // another key: the two make a multi-key page
 		ev(evPair, 2)
+		evPairRoom(m, l, q)
 		*loc = q
 		m.t.size++
 	case page.AddedValue, page.Present:
