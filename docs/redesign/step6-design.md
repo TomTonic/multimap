@@ -157,3 +157,29 @@ the lines.
 So the proposal is a **range-scan and memory** change (fewer objects to walk, 5 to 15 % less memory), with slightly worse point
 queries; it is not the routing change this step was meant to be. Depth for path-like keys needs nodes that discriminate on more than
 one byte position each. Stopped here for the user's decision.
+
+## 9. Question B: byte nodes packed into one object (model, 2026-10-10)
+
+`rangemodel -pack 0,128,256,512` (`pack.go`; tables in `bench/results-layout/step6-model/pack-uint64.md`): an object of at most 128,
+256 or 512 bytes takes a byte node and as many of its descendant byte nodes as fit, the heaviest subtree first; inside it a level
+refers to a packed child by one byte, children outside it are 8-byte pointers behind the levels; a node of more than 26 children
+stays as today. Counted: the objects a lookup loads one after the other (nodes and the page), the cache lines it touches, the bytes.
+
+| objects / lines a lookup | 4K: today → 256 B → 512 B | 65K: today → 256 B → 512 B |
+|---|---|---|
+| street single-value | 4.0 / 7.7 → 3.4 / 7.1 → 3.1 / 6.9 | 5.9 / 10.8 → 5.0 / 10.0 → 4.3 / 9.3 |
+| dirs single-value | 8.6 / 13.4 → **5.1** / 10.8 → 4.5 / 10.3 | 12.4 / 18.6 → **6.9** / 14.2 → 5.9 / 13.3 |
+| links single-value | 3.7 / 7.6 → 3.5 / 7.2 → 3.2 / 6.9 | 5.3 / 10.2 → 4.7 / 9.7 → 4.4 / 9.4 |
+| url single-value | 6.9 / 11.9 → 5.2 / 10.4 → 4.9 / 11.6 | 9.2 / 15.8 → 7.0 / 13.9 → 6.6 / 13.6 |
+
+Natural alike (dirs 65K 12.6 → 7.1 → 6.0; links natural 65K 6.7 → 5.3 → 4.9). Bytes a key 1 to 7 % less (fewer, fuller routing
+objects). With range pages (section 8) on top: the same objects a lookup, a line or two more for the page search, 40 to 65 % fewer
+objects a key for the range walk, 5 to 12 % less memory in all.
+
+**Against the gate** (section 6, read for packing): dirs at 65K 44 % (256 B) to 52 % (512 B) fewer objects a lookup, url 24 to 29 %
+(just below 30 %), street 15 to 26 %, links 11 to 17 %; at 4K fewer objects and fewer lines in every corpus. 256 B is the better
+size for the lines (512 B objects of url touch more lines than 256 B ones).
+
+**What the model does not say:** it packs the finished tree once; whether the packing can be kept while keys come and go, and what
+that costs a write, is not modelled — that was where the previous attempt lost (section 3). Lines are not times: inside an object
+every level still costs its byte search; what goes is the dependent load of a new object for every level.

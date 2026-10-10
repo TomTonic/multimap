@@ -677,8 +677,12 @@ func run(w io.Writer, args []string) error {
 	sizesF := fs.String("sizes", "4096,16384,65536", "numbers of keys")
 	limitsF := fs.String("limits", "512,384,256", "page sizes above which a page of a range splits (the proposal)")
 	str := fs.Bool("str", false, "string values (the names of the corpus) instead of uint64")
+	packF := fs.String("pack", "", "instead of the table of the trees: the byte nodes packed into objects of at most these bytes (0: as today), for today's pages and for ranges split above 512")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *packF != "" {
+		return runPack(w, *kindsF, *valuesF, *sizesF, *packF, *str)
 	}
 	var limits []int
 	for _, s := range strings.Split(*limitsF, ",") {
@@ -737,6 +741,48 @@ func run(w io.Writer, args []string) error {
 						float64(c.linesLin)/l, float64(c.linesBin)/l, c.pages, c.onePages, c.bigs,
 						float64(sum)/float64(len(pk)), q(0.5), q(0.1), q(0.9),
 						float64(c.pages+c.nodes+c.bigs)/float64(n), float64(c.nodeBytes+c.pageBytes+c.bigBytes)/float64(n)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func runPack(w io.Writer, kindsF, valuesF, sizesF, packF string, str bool) error {
+	var limits []int
+	for _, s := range strings.Split(packF, ",") {
+		l, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		limits = append(limits, l)
+	}
+	if _, err := fmt.Fprintln(w, "| case | packing | objects a lookup | lines a lookup | routing objects | routing B a key | all B a key | objects a key |\n|---|---|--:|--:|--:|--:|--:|--:|"); err != nil {
+		return err
+	}
+	for _, ks := range strings.Split(kindsF, ",") {
+		kind := keys.Kind(ks)
+		if !keys.Available(kind) {
+			continue
+		}
+		for _, profile := range strings.Split(valuesF, ",") {
+			for _, ns := range strings.Split(sizesF, ",") {
+				n, err := strconv.Atoi(ns)
+				if err != nil {
+					return err
+				}
+				items := corpusItems(kind, n, profile, str)
+				for _, m := range []*model{{limit: page.Largest, str: str}, {ranges: true, limit: page.Largest, str: str}} {
+					for _, it := range items {
+						m.insert(it)
+					}
+					tree := "today's pages"
+					if m.ranges {
+						tree = "range pages"
+					}
+					if err := m.packReport(w, fmt.Sprintf("%s %s %d, %s", kind, profile, n, tree), items, limits); err != nil {
 						return err
 					}
 				}
