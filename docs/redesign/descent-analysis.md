@@ -63,3 +63,22 @@ Two parts of the wait are separate levers:
 - the **second line inside a node** (16 to 19 %): N12 (child 4 and up), N26 and N58 keep the searched bytes and the pointer in
   different lines. That is a layout question of the node alone, without the maintenance problem of packing. On the M1 (128-byte
   lines) an N12 is one line, so this part may be smaller there; these profiles are the PC's only.
+
+## Lever 2 counted in the model (2026-10-10 afternoon)
+
+`rangemodel -nodelines` (today's tree, exact against the measured shape; `bench/results-layout/descent-2026-10/nodelines-model.md`):
+the byte nodes a lookup passes by class, and how many of them read the child slot from a second line of the node.
+
+| single-value | objects a lookup | second lines a lookup, 64-byte lines (PC) | 128-byte lines (M1) |
+|---|--:|--:|--:|
+| str 4K / 64K | 3.4 / 4.8 | 1.5 / 2.0 | 0.7 / 0.7 |
+| email 4K / 64K | 3.0 / 4.0 | 1.9 / 2.8 (all N26) | 1.2 / 1.8 |
+| url 4K / 64K | 6.9 / 9.2 | 2.8 / 4.5 | 1.9 / 2.9 |
+| path 4K / 64K | 9.4 / 12.8 | 3.1 / 5.5 | 1.0 / 1.9 |
+| street 4K / 64K | 4.0 / 5.9 | 2.1 / 3.5 | 0.7 / 1.8 |
+| dirs 4K / 64K | 8.6 / 12.4 | 2.9 / 4.5 | 1.1 / 2.4 |
+| links 4K / 64K | 3.7 / 5.3 | 2.4 / 3.4 | 1.4 / 2.6 |
+
+On 64-byte lines 40 to 90 % of the nodes passed read a second line (all N26 and N58 visits but a few, N12 from the fifth child);
+on 128-byte lines a third to two thirds as many remain. The lever exists on both machines, smaller on the M1; the M1's profile
+(by source line, so that it reads on arm64) is still to be taken.

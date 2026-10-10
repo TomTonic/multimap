@@ -1,6 +1,8 @@
 package art
 
 import (
+	"unsafe"
+
 	"github.com/TomTonic/multimap/internal/page"
 )
 
@@ -27,6 +29,9 @@ type Object struct {
 	// key remainder it stores (the key from its base on); both are 0 for pages
 	// and nodes.
 	Values, Remainder int
+	// Addr is the address of the object, so that a probe can tell the objects
+	// of two walks apart (which were made, which dropped in between).
+	Addr uintptr
 }
 
 // goClasses are the size classes of Go's allocator up to 8 KiB
@@ -131,7 +136,9 @@ func (m *Map[T]) object(n *header) Object {
 
 // objects reports the subtree n.
 func (m *Map[T]) objects(n *header, fn func(Object)) {
-	fn(m.object(n))
+	o := m.object(n)
+	o.Addr = uintptr(unsafe.Pointer(n))
+	fn(o)
 	if isPage(n.objType) {
 		return
 	}

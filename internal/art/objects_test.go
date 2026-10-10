@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"unsafe"
@@ -235,4 +236,24 @@ func TestObjects(t *testing.T) {
 	}
 	var empty Map[uint64]
 	empty.Objects(func(o Object) { t.Errorf("an empty map has the object %+v", o) })
+}
+
+// TestObjectAddresses: a probe that watches what a write makes and drops tells the objects of a map apart by their
+// addresses. In the object census of the tree (Objects), every object carries its own address, none is zero and no
+// two objects share one.
+func TestObjectAddresses(t *testing.T) {
+	var m Map[uint64]
+	for i := range uint64(2000) {
+		m.Add([]byte(strconv.Itoa(int(i*7919%100000)+100000)), i)
+	}
+	seen := map[uintptr]bool{}
+	m.Objects(func(o Object) {
+		if o.Addr == 0 || seen[o.Addr] {
+			t.Fatalf("object %+v: address zero or seen before", o)
+		}
+		seen[o.Addr] = true
+	})
+	if len(seen) < 10 {
+		t.Fatalf("only %d objects for 2000 keys", len(seen))
+	}
 }

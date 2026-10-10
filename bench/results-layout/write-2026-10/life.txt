@@ -1,0 +1,2134 @@
+=== RUN   TestLifeProbe
+
+## life str single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 92.7 %, one object for one 5.1 %, other 2.3 %
+  objects made 0.062 a write (7.9 bytes), dropped 0.062 (7.9 bytes)
+  LIFO free list: 69.3 % of the objects made taken from it; writes from drop to reuse median 74, p90 926; bytes made in between median 448, p90 7456; held at most 21440 bytes, at the end 21440
+  object                     size     made/w  dropped/w   reused
+  multi-key page               64     0.0201     0.0059    29.3%
+  single-key page              64     0.0056     0.0199   100.0%
+  single-key page              32     0.0110     0.0113    92.4%
+  multi-key page              128     0.0108     0.0105    86.1%
+  multi-key page              256     0.0086     0.0085    91.3%
+  multi-key page              384     0.0048     0.0048    78.4%
+  multi-key page              512     0.0010     0.0010    36.4%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| entry removed from a page | 5221 | 488.7 | 3 / 3 / 3 |
+| key added to a page in place | 4994 | 467.4 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 528 | 49.4 | 9 / 10 / 12 |
+| page shrinks to a smaller class | 161 | 15.1 | 3 / 3 / 3 |
+| page with one entry left becomes a single-key page | 213 | 19.9 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 213 | 19.9 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 14 | 1.3 | 1 / 1 / 1 |
+
+runtime, churn: 0.061 allocations and 7.9 bytes a write
+
+build stream from empty: 14748 writes; in place 81.0 %, one object for one 15.8 %, other 3.2 %
+  objects made 0.210 a write (33.6 bytes), dropped 0.168 (22.4 bytes)
+  LIFO free list: 66.0 % of the objects made taken from it; writes from drop to reuse median 17, p90 408; bytes made in between median 448, p90 15136; held at most 49664 bytes, at the end 49664
+  object                     size     made/w  dropped/w   reused
+  multi-key page              128     0.0480     0.0420    77.1%
+  multi-key page               64     0.0499     0.0343    68.8%
+  multi-key page              256     0.0376     0.0281    59.8%
+  single-key page              32     0.0335     0.0300    73.7%
+  multi-key page              384     0.0207     0.0099    45.1%
+  single-key page              64     0.0089     0.0206    90.8%
+  multi-key page              512     0.0087     0.0029    31.0%
+  N12                         128     0.0018     0.0003    15.4%
+  N26                         256     0.0011     0.0000     0.0%
+  N5                           64     0.0001     0.0000     0.0%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 40 | 2.7 | 19 / 20 / 21 |
+| build: page made | 195 | 13.2 | 2 / 4 / 11 |
+| build: single-key page made | 218 | 14.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 40 | 2.7 | 19 / 20 / 21 |
+| entry removed from a page | 5214 | 353.5 | 3 / 3 / 3 |
+| key added to a page in place | 8355 | 566.5 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 92 | 6.2 | 9 / 11 / 12 |
+| page shrinks to a smaller class | 218 | 14.8 | 3 / 3 / 3 |
+| page with one entry left becomes a single-key page | 280 | 19.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 634 | 43.0 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 71 | 4.8 | 1 / 1 / 1 |
+
+runtime, build: 0.223 allocations and 38.5 bytes a write
+
+
+## life str single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 92.3 %, one object for one 6.7 %, other 1.0 %
+  objects made 0.072 a write (9.2 bytes), dropped 0.072 (9.2 bytes)
+  LIFO free list: 80.0 % of the objects made taken from it; writes from drop to reuse median 62, p90 813; bytes made in between median 448, p90 7360; held at most 66208 bytes, at the end 66208
+  object                     size     made/w  dropped/w   reused
+  multi-key page              128     0.0207     0.0207    97.7%
+  multi-key page               64     0.0210     0.0098    46.8%
+  single-key page              64     0.0097     0.0208   100.0%
+  multi-key page              256     0.0129     0.0129    87.7%
+  single-key page              32     0.0046     0.0046    94.4%
+  multi-key page              384     0.0025     0.0025    73.6%
+  multi-key page              512     0.0004     0.0004    52.6%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| entry removed from a page | 21201 | 495.2 | 3 / 3 / 3 |
+| key added to a page in place | 20301 | 474.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 2997 | 70.0 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 990 | 23.1 | 3 / 3 / 3 |
+| page with one entry left becomes a single-key page | 884 | 20.6 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 884 | 20.6 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 16 | 0.4 | 1 / 1 / 1 |
+
+runtime, churn: 0.072 allocations and 9.2 bytes a write
+
+build stream from empty: 58716 writes; in place 80.0 %, one object for one 16.3 %, other 3.7 %
+  objects made 0.244 a write (34.7 bytes), dropped 0.181 (22.9 bytes)
+  LIFO free list: 63.5 % of the objects made taken from it; writes from drop to reuse median 22, p90 425; bytes made in between median 608, p90 14944; held at most 144416 bytes, at the end 144416
+  object                     size     made/w  dropped/w   reused
+  multi-key page              128     0.0684     0.0441    60.6%
+  multi-key page               64     0.0640     0.0434    67.7%
+  single-key page              32     0.0337     0.0331    84.1%
+  multi-key page              256     0.0390     0.0176    43.9%
+  single-key page              64     0.0104     0.0261    96.7%
+  multi-key page              384     0.0129     0.0088    67.7%
+  multi-key page              512     0.0083     0.0074    71.2%
+  N12                         128     0.0060     0.0001     0.8%
+  N5                           64     0.0013     0.0002    11.8%
+  N26                         256     0.0003     0.0000     0.0%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 434 | 7.4 | 20 / 21 / 21 |
+| build: page made | 2287 | 39.0 | 3 / 6 / 10 |
+| build: single-key page made | 936 | 15.9 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 434 | 7.4 | 20 / 21 / 21 |
+| entry removed from a page | 20547 | 349.9 | 3 / 3 / 3 |
+| key added to a page in place | 32849 | 559.5 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 4451 | 75.8 | 9 / 11 / 12 |
+| page shrinks to a smaller class | 841 | 14.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1592 | 27.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2856 | 48.6 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 284 | 4.8 | 1 / 1 / 1 |
+
+runtime, build: 0.273 allocations and 47.6 bytes a write
+
+
+## life str natural n=4096 (69746 writes in the cycle, 95335 in the build)
+
+churn (one steady-state cycle): 69746 writes; in place 91.5 %, one object for one 5.0 %, other 3.5 %
+  objects made 0.069 a write (6.0 bytes), dropped 0.069 (6.0 bytes)
+  LIFO free list: 72.2 % of the objects made taken from it; writes from drop to reuse median 58, p90 741; bytes made in between median 256, p90 4224; held at most 146080 bytes, at the end 146080
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0144     0.0235   100.0%
+  single-key page              32     0.0179     0.0179    92.2%
+  multi-key page              128     0.0145     0.0093    58.4%
+  multi-key page               64     0.0149     0.0058    38.6%
+  multi-key page              256     0.0042     0.0029    55.9%
+  single-key page             128     0.0007     0.0059   100.0%
+  N5                           64     0.0015     0.0015    82.4%
+  single-key page             256     0.0000     0.0014     0.0%
+  multi-key page              384     0.0007     0.0006    55.1%
+  multi-key page              512     0.0002     0.0002    41.2%
+
+events of one steady-state cycle (69746 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 4 | 0.1 | 2 / 13 / 13 |
+| build: page made | 5 | 0.1 | 2 / 4 / 4 |
+| build: single-key page made | 6 | 0.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 4 | 0.1 | 2 / 13 / 13 |
+| entry removed from a page | 24649 | 353.4 | 3 / 3 / 3 |
+| key added to a page in place | 4284 | 61.4 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.0 | 7 / 7 / 7 |
+| merge tried (node with children that are pages) | 4043 | 58.0 | 7 / 10 / 12 |
+| page shrinks to a smaller class | 660 | 9.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1576 | 22.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 3 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1577 | 22.6 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 73 | 1.0 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 70 | 1.0 | 1 / 1 / 1 |
+| value added to a key in a page in place | 18811 | 269.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 30 | 0.4 | 1 / 1 / 1 |
+
+runtime, churn: 0.075 allocations and 9.2 bytes a write
+
+build stream from empty: 95335 writes; in place 90.9 %, one object for one 6.4 %, other 2.8 %
+  objects made 0.104 a write (14.9 bytes), dropped 0.080 (11.3 bytes)
+  LIFO free list: 70.6 % of the objects made taken from it; writes from drop to reuse median 69, p90 1590; bytes made in between median 896, p90 20576; held at most 98944 bytes, at the end 98944
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0192     0.0178    89.1%
+  multi-key page              128     0.0202     0.0133    62.2%
+  single-key page              64     0.0155     0.0159    94.5%
+  multi-key page               64     0.0169     0.0101    59.5%
+  multi-key page              256     0.0111     0.0069    59.6%
+  multi-key page              384     0.0063     0.0051    73.7%
+  multi-key page              512     0.0052     0.0042    76.8%
+  single-key page             128     0.0014     0.0027    95.6%
+  N5                           64     0.0024     0.0010    34.5%
+  N12                         128     0.0024     0.0001     0.9%
+
+events of build stream (95335 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 388 | 4.1 | 11 / 16 / 20 |
+| build: page made | 1033 | 10.8 | 2 / 4 / 11 |
+| build: single-key page made | 1175 | 12.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 389 | 4.1 | 11 / 16 / 20 |
+| byte node put above a page | 1 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 27262 | 286.0 | 3 / 3 / 3 |
+| key added to a page in place | 10004 | 104.9 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 3346 | 35.1 | 7 / 9 / 12 |
+| page shrinks to a smaller class | 584 | 6.1 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1377 | 14.4 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 7 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1699 | 17.8 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 53 | 0.6 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 43 | 0.5 | 1 / 1 / 1 |
+| value added to a key in a page in place | 30853 | 323.6 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 137 | 1.4 | 1 / 1 / 1 |
+
+runtime, build: 0.132 allocations and 34.1 bytes a write
+
+
+## life str natural n=16384 (258918 writes in the cycle, 354807 in the build)
+
+churn (one steady-state cycle): 258918 writes; in place 96.0 %, one object for one 1.9 %, other 2.1 %
+  objects made 0.031 a write (3.0 bytes), dropped 0.031 (3.0 bytes)
+  LIFO free list: 83.1 % of the objects made taken from it; writes from drop to reuse median 149, p90 2732; bytes made in between median 384, p90 7584; held at most 186528 bytes, at the end 186528
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0121     0.0121    92.2%
+  single-key page              64     0.0047     0.0065   100.0%
+  multi-key page              128     0.0047     0.0037    78.7%
+  multi-key page              256     0.0033     0.0029    77.7%
+  multi-key page               64     0.0035     0.0017    48.0%
+  multi-key page              384     0.0011     0.0011    67.4%
+  single-key page             128     0.0002     0.0012   100.0%
+  N5                           64     0.0006     0.0006    91.7%
+  multi-key page              512     0.0003     0.0003    34.9%
+  single-key page             256     0.0000     0.0004   100.0%
+
+events of one steady-state cycle (258918 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 6 | 0.0 | 7 / 15 / 15 |
+| build: page made | 7 | 0.0 | 7 / 8 / 8 |
+| build: single-key page made | 7 | 0.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 6 | 0.0 | 7 / 15 / 15 |
+| entry removed from a page | 100905 | 389.7 | 3 / 3 / 3 |
+| key added to a page in place | 23967 | 92.6 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.0 | 6 / 6 / 6 |
+| merge tried (node with children that are pages) | 6038 | 23.3 | 7 / 10 / 12 |
+| page shrinks to a smaller class | 1295 | 5.0 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1312 | 5.1 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 2 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1311 | 5.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 99 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 96 | 0.4 | 1 / 1 / 1 |
+| value added to a key in a page in place | 75589 | 291.9 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 17 | 0.1 | 1 / 1 / 1 |
+
+runtime, churn: 0.033 allocations and 4.3 bytes a write
+
+build stream from empty: 354807 writes; in place 93.1 %, one object for one 5.0 %, other 1.9 %
+  objects made 0.080 a write (13.3 bytes), dropped 0.062 (9.9 bytes)
+  LIFO free list: 72.0 % of the objects made taken from it; writes from drop to reuse median 91, p90 2257; bytes made in between median 1152, p90 27488; held at most 220096 bytes, at the end 220096
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0148     0.0130    83.5%
+  multi-key page              128     0.0147     0.0121    74.8%
+  multi-key page              256     0.0122     0.0082    63.7%
+  multi-key page               64     0.0111     0.0080    72.2%
+  single-key page              64     0.0075     0.0080    97.2%
+  multi-key page              384     0.0070     0.0047    64.7%
+  multi-key page              512     0.0047     0.0036    75.1%
+  N5                           64     0.0024     0.0007    26.9%
+  single-key page             512     0.0011     0.0011    75.2%
+  N12                         128     0.0018     0.0001     4.1%
+
+events of build stream (354807 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1245 | 3.5 | 11 / 18 / 21 |
+| build: page made | 2978 | 8.4 | 3 / 6 / 12 |
+| build: single-key page made | 3156 | 8.9 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1245 | 3.5 | 11 / 18 / 21 |
+| entry removed from a page | 108041 | 304.5 | 3 / 3 / 3 |
+| key added to a page in place | 45017 | 126.9 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 8350 | 23.5 | 7 / 10 / 12 |
+| page shrinks to a smaller class | 1590 | 4.5 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2215 | 6.2 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 14 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 3674 | 10.4 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 76 | 0.2 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 72 | 0.2 | 1 / 1 / 1 |
+| value added to a key in a page in place | 120522 | 339.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 324 | 0.9 | 1 / 1 / 1 |
+
+runtime, build: 0.103 allocations and 29.7 bytes a write
+
+
+## life email single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 93.5 %, one object for one 5.4 %, other 1.1 %
+  objects made 0.060 a write (13.5 bytes), dropped 0.060 (13.5 bytes)
+  LIFO free list: 86.8 % of the objects made taken from it; writes from drop to reuse median 77, p90 1537; bytes made in between median 896, p90 20256; held at most 24576 bytes, at the end 24576
+  object                     size     made/w  dropped/w   reused
+  multi-key page              256     0.0193     0.0193    96.6%
+  multi-key page              384     0.0137     0.0137    69.2%
+  multi-key page              128     0.0125     0.0125    95.5%
+  single-key page              64     0.0083     0.0095   100.0%
+  single-key page              32     0.0022     0.0022    83.3%
+  multi-key page              512     0.0017     0.0017    66.7%
+  multi-key page               64     0.0021     0.0008    36.4%
+  N12                         128     0.0003     0.0003    66.7%
+  N26                         256     0.0003     0.0003    33.3%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| entry removed from a page | 5285 | 494.7 | 3 / 3 / 3 |
+| key added to a page in place | 5216 | 488.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 79 | 7.4 | 10 / 12 / 12 |
+| page shrinks to a smaller class | 280 | 26.2 | 3 / 3 / 3 |
+| page with one entry left becomes a single-key page | 69 | 6.5 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 69 | 6.5 | 2 / 2 / 2 |
+
+runtime, churn: 0.060 allocations and 13.5 bytes a write
+
+build stream from empty: 14748 writes; in place 71.7 %, one object for one 21.9 %, other 6.3 %
+  objects made 0.288 a write (44.1 bytes), dropped 0.240 (30.0 bytes)
+  LIFO free list: 67.5 % of the objects made taken from it; writes from drop to reuse median 10, p90 115; bytes made in between median 352, p90 5248; held at most 70880 bytes, at the end 70880
+  object                     size     made/w  dropped/w   reused
+  multi-key page              128     0.0905     0.0875    78.0%
+  single-key page              64     0.0756     0.0819    82.2%
+  multi-key page              256     0.0581     0.0336    51.8%
+  multi-key page               64     0.0207     0.0136    63.9%
+  multi-key page              384     0.0220     0.0064    26.8%
+  single-key page              32     0.0142     0.0142    69.9%
+  multi-key page              512     0.0039     0.0020    49.1%
+  N12                         128     0.0012     0.0012    47.1%
+  N26                         256     0.0018     0.0000     0.0%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 27 | 1.8 | 16 / 17 / 17 |
+| build: page made | 91 | 6.2 | 2 / 3 / 4 |
+| build: single-key page made | 228 | 15.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 27 | 1.8 | 16 / 17 / 17 |
+| entry removed from a page | 5063 | 343.3 | 3 / 3 / 3 |
+| key added to a page in place | 7561 | 512.7 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 20 | 1.4 | 11 / 12 / 12 |
+| page shrinks to a smaller class | 662 | 44.9 | 1 / 2 / 3 |
+| page with one entry left becomes a single-key page | 552 | 37.4 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1154 | 78.2 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 34 | 2.3 | 1 / 1 / 1 |
+
+runtime, build: 0.296 allocations and 47.1 bytes a write
+
+
+## life email single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 28.8 %, one object for one 33.7 %, other 37.6 %
+  objects made 0.525 a write (41.9 bytes), dropped 0.525 (41.9 bytes)
+  LIFO free list: 86.7 % of the objects made taken from it; writes from drop to reuse median 7, p90 114; bytes made in between median 192, p90 4704; held at most 226336 bytes, at the end 226336
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.2532     0.3081   100.0%
+  multi-key page              128     0.1354     0.1354    93.3%
+  single-key page              32     0.0616     0.0616    93.4%
+  multi-key page               64     0.0663     0.0114    17.2%
+  multi-key page              256     0.0080     0.0080    77.0%
+  N26                         256     0.0002     0.0002    71.4%
+  N12                         128     0.0002     0.0002    85.7%
+  multi-key page              384     0.0000     0.0000   100.0%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| entry removed from a page | 13361 | 312.1 | 1 / 3 / 3 |
+| key added to a page in place | 5533 | 129.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 1246 | 29.1 | 12 / 12 / 12 |
+| page shrinks to a smaller class | 5777 | 134.9 | 1 / 1 / 3 |
+| page with one entry left becomes a single-key page | 7783 | 181.8 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 7783 | 181.8 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 45 | 1.1 | 1 / 1 / 1 |
+
+runtime, churn: 0.525 allocations and 41.9 bytes a write
+
+build stream from empty: 58716 writes; in place 49.6 %, one object for one 24.5 %, other 25.8 %
+  objects made 0.557 a write (57.7 bytes), dropped 0.364 (39.5 bytes)
+  LIFO free list: 59.8 % of the objects made taken from it; writes from drop to reuse median 8, p90 129; bytes made in between median 320, p90 6976; held at most 418336 bytes, at the end 418336
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.2287     0.1685    71.6%
+  multi-key page              128     0.1291     0.0756    52.6%
+  single-key page              32     0.0799     0.0560    65.4%
+  multi-key page               64     0.0545     0.0161    29.6%
+  multi-key page              256     0.0201     0.0153    63.2%
+  multi-key page              384     0.0130     0.0130    55.0%
+  multi-key page              512     0.0123     0.0122    58.5%
+  N12                         128     0.0074     0.0073    74.3%
+  N26                         256     0.0120     0.0003     2.1%
+  single-key page             128     0.0000     0.0000     0.0%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 700 | 11.9 | 16 / 17 / 18 |
+| build: page made | 2322 | 39.5 | 2 / 3 / 6 |
+| build: single-key page made | 6237 | 106.2 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 700 | 11.9 | 16 / 17 / 18 |
+| entry removed from a page | 15312 | 260.8 | 3 / 3 / 3 |
+| key added to a page in place | 20793 | 354.1 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.0 | 8 / 8 / 8 |
+| merge tried (node with children that are pages) | 2887 | 49.2 | 11 / 12 / 12 |
+| page shrinks to a smaller class | 3476 | 59.2 | 1 / 1 / 3 |
+| page with one entry left becomes a single-key page | 4736 | 80.7 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 7326 | 124.8 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 113 | 1.9 | 1 / 1 / 1 |
+
+runtime, build: 0.610 allocations and 77.4 bytes a write
+
+
+## life email natural n=4096 (69746 writes in the cycle, 95335 in the build)
+
+churn (one steady-state cycle): 69746 writes; in place 90.4 %, one object for one 3.1 %, other 6.5 %
+  objects made 0.064 a write (6.0 bytes), dropped 0.064 (6.0 bytes)
+  LIFO free list: 81.7 % of the objects made taken from it; writes from drop to reuse median 50, p90 1014; bytes made in between median 256, p90 5472; held at most 109696 bytes, at the end 109696
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0339     0.0349    88.7%
+  single-key page              32     0.0111     0.0112    94.5%
+  multi-key page              128     0.0095     0.0060    57.6%
+  single-key page             128     0.0016     0.0050    99.1%
+  multi-key page              256     0.0032     0.0020    60.4%
+  multi-key page              384     0.0018     0.0017    81.3%
+  multi-key page               64     0.0018     0.0008    44.5%
+  N5                           64     0.0007     0.0007    82.7%
+  multi-key page              512     0.0007     0.0006    25.0%
+  single-key page             256     0.0000     0.0012     0.0%
+
+events of one steady-state cycle (69746 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1 | 0.0 | 3 / 3 / 3 |
+| build: single-key page made | 3 | 0.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1 | 0.0 | 3 / 3 / 3 |
+| entry removed from a page | 19337 | 277.2 | 3 / 3 / 3 |
+| key added to a page in place | 4058 | 58.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 3107 | 44.5 | 8 / 10 / 12 |
+| page shrinks to a smaller class | 538 | 7.7 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 782 | 11.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 783 | 11.2 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 45 | 0.6 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 44 | 0.6 | 1 / 1 / 1 |
+| value added to a key in a page in place | 14519 | 208.2 | 1 / 1 / 1 |
+
+runtime, churn: 0.068 allocations and 7.9 bytes a write
+
+build stream from empty: 95335 writes; in place 91.2 %, one object for one 5.1 %, other 3.7 %
+  objects made 0.097 a write (15.3 bytes), dropped 0.071 (11.3 bytes)
+  LIFO free list: 67.2 % of the objects made taken from it; writes from drop to reuse median 78, p90 3579; bytes made in between median 1024, p90 55424; held at most 125888 bytes, at the end 125888
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0335     0.0244    65.5%
+  multi-key page              128     0.0155     0.0125    77.8%
+  multi-key page              256     0.0108     0.0084    66.4%
+  single-key page              32     0.0088     0.0080    86.2%
+  multi-key page              384     0.0078     0.0059    64.4%
+  multi-key page              512     0.0051     0.0035    62.4%
+  single-key page             128     0.0036     0.0027    70.5%
+  multi-key page               64     0.0027     0.0021    78.1%
+  N12                         128     0.0026     0.0004    14.7%
+  single-key page             512     0.0012     0.0011    72.1%
+
+events of build stream (95335 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 304 | 3.2 | 9 / 14 / 16 |
+| build: page made | 364 | 3.8 | 2 / 2 / 4 |
+| build: single-key page made | 1845 | 19.4 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 304 | 3.2 | 9 / 14 / 16 |
+| entry removed from a page | 24931 | 261.5 | 3 / 3 / 3 |
+| key added to a page in place | 10158 | 106.6 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 1907 | 20.0 | 8 / 10 / 12 |
+| page shrinks to a smaller class | 573 | 6.0 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 627 | 6.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 4 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1186 | 12.4 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 37 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 33 | 0.3 | 1 / 1 / 1 |
+| value added to a key in a page in place | 28092 | 294.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 31 | 0.3 | 1 / 1 / 1 |
+
+runtime, build: 0.120 allocations and 30.5 bytes a write
+
+
+## life email natural n=16384 (258918 writes in the cycle, 354807 in the build)
+
+churn (one steady-state cycle): 258918 writes; in place 84.6 %, one object for one 8.0 %, other 7.5 %
+  objects made 0.118 a write (11.1 bytes), dropped 0.118 (11.1 bytes)
+  LIFO free list: 81.1 % of the objects made taken from it; writes from drop to reuse median 29, p90 465; bytes made in between median 256, p90 4864; held at most 786976 bytes, at the end 786976
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0535     0.0563    98.4%
+  multi-key page              128     0.0358     0.0238    61.5%
+  single-key page              32     0.0122     0.0122    92.9%
+  single-key page             128     0.0019     0.0138   100.0%
+  multi-key page              256     0.0073     0.0044    51.5%
+  multi-key page               64     0.0060     0.0032    53.4%
+  single-key page             256     0.0001     0.0029   100.0%
+  N5                           64     0.0008     0.0008    79.0%
+  multi-key page              384     0.0003     0.0002    41.2%
+  multi-key page              512     0.0001     0.0000    19.0%
+
+events of one steady-state cycle (258918 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 4 | 0.0 | 2 / 5 / 5 |
+| build: single-key page made | 11 | 0.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 4 | 0.0 | 2 / 5 / 5 |
+| entry removed from a page | 73856 | 285.2 | 2 / 3 / 3 |
+| key added to a page in place | 8438 | 32.6 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 948 | 3.7 | 4 / 12 / 12 |
+| page shrinks to a smaller class | 6193 | 23.9 | 1 / 2 / 3 |
+| page with one entry left becomes a single-key page | 9865 | 38.1 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 2 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 9869 | 38.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 216 | 0.8 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 212 | 0.8 | 1 / 1 / 1 |
+| value added to a key in a page in place | 55477 | 214.3 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 44 | 0.2 | 1 / 1 / 1 |
+
+runtime, churn: 0.125 allocations and 14.0 bytes a write
+
+build stream from empty: 354807 writes; in place 80.5 %, one object for one 10.7 %, other 8.9 %
+  objects made 0.183 a write (20.6 bytes), dropped 0.149 (16.1 bytes)
+  LIFO free list: 72.3 % of the objects made taken from it; writes from drop to reuse median 25, p90 528; bytes made in between median 384, p90 9952; held at most 794432 bytes, at the end 794432
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0768     0.0671    82.3%
+  multi-key page              128     0.0456     0.0302    62.4%
+  single-key page              32     0.0192     0.0185    86.0%
+  multi-key page              256     0.0121     0.0062    46.0%
+  single-key page             128     0.0047     0.0107    93.7%
+  multi-key page               64     0.0093     0.0057    60.9%
+  multi-key page              384     0.0036     0.0029    76.8%
+  multi-key page              512     0.0030     0.0028    75.7%
+  N12                         128     0.0017     0.0017    62.2%
+  single-key page             256     0.0013     0.0014    78.2%
+
+events of build stream (354807 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 983 | 2.8 | 13 / 16 / 17 |
+| build: page made | 1791 | 5.0 | 2 / 3 / 5 |
+| build: single-key page made | 6625 | 18.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 984 | 2.8 | 13 / 16 / 17 |
+| byte node put above a page | 1 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 73003 | 205.8 | 2 / 3 / 3 |
+| key added to a page in place | 19350 | 54.5 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 4021 | 11.3 | 11 / 12 / 12 |
+| page shrinks to a smaller class | 7917 | 22.3 | 1 / 2 / 3 |
+| page with one entry left becomes a single-key page | 12291 | 34.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 36 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 15448 | 43.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 163 | 0.5 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 145 | 0.4 | 1 / 1 / 1 |
+| value added to a key in a page in place | 82511 | 232.6 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 148 | 0.4 | 1 / 1 / 1 |
+
+runtime, build: 0.207 allocations and 34.8 bytes a write
+
+
+## life url single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 55.8 %, one object for one 20.6 %, other 23.5 %
+  objects made 0.337 a write (56.1 bytes), dropped 0.337 (56.0 bytes)
+  LIFO free list: 83.2 % of the objects made taken from it; writes from drop to reuse median 16, p90 183; bytes made in between median 768, p90 10496; held at most 107312 bytes, at the end 107312
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0755     0.1051   100.0%
+  single-key page              64     0.0800     0.0818    94.6%
+  multi-key page              256     0.0680     0.0555    79.0%
+  multi-key page              128     0.0570     0.0273    47.6%
+  multi-key page              384     0.0257     0.0256    95.3%
+  multi-key page              512     0.0098     0.0098    69.5%
+  single-key page             256     0.0019     0.0144   100.0%
+  single-key page              32     0.0069     0.0071    93.2%
+  N5                           64     0.0068     0.0069    87.7%
+  multi-key page               64     0.0037     0.0020    48.7%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 20 | 1.9 | 8 / 10 / 11 |
+| build: page made | 28 | 2.6 | 5 / 8 / 9 |
+| build: single-key page made | 39 | 3.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 21 | 2.0 | 8 / 10 / 11 |
+| byte node put above a page | 3 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 4084 | 382.3 | 3 / 3 / 3 |
+| key added to a page in place | 3087 | 288.9 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 12 | 1.1 | 4 / 5 / 5 |
+| merge tried (node with children that are pages) | 2312 | 216.4 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 783 | 73.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 959 | 89.8 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 952 | 89.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 11 | 1.0 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 52 | 4.9 | 1 / 1 / 1 |
+
+runtime, churn: 0.361 allocations and 59.3 bytes a write
+
+build stream from empty: 14748 writes; in place 50.3 %, one object for one 26.6 %, other 23.1 %
+  objects made 0.533 a write (102.8 bytes), dropped 0.381 (75.7 bytes)
+  LIFO free list: 68.6 % of the objects made taken from it; writes from drop to reuse median 13, p90 118; bytes made in between median 1152, p90 11712; held at most 45760 bytes, at the end 45760
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0972     0.0882    87.4%
+  multi-key page              256     0.1079     0.0733    66.5%
+  single-key page              64     0.1040     0.0753    70.0%
+  multi-key page              128     0.0736     0.0413    55.6%
+  multi-key page              384     0.0585     0.0441    74.2%
+  multi-key page              512     0.0376     0.0295    76.9%
+  N5                           64     0.0241     0.0102    41.4%
+  single-key page              32     0.0098     0.0062    61.4%
+  N12                         128     0.0119     0.0031    26.1%
+  single-key page             256     0.0022     0.0078    96.9%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 360 | 24.4 | 9 / 10 / 18 |
+| build: page made | 647 | 43.9 | 3 / 6 / 16 |
+| build: single-key page made | 808 | 54.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 362 | 24.5 | 9 / 10 / 18 |
+| byte node put above a page | 9 | 0.6 | 1 / 1 / 1 |
+| entry removed from a page | 4192 | 284.2 | 3 / 3 / 3 |
+| key added to a page in place | 5394 | 365.7 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 3 | 0.2 | 3 / 3 / 3 |
+| merge tried (node with children that are pages) | 2115 | 143.4 | 6 / 11 / 12 |
+| page shrinks to a smaller class | 673 | 45.6 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 856 | 58.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1481 | 100.4 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 10 | 0.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 271 | 18.4 | 1 / 1 / 1 |
+
+runtime, build: 0.615 allocations and 128.1 bytes a write
+
+
+## life url single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 56.9 %, one object for one 20.6 %, other 22.5 %
+  objects made 0.331 a write (53.8 bytes), dropped 0.331 (53.7 bytes)
+  LIFO free list: 84.1 % of the objects made taken from it; writes from drop to reuse median 17, p90 252; bytes made in between median 768, p90 13488; held at most 357920 bytes, at the end 357920
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0812     0.0841    96.6%
+  single-key page             128     0.0666     0.0984    99.9%
+  multi-key page              256     0.0617     0.0522    82.7%
+  multi-key page              128     0.0643     0.0324    49.7%
+  multi-key page              384     0.0241     0.0241    97.8%
+  multi-key page              512     0.0101     0.0101    84.6%
+  single-key page              32     0.0078     0.0079    92.5%
+  N5                           64     0.0067     0.0068    89.2%
+  single-key page             256     0.0011     0.0105   100.0%
+  multi-key page               64     0.0050     0.0022    44.4%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 63 | 1.5 | 8 / 10 / 13 |
+| build: page made | 113 | 2.6 | 4 / 8 / 12 |
+| build: single-key page made | 103 | 2.4 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 71 | 1.7 | 8 / 10 / 13 |
+| byte node put above a page | 10 | 0.2 | 1 / 1 / 1 |
+| entry removed from a page | 16590 | 387.5 | 3 / 3 / 3 |
+| key added to a page in place | 12622 | 294.8 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 33 | 0.8 | 4 / 5 / 6 |
+| merge tried (node with children that are pages) | 9345 | 218.3 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 3161 | 73.8 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 3776 | 88.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 3731 | 87.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 42 | 1.0 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 251 | 5.9 | 1 / 1 / 1 |
+
+runtime, churn: 0.347 allocations and 56.2 bytes a write
+
+build stream from empty: 58716 writes; in place 50.7 %, one object for one 26.5 %, other 22.8 %
+  objects made 0.531 a write (98.9 bytes), dropped 0.382 (72.8 bytes)
+  LIFO free list: 69.2 % of the objects made taken from it; writes from drop to reuse median 13, p90 144; bytes made in between median 1088, p90 14064; held at most 157584 bytes, at the end 157584
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.1113     0.0835    72.9%
+  multi-key page              256     0.1031     0.0694    66.0%
+  single-key page             128     0.0861     0.0814    91.2%
+  multi-key page              128     0.0817     0.0452    54.5%
+  multi-key page              384     0.0529     0.0400    75.0%
+  multi-key page              512     0.0360     0.0286    78.7%
+  N5                           64     0.0247     0.0111    43.7%
+  single-key page              32     0.0112     0.0083    71.4%
+  N12                         128     0.0123     0.0029    23.4%
+  multi-key page               64     0.0069     0.0039    56.5%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1428 | 24.3 | 9 / 11 / 21 |
+| build: page made | 2658 | 45.3 | 3 / 7 / 15 |
+| build: single-key page made | 3138 | 53.4 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1440 | 24.5 | 9 / 11 / 21 |
+| byte node put above a page | 51 | 0.9 | 1 / 1 / 1 |
+| entry removed from a page | 16651 | 283.6 | 3 / 3 / 3 |
+| key added to a page in place | 21494 | 366.1 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 15 | 0.3 | 4 / 4 / 5 |
+| merge tried (node with children that are pages) | 8703 | 148.2 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 2662 | 45.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 3651 | 62.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 6024 | 102.6 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 52 | 0.9 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 1160 | 19.8 | 1 / 1 / 1 |
+
+runtime, build: 0.614 allocations and 125.1 bytes a write
+
+
+## life url natural n=4096 (69746 writes in the cycle, 95335 in the build)
+
+churn (one steady-state cycle): 69746 writes; in place 88.7 %, one object for one 4.9 %, other 6.4 %
+  objects made 0.085 a write (13.4 bytes), dropped 0.085 (13.4 bytes)
+  LIFO free list: 80.1 % of the objects made taken from it; writes from drop to reuse median 61, p90 880; bytes made in between median 704, p90 11296; held at most 226576 bytes, at the end 226576
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0230     0.0286    99.5%
+  single-key page              64     0.0203     0.0205    91.2%
+  multi-key page              256     0.0175     0.0115    61.8%
+  multi-key page              128     0.0100     0.0044    42.8%
+  multi-key page              384     0.0049     0.0047    83.4%
+  single-key page             256     0.0010     0.0070   100.0%
+  N5                           64     0.0028     0.0028    82.8%
+  single-key page              32     0.0022     0.0022    92.1%
+  multi-key page              512     0.0018     0.0018    67.5%
+  multi-key page               64     0.0005     0.0003    45.9%
+
+events of one steady-state cycle (69746 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 18 | 0.3 | 6 / 8 / 8 |
+| build: page made | 24 | 0.3 | 4 / 6 / 7 |
+| build: single-key page made | 24 | 0.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 18 | 0.3 | 6 / 8 / 8 |
+| byte node put above a page | 10 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 20599 | 295.3 | 3 / 3 / 3 |
+| key added to a page in place | 3369 | 48.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 7 | 0.1 | 3 / 4 / 4 |
+| merge tried (node with children that are pages) | 4106 | 58.9 | 5 / 9 / 12 |
+| page shrinks to a smaller class | 964 | 13.8 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1477 | 21.2 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 2 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1470 | 21.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 76 | 1.1 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 55 | 0.8 | 1 / 1 / 1 |
+| value added to a key in a page in place | 15701 | 225.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 59 | 0.8 | 1 / 1 / 1 |
+
+runtime, churn: 0.091 allocations and 15.7 bytes a write
+
+build stream from empty: 95335 writes; in place 85.5 %, one object for one 7.7 %, other 6.7 %
+  objects made 0.147 a write (28.3 bytes), dropped 0.115 (22.5 bytes)
+  LIFO free list: 72.9 % of the objects made taken from it; writes from drop to reuse median 44, p90 602; bytes made in between median 1152, p90 15888; held at most 152752 bytes, at the end 152752
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0321     0.0287    84.0%
+  single-key page              64     0.0278     0.0245    83.3%
+  multi-key page              256     0.0272     0.0188    67.2%
+  multi-key page              384     0.0143     0.0115    78.5%
+  multi-key page              128     0.0152     0.0093    60.9%
+  multi-key page              512     0.0102     0.0083    78.0%
+  N5                           64     0.0078     0.0033    38.0%
+  single-key page             256     0.0028     0.0044    91.3%
+  single-key page              32     0.0029     0.0025    83.2%
+  N12                         128     0.0024     0.0006    23.5%
+
+events of build stream (95335 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 655 | 6.9 | 7 / 10 / 16 |
+| build: page made | 952 | 10.0 | 3 / 6 / 11 |
+| build: single-key page made | 1435 | 15.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 659 | 6.9 | 7 / 10 / 16 |
+| byte node put above a page | 16 | 0.2 | 1 / 1 / 1 |
+| entry removed from a page | 22055 | 231.3 | 3 / 3 / 3 |
+| key added to a page in place | 6857 | 71.9 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 9 | 0.1 | 3 / 4 / 4 |
+| merge tried (node with children that are pages) | 4580 | 48.0 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 1215 | 12.7 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1724 | 18.1 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 18 | 0.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2322 | 24.4 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 73 | 0.8 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 57 | 0.6 | 1 / 1 / 1 |
+| value added to a key in a page in place | 24402 | 256.0 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 328 | 3.4 | 1 / 1 / 1 |
+
+runtime, build: 0.184 allocations and 48.0 bytes a write
+
+
+## life url natural n=16384 (258918 writes in the cycle, 354807 in the build)
+
+churn (one steady-state cycle): 258918 writes; in place 88.6 %, one object for one 5.1 %, other 6.3 %
+  objects made 0.087 a write (13.0 bytes), dropped 0.087 (13.0 bytes)
+  LIFO free list: 80.2 % of the objects made taken from it; writes from drop to reuse median 60, p90 890; bytes made in between median 640, p90 10816; held at most 810976 bytes, at the end 810976
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0206     0.0271    99.9%
+  single-key page              64     0.0223     0.0228    92.2%
+  multi-key page              256     0.0161     0.0108    63.1%
+  multi-key page              128     0.0125     0.0060    46.6%
+  multi-key page              384     0.0045     0.0041    82.8%
+  single-key page              32     0.0036     0.0036    93.1%
+  single-key page             256     0.0008     0.0061   100.0%
+  N5                           64     0.0029     0.0029    81.4%
+  multi-key page              512     0.0016     0.0015    70.0%
+  multi-key page               64     0.0013     0.0007    57.5%
+
+events of one steady-state cycle (258918 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 67 | 0.3 | 7 / 9 / 10 |
+| build: page made | 81 | 0.3 | 3 / 6 / 7 |
+| build: single-key page made | 137 | 0.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 67 | 0.3 | 7 / 9 / 10 |
+| byte node put above a page | 13 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 78890 | 304.7 | 3 / 3 / 3 |
+| key added to a page in place | 13822 | 53.4 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 29 | 0.1 | 3 / 4 / 5 |
+| merge tried (node with children that are pages) | 15443 | 59.6 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 3672 | 14.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 5844 | 22.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 30 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 5814 | 22.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 294 | 1.1 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 239 | 0.9 | 1 / 1 / 1 |
+| value added to a key in a page in place | 59114 | 228.3 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 224 | 0.9 | 1 / 1 / 1 |
+
+runtime, churn: 0.094 allocations and 15.9 bytes a write
+
+panic: test timed out after 30m0s
+	running tests:
+		TestLifeProbe (30m0s)
+
+goroutine 44 [running]:
+testing.(*M).startAlarm.func1()
+	/usr/local/go/src/testing/testing.go:2961 +0x34a
+created by time.goFunc
+	/usr/local/go/src/time/sleep.go:182 +0x2d
+
+goroutine 1 [chan receive, 30 minutes]:
+testing.(*T).Run(0x1adafe1e2248, {0x62e922?, 0x1adafe1edaa0?}, 0x1314cd8)
+	/usr/local/go/src/testing/testing.go:2268 +0x4f2
+testing.runTests.func1(0x1adafe1e2248)
+	/usr/local/go/src/testing/testing.go:2744 +0x37
+testing.tRunner(0x1adafe1e2248, 0x1adafe1edbc8)
+	/usr/local/go/src/testing/testing.go:2195 +0xea
+testing.runTests({0x636671, 0x22}, {0x639c3b, 0x2c}, 0x1adafe1be138, {0x1338c20, 0x14, 0x14}, {0xc2aaa7a648345289, 0x1a3185e8e93, ...})
+	/usr/local/go/src/testing/testing.go:2742 +0x510
+testing.(*M).Run(0x1adafe1ac140)
+	/usr/local/go/src/testing/testing.go:2602 +0x6af
+main.main()
+	_testmain.go:84 +0x9b
+
+goroutine 19 [runnable]:
+github.com/TomTonic/multimap/bench/cmd/bench.trace(0x1adb0190fd88, 0x1adafe1f22c8, {0x1adb02f6c000, 0x569f7, 0x4e?})
+	/mnt/c/temp/code/multi_map-layout/bench/cmd/bench/lifeprobe_test.go:157 +0x43b
+github.com/TomTonic/multimap/bench/cmd/bench.lifeCase(0x1adafe1e2488, {0x1adafe0aa046, 0x3}, {0x1adafe0aa01b, 0x7}, 0x4000)
+	/mnt/c/temp/code/multi_map-layout/bench/cmd/bench/lifeprobe_test.go:75 +0x5fb
+github.com/TomTonic/multimap/bench/cmd/bench.TestLifeProbe(0x1adafe1e2488)
+	/mnt/c/temp/code/multi_map-layout/bench/cmd/bench/lifeprobe_test.go:39 +0x1cb
+testing.tRunner(0x1adafe1e2488, 0x1314cd8)
+	/usr/local/go/src/testing/testing.go:2195 +0xea
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go/src/testing/testing.go:2260 +0x4d4
+FAIL	github.com/TomTonic/multimap/bench/cmd/bench	1800.027s
+FAIL
+
+## life url natural n=16384 (258918 writes in the cycle, 354807 in the build)
+
+churn (one steady-state cycle): 258918 writes; in place 88.6 %, one object for one 5.1 %, other 6.3 %
+  objects made 0.087 a write (13.0 bytes), dropped 0.087 (13.0 bytes)
+  LIFO free list: 80.2 % of the objects made taken from it; writes from drop to reuse median 60, p90 890; bytes made in between median 640, p90 10848; held at most 810976 bytes, at the end 810976
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0206     0.0271    99.9%
+  single-key page              64     0.0223     0.0228    92.2%
+  multi-key page              256     0.0161     0.0108    63.1%
+  multi-key page              128     0.0125     0.0060    46.6%
+  multi-key page              384     0.0045     0.0041    82.8%
+  single-key page              32     0.0036     0.0036    93.1%
+  single-key page             256     0.0008     0.0061   100.0%
+  N5                           64     0.0029     0.0029    81.4%
+  multi-key page              512     0.0016     0.0015    70.0%
+  multi-key page               64     0.0013     0.0007    57.5%
+
+events of one steady-state cycle (258918 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 67 | 0.3 | 7 / 9 / 10 |
+| build: page made | 81 | 0.3 | 3 / 6 / 7 |
+| build: single-key page made | 137 | 0.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 67 | 0.3 | 7 / 9 / 10 |
+| byte node put above a page | 13 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 78890 | 304.7 | 3 / 3 / 3 |
+| key added to a page in place | 13822 | 53.4 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 29 | 0.1 | 3 / 4 / 5 |
+| merge tried (node with children that are pages) | 15443 | 59.6 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 3672 | 14.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 5844 | 22.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 30 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 5814 | 22.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 294 | 1.1 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 239 | 0.9 | 1 / 1 / 1 |
+| value added to a key in a page in place | 59114 | 228.3 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 224 | 0.9 | 1 / 1 / 1 |
+
+runtime, churn: 0.094 allocations and 16.1 bytes a write
+
+build stream from empty: 354807 writes; in place 85.2 %, one object for one 8.1 %, other 6.8 %
+  objects made 0.153 a write (28.5 bytes), dropped 0.119 (22.5 bytes)
+  LIFO free list: 72.8 % of the objects made taken from it; writes from drop to reuse median 43, p90 634; bytes made in between median 1152, p90 16544; held at most 548976 bytes, at the end 548976
+  object                     size     made/w  dropped/w   reused
+  single-key page             128     0.0299     0.0279    86.7%
+  single-key page              64     0.0304     0.0267    83.7%
+  multi-key page              256     0.0273     0.0186    65.8%
+  multi-key page              128     0.0184     0.0109    58.8%
+  multi-key page              384     0.0140     0.0110    76.0%
+  multi-key page              512     0.0100     0.0084    81.1%
+  N5                           64     0.0084     0.0036    40.0%
+  single-key page              32     0.0039     0.0036    87.3%
+  single-key page             256     0.0025     0.0042    94.1%
+  N12                         128     0.0026     0.0006    22.8%
+
+events of build stream (354807 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 2556 | 7.2 | 8 / 10 / 18 |
+| build: page made | 3849 | 10.8 | 3 / 6 / 13 |
+| build: single-key page made | 5416 | 15.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 2565 | 7.2 | 8 / 10 / 18 |
+| byte node put above a page | 73 | 0.2 | 1 / 1 / 1 |
+| entry removed from a page | 84797 | 239.0 | 3 / 3 / 3 |
+| key added to a page in place | 28041 | 79.0 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 33 | 0.1 | 3 / 4 / 5 |
+| merge tried (node with children that are pages) | 18080 | 51.0 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 4590 | 12.9 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 7043 | 19.9 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 34 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 9400 | 26.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 295 | 0.8 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 175 | 0.5 | 1 / 1 / 1 |
+| value added to a key in a page in place | 93296 | 262.9 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 1285 | 3.6 | 1 / 1 / 1 |
+
+runtime, build: 0.190 allocations and 48.7 bytes a write
+
+PASS
+
+## life path single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 65.9 %, one object for one 16.7 %, other 17.4 %
+  objects made 0.266 a write (41.0 bytes), dropped 0.266 (41.0 bytes)
+  LIFO free list: 80.4 % of the objects made taken from it; writes from drop to reuse median 21, p90 300; bytes made in between median 768, p90 12032; held at most 84944 bytes, at the end 84944
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0751     0.0810    96.4%
+  multi-key page              128     0.0622     0.0314    49.6%
+  single-key page             128     0.0285     0.0594   100.0%
+  multi-key page              256     0.0408     0.0356    86.0%
+  multi-key page              384     0.0198     0.0198    93.4%
+  single-key page              32     0.0121     0.0121    89.9%
+  multi-key page              512     0.0091     0.0090    73.2%
+  N5                           64     0.0072     0.0072    89.6%
+  multi-key page               64     0.0088     0.0029    31.9%
+  single-key page             256     0.0005     0.0058   100.0%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 12 | 1.1 | 9 / 13 / 18 |
+| build: page made | 23 | 2.2 | 5 / 9 / 17 |
+| build: single-key page made | 18 | 1.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 16 | 1.5 | 9 / 13 / 18 |
+| byte node put above a page | 5 | 0.5 | 1 / 1 / 1 |
+| entry removed from a page | 4413 | 413.0 | 3 / 3 / 3 |
+| key added to a page in place | 3596 | 336.6 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 5 | 0.5 | 4 / 6 / 6 |
+| merge tried (node with children that are pages) | 1797 | 168.2 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 604 | 56.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 761 | 71.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 753 | 70.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 12 | 1.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 62 | 5.8 | 1 / 1 / 1 |
+
+runtime, churn: 0.278 allocations and 43.0 bytes a write
+
+build stream from empty: 14748 writes; in place 54.9 %, one object for one 25.1 %, other 20.0 %
+  objects made 0.491 a write (88.5 bytes), dropped 0.356 (65.5 bytes)
+  LIFO free list: 67.9 % of the objects made taken from it; writes from drop to reuse median 15, p90 145; bytes made in between median 1120, p90 12320; held at most 51232 bytes, at the end 51232
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.1121     0.0903    78.4%
+  multi-key page              128     0.0949     0.0528    54.9%
+  multi-key page              256     0.0835     0.0564    67.3%
+  single-key page             128     0.0456     0.0561    93.2%
+  multi-key page              384     0.0488     0.0363    73.5%
+  multi-key page              512     0.0345     0.0278    78.8%
+  N5                           64     0.0263     0.0102    38.4%
+  single-key page              32     0.0175     0.0124    65.9%
+  multi-key page               64     0.0114     0.0041    36.3%
+  N12                         128     0.0087     0.0026    30.5%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 348 | 23.6 | 10 / 12 / 25 |
+| build: page made | 668 | 45.3 | 3 / 8 / 17 |
+| build: single-key page made | 613 | 41.6 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 351 | 23.8 | 10 / 12 / 25 |
+| byte node put above a page | 13 | 0.9 | 1 / 1 / 1 |
+| entry removed from a page | 4364 | 295.9 | 3 / 3 / 3 |
+| key added to a page in place | 5662 | 383.9 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 4 | 0.3 | 3 / 5 / 5 |
+| merge tried (node with children that are pages) | 1849 | 125.4 | 6 / 11 / 12 |
+| page shrinks to a smaller class | 548 | 37.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 834 | 56.6 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1431 | 97.0 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 21 | 1.4 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 336 | 22.8 | 1 / 1 / 1 |
+
+runtime, build: 0.571 allocations and 115.5 bytes a write
+
+
+## life path single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 70.1 %, one object for one 15.2 %, other 14.6 %
+  objects made 0.237 a write (33.3 bytes), dropped 0.237 (33.3 bytes)
+  LIFO free list: 82.7 % of the objects made taken from it; writes from drop to reuse median 24, p90 356; bytes made in between median 704, p90 11824; held at most 230608 bytes, at the end 230608
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0665     0.0759    98.9%
+  multi-key page              128     0.0596     0.0360    59.3%
+  multi-key page              256     0.0306     0.0286    91.8%
+  single-key page             128     0.0175     0.0410   100.0%
+  single-key page              32     0.0179     0.0181    95.2%
+  multi-key page              384     0.0149     0.0148    93.9%
+  multi-key page               64     0.0135     0.0042    30.8%
+  multi-key page              512     0.0066     0.0066    84.2%
+  N5                           64     0.0064     0.0064    88.0%
+  single-key page             256     0.0003     0.0023   100.0%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 39 | 0.9 | 9 / 12 / 13 |
+| build: page made | 80 | 1.9 | 5 / 9 / 12 |
+| build: single-key page made | 38 | 0.9 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 53 | 1.2 | 9 / 12 / 13 |
+| byte node put above a page | 15 | 0.4 | 1 / 1 / 1 |
+| entry removed from a page | 18282 | 427.0 | 3 / 3 / 3 |
+| key added to a page in place | 15270 | 356.7 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 16 | 0.4 | 4 / 6 / 6 |
+| merge tried (node with children that are pages) | 6654 | 155.4 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 2234 | 52.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2754 | 64.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2727 | 63.7 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 40 | 0.9 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 268 | 6.3 | 1 / 1 / 1 |
+
+runtime, churn: 0.246 allocations and 35.0 bytes a write
+
+build stream from empty: 58716 writes; in place 61.6 %, one object for one 22.3 %, other 16.2 %
+  objects made 0.429 a write (77.6 bytes), dropped 0.308 (57.0 bytes)
+  LIFO free list: 68.0 % of the objects made taken from it; writes from drop to reuse median 17, p90 162; bytes made in between median 1088, p90 12192; held at most 140560 bytes, at the end 140560
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0935     0.0760    79.9%
+  multi-key page              128     0.0863     0.0521    59.4%
+  multi-key page              256     0.0706     0.0484    67.8%
+  multi-key page              384     0.0440     0.0333    74.9%
+  single-key page             128     0.0280     0.0372    95.0%
+  multi-key page              512     0.0331     0.0259    77.5%
+  single-key page              32     0.0235     0.0161    65.9%
+  N5                           64     0.0232     0.0079    32.3%
+  multi-key page               64     0.0138     0.0061    44.0%
+  N12                         128     0.0071     0.0017    24.2%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1310 | 22.3 | 10 / 14 / 30 |
+| build: page made | 2722 | 46.4 | 4 / 8 / 19 |
+| build: single-key page made | 2175 | 37.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1348 | 23.0 | 10 / 14 / 30 |
+| byte node put above a page | 50 | 0.9 | 1 / 1 / 1 |
+| entry removed from a page | 18133 | 308.8 | 3 / 3 / 3 |
+| key added to a page in place | 25219 | 429.5 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 15 | 0.3 | 3 / 5 / 5 |
+| merge tried (node with children that are pages) | 6290 | 107.1 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 1909 | 32.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2694 | 45.9 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 4654 | 79.3 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 1 | 0.0 | 1 / 1 / 1 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 51 | 0.9 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 1180 | 20.1 | 1 / 1 / 1 |
+
+runtime, build: 0.506 allocations and 104.7 bytes a write
+
+
+## life path natural n=4096 (69746 writes in the cycle, 95335 in the build)
+
+churn (one steady-state cycle): 69746 writes; in place 90.8 %, one object for one 4.2 %, other 5.0 %
+  objects made 0.071 a write (9.7 bytes), dropped 0.071 (9.7 bytes)
+  LIFO free list: 75.2 % of the objects made taken from it; writes from drop to reuse median 72, p90 899; bytes made in between median 640, p90 8272; held at most 203344 bytes, at the end 203344
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0224     0.0232    91.2%
+  single-key page             128     0.0088     0.0162   100.0%
+  multi-key page              128     0.0136     0.0061    42.8%
+  multi-key page              256     0.0105     0.0063    56.1%
+  single-key page              32     0.0055     0.0055    90.3%
+  multi-key page              384     0.0034     0.0032    84.7%
+  single-key page             256     0.0004     0.0045   100.0%
+  N5                           64     0.0024     0.0024    77.0%
+  multi-key page              512     0.0015     0.0014    63.1%
+  multi-key page               64     0.0015     0.0007    44.1%
+
+events of one steady-state cycle (69746 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 12 | 0.2 | 9 / 9 / 11 |
+| build: page made | 20 | 0.3 | 3 / 8 / 8 |
+| build: single-key page made | 16 | 0.2 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 13 | 0.2 | 9 / 9 / 11 |
+| byte node put above a page | 5 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 22487 | 322.4 | 3 / 3 / 3 |
+| key added to a page in place | 3995 | 57.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 4 | 0.1 | 4 / 5 / 5 |
+| merge tried (node with children that are pages) | 3349 | 48.0 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 725 | 10.4 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1351 | 19.4 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 14 | 0.2 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1344 | 19.3 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 81 | 1.2 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 69 | 1.0 | 1 / 1 / 1 |
+| value added to a key in a page in place | 17112 | 245.3 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 50 | 0.7 | 1 / 1 / 1 |
+
+runtime, churn: 0.079 allocations and 12.9 bytes a write
+
+build stream from empty: 95335 writes; in place 87.3 %, one object for one 7.2 %, other 5.5 %
+  objects made 0.134 a write (24.1 bytes), dropped 0.104 (18.9 bytes)
+  LIFO free list: 71.1 % of the objects made taken from it; writes from drop to reuse median 50, p90 684; bytes made in between median 1184, p90 15216; held at most 141488 bytes, at the end 141488
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0308     0.0271    83.4%
+  multi-key page              256     0.0207     0.0139    65.2%
+  multi-key page              128     0.0217     0.0125    56.1%
+  single-key page             128     0.0157     0.0180    92.6%
+  multi-key page              384     0.0122     0.0093    75.7%
+  multi-key page              512     0.0092     0.0078    80.5%
+  single-key page              32     0.0059     0.0054    86.7%
+  N5                           64     0.0075     0.0027    31.7%
+  single-key page             256     0.0015     0.0025    92.4%
+  multi-key page               64     0.0022     0.0014    61.9%
+
+events of build stream (95335 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 649 | 6.8 | 8 / 11 / 19 |
+| build: page made | 999 | 10.5 | 3 / 7 / 12 |
+| build: single-key page made | 1194 | 12.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 657 | 6.9 | 8 / 11 / 19 |
+| byte node put above a page | 24 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 24126 | 253.1 | 3 / 3 / 3 |
+| key added to a page in place | 7555 | 79.2 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 4 | 0.0 | 3 / 5 / 5 |
+| merge tried (node with children that are pages) | 3886 | 40.8 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 903 | 9.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1654 | 17.3 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 11 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2255 | 23.7 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 76 | 0.8 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 42 | 0.4 | 1 / 1 / 1 |
+| value added to a key in a page in place | 26898 | 282.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 348 | 3.7 | 1 / 1 / 1 |
+
+runtime, build: 0.171 allocations and 45.4 bytes a write
+
+
+## life path natural n=16384 (258918 writes in the cycle, 354807 in the build)
+
+churn (one steady-state cycle): 258918 writes; in place 91.1 %, one object for one 4.3 %, other 4.6 %
+  objects made 0.070 a write (9.0 bytes), dropped 0.070 (9.0 bytes)
+  LIFO free list: 77.5 % of the objects made taken from it; writes from drop to reuse median 81, p90 1145; bytes made in between median 640, p90 9712; held at most 637216 bytes, at the end 637216
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0207     0.0223    94.0%
+  multi-key page              128     0.0146     0.0071    46.7%
+  single-key page             128     0.0066     0.0141   100.0%
+  single-key page              32     0.0076     0.0077    93.0%
+  multi-key page              256     0.0090     0.0061    64.1%
+  N5                           64     0.0030     0.0030    82.2%
+  multi-key page              384     0.0030     0.0029    89.0%
+  multi-key page               64     0.0031     0.0016    52.0%
+  single-key page             256     0.0002     0.0031   100.0%
+  multi-key page              512     0.0015     0.0014    63.3%
+
+events of one steady-state cycle (258918 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 70 | 0.3 | 8 / 10 / 12 |
+| build: page made | 100 | 0.4 | 5 / 8 / 12 |
+| build: single-key page made | 59 | 0.2 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 72 | 0.3 | 8 / 11 / 12 |
+| byte node put above a page | 31 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 87939 | 339.6 | 3 / 3 / 3 |
+| key added to a page in place | 17083 | 66.0 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 6 | 0.0 | 4 / 6 / 6 |
+| merge tried (node with children that are pages) | 12734 | 49.2 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 2790 | 10.8 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 4815 | 18.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 14 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 4787 | 18.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 285 | 1.1 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 188 | 0.7 | 1 / 1 / 1 |
+| value added to a key in a page in place | 65918 | 254.6 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 242 | 0.9 | 1 / 1 / 1 |
+
+runtime, churn: 0.076 allocations and 11.7 bytes a write
+
+build stream from empty: 354807 writes; in place 87.9 %, one object for one 7.0 %, other 5.1 %
+  objects made 0.131 a write (23.2 bytes), dropped 0.101 (18.2 bytes)
+  LIFO free list: 71.4 % of the objects made taken from it; writes from drop to reuse median 54, p90 784; bytes made in between median 1216, p90 17488; held at most 426352 bytes, at the end 426352
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0293     0.0254    82.7%
+  multi-key page              128     0.0218     0.0132    59.7%
+  multi-key page              256     0.0191     0.0131    66.5%
+  single-key page             128     0.0112     0.0136    95.1%
+  multi-key page              384     0.0119     0.0093    77.1%
+  multi-key page              512     0.0097     0.0081    80.7%
+  single-key page              32     0.0086     0.0078    87.5%
+  N5                           64     0.0080     0.0029    32.7%
+  multi-key page               64     0.0036     0.0021    57.4%
+  single-key page             256     0.0013     0.0019    90.5%
+
+events of build stream (354807 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 2538 | 7.2 | 8 / 12 / 23 |
+| build: page made | 4332 | 12.2 | 3 / 7 / 17 |
+| build: single-key page made | 4251 | 12.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 2572 | 7.2 | 8 / 12 / 23 |
+| byte node put above a page | 100 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 93795 | 264.4 | 3 / 3 / 3 |
+| key added to a page in place | 33226 | 93.6 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 7 | 0.0 | 4 / 6 / 6 |
+| merge tried (node with children that are pages) | 14160 | 39.9 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 3239 | 9.1 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 5578 | 15.7 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 40 | 0.1 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 7493 | 21.1 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 1 | 0.0 | 1 / 1 / 1 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 303 | 0.9 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 174 | 0.5 | 1 / 1 / 1 |
+| value added to a key in a page in place | 103294 | 291.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 1395 | 3.9 | 1 / 1 / 1 |
+
+runtime, build: 0.167 allocations and 45.2 bytes a write
+
+PASS
+
+## life street single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 83.1 %, one object for one 8.9 %, other 8.0 %
+  objects made 0.130 a write (9.2 bytes), dropped 0.130 (9.2 bytes)
+  LIFO free list: 81.4 % of the objects made taken from it; writes from drop to reuse median 26, p90 459; bytes made in between median 192, p90 4352; held at most 21344 bytes, at the end 21344
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0577     0.0593    96.3%
+  multi-key page               64     0.0446     0.0284    61.6%
+  multi-key page              128     0.0145     0.0143    91.6%
+  single-key page              64     0.0028     0.0188   100.0%
+  multi-key page              256     0.0055     0.0055    78.0%
+  multi-key page              384     0.0015     0.0015    68.8%
+  multi-key page               32     0.0017     0.0003    16.7%
+  N5                           64     0.0006     0.0006    50.0%
+  multi-key page              512     0.0006     0.0006    66.7%
+  N12                         128     0.0005     0.0005    80.0%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| entry removed from a page | 4917 | 460.2 | 3 / 3 / 3 |
+| key added to a page in place | 4488 | 420.1 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 873 | 81.7 | 8 / 12 / 12 |
+| page shrinks to a smaller class | 360 | 33.7 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 412 | 38.6 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 412 | 38.6 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 17 | 1.6 | 1 / 1 / 1 |
+
+runtime, churn: 0.130 allocations and 9.2 bytes a write
+
+build stream from empty: 14748 writes; in place 81.1 %, one object for one 12.5 %, other 6.4 %
+  objects made 0.226 a write (29.6 bytes), dropped 0.156 (19.9 bytes)
+  LIFO free list: 64.3 % of the objects made taken from it; writes from drop to reuse median 25, p90 233; bytes made in between median 640, p90 6720; held at most 12608 bytes, at the end 12608
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0673     0.0485    70.5%
+  multi-key page               64     0.0581     0.0366    61.5%
+  multi-key page              128     0.0373     0.0253    66.0%
+  multi-key page              256     0.0236     0.0146    60.3%
+  multi-key page              384     0.0144     0.0102    68.5%
+  multi-key page              512     0.0113     0.0082    72.9%
+  single-key page              64     0.0024     0.0096    94.4%
+  N12                         128     0.0061     0.0012    18.9%
+  N5                           64     0.0031     0.0016    52.2%
+  N26                         256     0.0016     0.0001     4.2%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 119 | 8.1 | 24 / 27 / 29 |
+| build: page made | 485 | 32.9 | 4 / 12 / 26 |
+| build: single-key page made | 322 | 21.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 119 | 8.1 | 24 / 27 / 29 |
+| entry removed from a page | 5024 | 340.7 | 3 / 3 / 3 |
+| key added to a page in place | 8103 | 549.4 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 690 | 46.8 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 268 | 18.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 334 | 22.6 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 555 | 37.6 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 119 | 8.1 | 1 / 1 / 1 |
+
+runtime, build: 0.257 allocations and 46.0 bytes a write
+
+
+## life street single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 82.5 %, one object for one 9.2 %, other 8.3 %
+  objects made 0.135 a write (9.3 bytes), dropped 0.135 (9.3 bytes)
+  LIFO free list: 83.4 % of the objects made taken from it; writes from drop to reuse median 25, p90 416; bytes made in between median 192, p90 3744; held at most 74208 bytes, at the end 74208
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0599     0.0630    99.3%
+  multi-key page               64     0.0459     0.0304    64.4%
+  multi-key page              128     0.0145     0.0145    93.1%
+  single-key page              64     0.0026     0.0181   100.0%
+  multi-key page              256     0.0048     0.0049    83.1%
+  multi-key page               32     0.0038     0.0007    19.9%
+  multi-key page              384     0.0015     0.0014    87.3%
+  multi-key page              512     0.0007     0.0007    60.0%
+  N5                           64     0.0005     0.0005    72.7%
+  N12                         128     0.0002     0.0002    50.0%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 3 | 0.1 | 22 / 23 / 23 |
+| build: page made | 5 | 0.1 | 22 / 29 / 29 |
+| build: single-key page made | 3 | 0.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 5 | 0.1 | 23 / 29 / 29 |
+| entry removed from a page | 19622 | 458.3 | 3 / 3 / 3 |
+| key added to a page in place | 17823 | 416.3 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 2967 | 69.3 | 9 / 12 / 12 |
+| page shrinks to a smaller class | 1470 | 34.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1691 | 39.5 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1691 | 39.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 3 | 0.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 106 | 2.5 | 1 / 1 / 1 |
+
+runtime, churn: 0.135 allocations and 9.5 bytes a write
+
+build stream from empty: 58716 writes; in place 78.4 %, one object for one 13.6 %, other 8.0 %
+  objects made 0.249 a write (29.8 bytes), dropped 0.174 (20.1 bytes)
+  LIFO free list: 65.4 % of the objects made taken from it; writes from drop to reuse median 22, p90 208; bytes made in between median 544, p90 6272; held at most 45920 bytes, at the end 45920
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0796     0.0606    74.6%
+  multi-key page               64     0.0672     0.0416    60.7%
+  multi-key page              128     0.0382     0.0255    65.6%
+  multi-key page              256     0.0228     0.0132    57.2%
+  multi-key page              384     0.0129     0.0092    70.6%
+  multi-key page              512     0.0105     0.0083    78.4%
+  single-key page              64     0.0020     0.0106   100.0%
+  N12                         128     0.0056     0.0019    34.7%
+  multi-key page               32     0.0039     0.0017    42.8%
+  N5                           64     0.0037     0.0016    41.7%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 468 | 8.0 | 25 / 28 / 33 |
+| build: page made | 1945 | 33.1 | 3 / 13 / 28 |
+| build: single-key page made | 1296 | 22.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 475 | 8.1 | 25 / 28 / 33 |
+| byte node put above a page | 2 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 19616 | 334.1 | 3 / 3 / 3 |
+| key added to a page in place | 31218 | 531.7 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 2695 | 45.9 | 9 / 12 / 12 |
+| page shrinks to a smaller class | 1243 | 21.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1577 | 26.9 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2633 | 44.8 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 4 | 0.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 532 | 9.1 | 1 / 1 / 1 |
+
+runtime, build: 0.279 allocations and 46.6 bytes a write
+
+
+## life street natural n=4096 (27218 writes in the cycle, 37733 in the build)
+
+churn (one steady-state cycle): 27218 writes; in place 90.7 %, one object for one 4.9 %, other 4.4 %
+  objects made 0.072 a write (5.0 bytes), dropped 0.072 (5.0 bytes)
+  LIFO free list: 80.7 % of the objects made taken from it; writes from drop to reuse median 51, p90 851; bytes made in between median 160, p90 3840; held at most 33024 bytes, at the end 33024
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0311     0.0313    97.0%
+  multi-key page               64     0.0218     0.0125    55.4%
+  single-key page              64     0.0049     0.0142    99.3%
+  multi-key page              128     0.0090     0.0080    79.7%
+  multi-key page              256     0.0025     0.0024    76.8%
+  N5                           64     0.0008     0.0008    81.0%
+  single-key page             128     0.0002     0.0011   100.0%
+  multi-key page               32     0.0006     0.0003    53.3%
+  multi-key page              384     0.0004     0.0004    90.0%
+  multi-key page              512     0.0004     0.0004    30.0%
+
+events of one steady-state cycle (27218 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 2 | 0.1 | 20 / 20 / 20 |
+| build: page made | 3 | 0.1 | 18 / 18 / 18 |
+| build: single-key page made | 2 | 0.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 2 | 0.1 | 20 / 20 / 20 |
+| entry removed from a page | 11084 | 407.2 | 3 / 3 / 3 |
+| key added to a page in place | 3838 | 141.0 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 1185 | 43.5 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 408 | 15.0 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 533 | 19.6 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 532 | 19.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 5 | 0.2 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 3 | 0.1 | 1 / 1 / 1 |
+| value added to a key in a page in place | 6690 | 245.8 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 23 | 0.8 | 1 / 1 / 1 |
+
+runtime, churn: 0.073 allocations and 5.3 bytes a write
+
+build stream from empty: 37733 writes; in place 88.0 %, one object for one 7.5 %, other 4.5 %
+  objects made 0.135 a write (17.7 bytes), dropped 0.099 (12.5 bytes)
+  LIFO free list: 67.8 % of the objects made taken from it; writes from drop to reuse median 47, p90 442; bytes made in between median 704, p90 8224; held at most 22912 bytes, at the end 22912
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0412     0.0318    75.5%
+  multi-key page               64     0.0303     0.0186    60.8%
+  multi-key page              128     0.0199     0.0139    68.7%
+  multi-key page              256     0.0129     0.0086    63.7%
+  single-key page              64     0.0060     0.0106    96.4%
+  multi-key page              384     0.0084     0.0061    70.7%
+  multi-key page              512     0.0072     0.0052    72.4%
+  N5                           64     0.0032     0.0012    37.0%
+  N12                         128     0.0032     0.0006    19.3%
+  single-key page             128     0.0004     0.0006    93.8%
+
+events of build stream (37733 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 190 | 5.0 | 20 / 24 / 29 |
+| build: page made | 589 | 15.6 | 3 / 11 / 25 |
+| build: single-key page made | 509 | 13.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 191 | 5.1 | 20 / 24 / 29 |
+| entry removed from a page | 11630 | 308.2 | 3 / 3 / 3 |
+| key added to a page in place | 8610 | 228.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 1227 | 32.5 | 8 / 11 / 12 |
+| page shrinks to a smaller class | 374 | 9.9 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 548 | 14.5 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 1 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 824 | 21.8 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 6 | 0.2 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 7 | 0.2 | 1 / 1 / 1 |
+| value added to a key in a page in place | 9224 | 244.5 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 133 | 3.5 | 1 / 1 / 1 |
+
+runtime, build: 0.160 allocations and 36.3 bytes a write
+
+
+## life street natural n=16384 (111004 writes in the cycle, 151987 in the build)
+
+churn (one steady-state cycle): 111004 writes; in place 90.5 %, one object for one 5.1 %, other 4.4 %
+  objects made 0.074 a write (5.2 bytes), dropped 0.074 (5.2 bytes)
+  LIFO free list: 81.5 % of the objects made taken from it; writes from drop to reuse median 49, p90 826; bytes made in between median 192, p90 4064; held at most 133088 bytes, at the end 133088
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0314     0.0322    97.4%
+  multi-key page               64     0.0226     0.0135    59.0%
+  single-key page              64     0.0050     0.0141   100.0%
+  multi-key page              128     0.0094     0.0083    81.6%
+  multi-key page              256     0.0026     0.0023    76.6%
+  multi-key page               32     0.0013     0.0006    43.4%
+  N5                           64     0.0007     0.0007    82.9%
+  single-key page             128     0.0001     0.0012   100.0%
+  multi-key page              384     0.0006     0.0005    66.7%
+  multi-key page              512     0.0003     0.0002    50.0%
+
+events of one steady-state cycle (111004 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 4 | 0.0 | 2 / 18 / 18 |
+| build: page made | 2 | 0.0 | 2 / 17 / 17 |
+| build: single-key page made | 6 | 0.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 4 | 0.0 | 2 / 18 / 18 |
+| entry removed from a page | 44601 | 401.8 | 3 / 3 / 3 |
+| key added to a page in place | 15241 | 137.3 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 4544 | 40.9 | 8 / 12 / 12 |
+| page shrinks to a smaller class | 1730 | 15.6 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2246 | 20.2 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 1 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2248 | 20.3 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 27 | 0.2 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 23 | 0.2 | 1 / 1 / 1 |
+| value added to a key in a page in place | 27047 | 243.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 78 | 0.7 | 1 / 1 / 1 |
+
+runtime, churn: 0.077 allocations and 7.4 bytes a write
+
+build stream from empty: 151987 writes; in place 87.0 %, one object for one 8.1 %, other 5.0 %
+  objects made 0.145 a write (17.6 bytes), dropped 0.105 (12.4 bytes)
+  LIFO free list: 68.1 % of the objects made taken from it; writes from drop to reuse median 40, p90 437; bytes made in between median 608, p90 7392; held at most 81824 bytes, at the end 81824
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0462     0.0365    77.2%
+  multi-key page               64     0.0340     0.0211    61.6%
+  multi-key page              128     0.0214     0.0143    64.5%
+  multi-key page              256     0.0123     0.0076    60.2%
+  single-key page              64     0.0063     0.0108    98.5%
+  multi-key page              384     0.0076     0.0056    72.3%
+  multi-key page              512     0.0065     0.0052    79.5%
+  N5                           64     0.0033     0.0013    37.4%
+  N12                         128     0.0031     0.0008    24.9%
+  multi-key page               32     0.0015     0.0008    52.6%
+
+events of build stream (151987 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 769 | 5.1 | 21 / 25 / 30 |
+| build: page made | 2472 | 16.3 | 3 / 11 / 26 |
+| build: single-key page made | 2089 | 13.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 779 | 5.1 | 21 / 25 / 30 |
+| byte node put above a page | 3 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 46090 | 303.2 | 3 / 3 / 3 |
+| key added to a page in place | 33460 | 220.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 4828 | 31.8 | 8 / 12 / 12 |
+| page shrinks to a smaller class | 1773 | 11.7 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2562 | 16.9 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 4 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 3840 | 25.3 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 21 | 0.1 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 20 | 0.1 | 1 / 1 / 1 |
+| value added to a key in a page in place | 36406 | 239.5 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 645 | 4.2 | 1 / 1 / 1 |
+
+runtime, build: 0.170 allocations and 36.3 bytes a write
+
+PASS
+
+## life dirs single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 70.4 %, one object for one 14.9 %, other 14.6 %
+  objects made 0.230 a write (25.9 bytes), dropped 0.230 (25.8 bytes)
+  LIFO free list: 79.7 % of the objects made taken from it; writes from drop to reuse median 23, p90 278; bytes made in between median 512, p90 7552; held at most 52320 bytes, at the end 52320
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0490     0.0724    99.0%
+  single-key page              32     0.0438     0.0450    95.1%
+  multi-key page              128     0.0487     0.0352    71.7%
+  multi-key page               64     0.0370     0.0137    35.7%
+  multi-key page              256     0.0229     0.0224    88.6%
+  single-key page             128     0.0080     0.0213   100.0%
+  multi-key page              384     0.0086     0.0087    91.3%
+  N5                           64     0.0053     0.0053    87.7%
+  multi-key page              512     0.0037     0.0037    77.5%
+  multi-key page               32     0.0013     0.0003    21.4%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 5 | 0.5 | 9 / 11 / 11 |
+| build: page made | 8 | 0.7 | 7 / 10 / 10 |
+| build: single-key page made | 6 | 0.6 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 6 | 0.6 | 8 / 11 / 11 |
+| byte node put above a page | 3 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 4560 | 426.8 | 3 / 3 / 3 |
+| key added to a page in place | 3795 | 355.2 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.1 | 4 / 4 / 4 |
+| merge tried (node with children that are pages) | 1394 | 130.5 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 527 | 49.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 708 | 66.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 706 | 66.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 7 | 0.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 59 | 5.5 | 1 / 1 / 1 |
+
+runtime, churn: 0.233 allocations and 26.4 bytes a write
+
+build stream from empty: 14748 writes; in place 61.6 %, one object for one 22.2 %, other 16.2 %
+  objects made 0.418 a write (63.1 bytes), dropped 0.302 (45.8 bytes)
+  LIFO free list: 67.6 % of the objects made taken from it; writes from drop to reuse median 18, p90 151; bytes made in between median 960, p90 9568; held at most 36768 bytes, at the end 36768
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0749     0.0728    90.2%
+  multi-key page              128     0.0839     0.0527    62.5%
+  single-key page              32     0.0619     0.0434    67.3%
+  multi-key page              256     0.0538     0.0360    65.4%
+  multi-key page               64     0.0442     0.0222    49.4%
+  multi-key page              384     0.0309     0.0228    73.0%
+  multi-key page              512     0.0238     0.0191    76.9%
+  single-key page             128     0.0139     0.0218    93.2%
+  N5                           64     0.0170     0.0068    37.5%
+  N12                         128     0.0071     0.0019    26.7%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 251 | 17.0 | 12 / 17 / 34 |
+| build: page made | 550 | 37.3 | 4 / 9 / 32 |
+| build: single-key page made | 559 | 37.9 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 259 | 17.6 | 12 / 17 / 34 |
+| byte node put above a page | 11 | 0.7 | 1 / 1 / 1 |
+| entry removed from a page | 4549 | 308.4 | 3 / 3 / 3 |
+| key added to a page in place | 6257 | 424.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.1 | 5 / 5 / 5 |
+| merge tried (node with children that are pages) | 1278 | 86.7 | 7 / 11 / 12 |
+| page shrinks to a smaller class | 478 | 32.4 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 716 | 48.5 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1264 | 85.7 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 1 | 0.1 | 1 / 1 / 1 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 7 | 0.5 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 286 | 19.4 | 1 / 1 / 1 |
+
+runtime, build: 0.478 allocations and 86.2 bytes a write
+
+
+## life dirs single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 76.9 %, one object for one 11.7 %, other 11.4 %
+  objects made 0.181 a write (19.4 bytes), dropped 0.181 (19.4 bytes)
+  LIFO free list: 80.9 % of the objects made taken from it; writes from drop to reuse median 31, p90 415; bytes made in between median 512, p90 8000; held at most 140480 bytes, at the end 140480
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0438     0.0455    97.2%
+  single-key page              64     0.0308     0.0507   100.0%
+  multi-key page              128     0.0331     0.0252    74.7%
+  multi-key page               64     0.0355     0.0154    42.7%
+  multi-key page              256     0.0147     0.0146    95.1%
+  multi-key page              384     0.0075     0.0076    91.9%
+  single-key page             128     0.0031     0.0110   100.0%
+  N5                           64     0.0049     0.0049    87.1%
+  multi-key page              512     0.0039     0.0038    82.1%
+  multi-key page               32     0.0021     0.0005    22.7%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 22 | 0.5 | 12 / 17 / 21 |
+| build: page made | 37 | 0.9 | 10 / 16 / 20 |
+| build: single-key page made | 22 | 0.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 29 | 0.7 | 11 / 17 / 21 |
+| byte node put above a page | 19 | 0.4 | 1 / 1 / 1 |
+| entry removed from a page | 18949 | 442.6 | 3 / 3 / 3 |
+| key added to a page in place | 16616 | 388.1 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 5 | 0.1 | 5 / 9 / 9 |
+| merge tried (node with children that are pages) | 4744 | 110.8 | 6 / 11 / 12 |
+| page shrinks to a smaller class | 1647 | 38.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2158 | 50.4 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2150 | 50.2 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 35 | 0.8 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 176 | 4.1 | 1 / 1 / 1 |
+
+runtime, churn: 0.185 allocations and 20.4 bytes a write
+
+build stream from empty: 58716 writes; in place 67.8 %, one object for one 19.5 %, other 12.7 %
+  objects made 0.358 a write (55.3 bytes), dropped 0.259 (40.0 bytes)
+  LIFO free list: 68.2 % of the objects made taken from it; writes from drop to reuse median 21, p90 208; bytes made in between median 1024, p90 11328; held at most 88512 bytes, at the end 88512
+  object                     size     made/w  dropped/w   reused
+  multi-key page              128     0.0667     0.0453    67.1%
+  single-key page              32     0.0616     0.0466    73.0%
+  single-key page              64     0.0472     0.0498    92.7%
+  multi-key page              256     0.0468     0.0321    67.6%
+  multi-key page               64     0.0484     0.0252    51.4%
+  multi-key page              384     0.0298     0.0216    72.1%
+  multi-key page              512     0.0229     0.0178    77.2%
+  N5                           64     0.0148     0.0052    32.4%
+  single-key page             128     0.0064     0.0113    94.7%
+  N12                         128     0.0060     0.0018    29.5%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 918 | 15.6 | 13 / 18 / 40 |
+| build: page made | 2249 | 38.3 | 4 / 10 / 31 |
+| build: single-key page made | 1684 | 28.7 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 960 | 16.3 | 13 / 18 / 40 |
+| byte node put above a page | 47 | 0.8 | 1 / 1 / 1 |
+| entry removed from a page | 18787 | 320.0 | 3 / 3 / 3 |
+| key added to a page in place | 27366 | 466.1 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.0 | 4 / 4 / 4 |
+| merge tried (node with children that are pages) | 4613 | 78.6 | 7 / 11 / 12 |
+| page shrinks to a smaller class | 1499 | 25.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2284 | 38.9 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 3966 | 67.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 47 | 0.8 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 1070 | 18.2 | 1 / 1 / 1 |
+
+runtime, build: 0.412 allocations and 77.8 bytes a write
+
+
+## life dirs natural n=4096 (33454 writes in the cycle, 45983 in the build)
+
+churn (one steady-state cycle): 33454 writes; in place 88.5 %, one object for one 5.6 %, other 5.9 %
+  objects made 0.089 a write (9.7 bytes), dropped 0.089 (9.7 bytes)
+  LIFO free list: 79.4 % of the objects made taken from it; writes from drop to reuse median 59, p90 786; bytes made in between median 512, p90 7392; held at most 79104 bytes, at the end 79104
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0225     0.0281    98.8%
+  single-key page              32     0.0188     0.0188    93.3%
+  multi-key page              128     0.0192     0.0114    57.8%
+  multi-key page               64     0.0100     0.0045    44.3%
+  single-key page             128     0.0030     0.0108    99.0%
+  multi-key page              256     0.0071     0.0062    76.6%
+  multi-key page              384     0.0031     0.0029    90.3%
+  N5                           64     0.0027     0.0027    85.4%
+  multi-key page              512     0.0019     0.0015    65.1%
+  single-key page             256     0.0001     0.0010   100.0%
+
+events of one steady-state cycle (33454 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 11 | 0.3 | 8 / 10 / 17 |
+| build: page made | 15 | 0.4 | 7 / 9 / 15 |
+| build: single-key page made | 10 | 0.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 12 | 0.4 | 8 / 10 / 17 |
+| byte node put above a page | 5 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 12800 | 382.6 | 3 / 3 / 3 |
+| key added to a page in place | 3485 | 104.2 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 2 | 0.1 | 4 / 4 / 4 |
+| merge tried (node with children that are pages) | 1819 | 54.4 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 507 | 15.2 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 811 | 24.2 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 1 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 809 | 24.2 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 24 | 0.7 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 9 | 0.3 | 1 / 1 / 1 |
+| value added to a key in a page in place | 8439 | 252.3 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 49 | 1.5 | 1 / 1 / 1 |
+
+runtime, churn: 0.097 allocations and 13.7 bytes a write
+
+build stream from empty: 45983 writes; in place 82.0 %, one object for one 10.6 %, other 7.4 %
+  objects made 0.190 a write (29.6 bytes), dropped 0.144 (22.1 bytes)
+  LIFO free list: 71.4 % of the objects made taken from it; writes from drop to reuse median 39, p90 438; bytes made in between median 1088, p90 12768; held at most 50864 bytes, at the end 50864
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0361     0.0343    89.6%
+  multi-key page              128     0.0363     0.0237    64.4%
+  single-key page              32     0.0278     0.0234    80.9%
+  multi-key page              256     0.0243     0.0163    65.7%
+  multi-key page              384     0.0145     0.0110    75.0%
+  multi-key page               64     0.0160     0.0087    54.2%
+  multi-key page              512     0.0115     0.0090    76.1%
+  single-key page             128     0.0082     0.0117    94.7%
+  N5                           64     0.0082     0.0029    32.4%
+  N12                         128     0.0028     0.0007    26.2%
+
+events of build stream (45983 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 371 | 8.1 | 10 / 15 / 27 |
+| build: page made | 726 | 15.8 | 3 / 8 / 18 |
+| build: single-key page made | 761 | 16.5 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 378 | 8.2 | 10 / 15 / 27 |
+| byte node put above a page | 13 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 13319 | 289.7 | 3 / 3 / 3 |
+| key added to a page in place | 7183 | 156.2 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 2102 | 45.7 | 6 / 11 / 12 |
+| page shrinks to a smaller class | 640 | 13.9 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1087 | 23.6 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 1 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1635 | 35.6 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 19 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 7 | 0.2 | 1 / 1 / 1 |
+| value added to a key in a page in place | 13293 | 289.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 326 | 7.1 | 1 / 1 / 1 |
+
+runtime, build: 0.225 allocations and 49.1 bytes a write
+
+
+## life dirs natural n=16384 (137396 writes in the cycle, 188700 in the build)
+
+churn (one steady-state cycle): 137396 writes; in place 90.2 %, one object for one 5.0 %, other 4.8 %
+  objects made 0.077 a write (7.9 bytes), dropped 0.077 (7.9 bytes)
+  LIFO free list: 78.8 % of the objects made taken from it; writes from drop to reuse median 69, p90 1008; bytes made in between median 480, p90 7648; held at most 267216 bytes, at the end 267216
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0202     0.0206    95.1%
+  single-key page              64     0.0149     0.0211    99.8%
+  multi-key page              128     0.0151     0.0093    58.9%
+  multi-key page               64     0.0117     0.0055    46.7%
+  multi-key page              256     0.0058     0.0050    81.2%
+  single-key page             128     0.0015     0.0072   100.0%
+  multi-key page              384     0.0027     0.0023    81.4%
+  N5                           64     0.0024     0.0024    85.5%
+  multi-key page              512     0.0012     0.0011    67.7%
+  multi-key page               32     0.0007     0.0003    46.5%
+
+events of one steady-state cycle (137396 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 19 | 0.1 | 9 / 13 / 13 |
+| build: page made | 26 | 0.2 | 6 / 10 / 12 |
+| build: single-key page made | 19 | 0.1 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 24 | 0.2 | 9 / 11 / 13 |
+| byte node put above a page | 15 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 53911 | 392.4 | 3 / 3 / 3 |
+| key added to a page in place | 15341 | 111.7 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 2 | 0.0 | 3 / 4 / 4 |
+| merge tried (node with children that are pages) | 6759 | 49.2 | 6 / 10 / 12 |
+| page shrinks to a smaller class | 1825 | 13.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2897 | 21.1 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 1 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2895 | 21.1 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 59 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 28 | 0.2 | 1 / 1 / 1 |
+| value added to a key in a page in place | 35544 | 258.7 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 143 | 1.0 | 1 / 1 / 1 |
+
+runtime, churn: 0.083 allocations and 10.6 bytes a write
+
+build stream from empty: 188700 writes; in place 84.9 %, one object for one 9.1 %, other 5.9 %
+  objects made 0.164 a write (25.7 bytes), dropped 0.124 (19.1 bytes)
+  LIFO free list: 71.7 % of the objects made taken from it; writes from drop to reuse median 46, p90 586; bytes made in between median 1120, p90 14592; held at most 132384 bytes, at the end 132384
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0277     0.0236    81.8%
+  single-key page              64     0.0261     0.0251    91.1%
+  multi-key page              128     0.0288     0.0195    66.1%
+  multi-key page              256     0.0201     0.0138    68.1%
+  multi-key page               64     0.0174     0.0103    58.7%
+  multi-key page              384     0.0135     0.0102    74.9%
+  multi-key page              512     0.0108     0.0083    76.2%
+  single-key page             128     0.0044     0.0068    95.4%
+  N5                           64     0.0079     0.0029    33.3%
+  N12                         128     0.0024     0.0006    25.1%
+
+events of build stream (188700 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1434 | 7.6 | 11 / 16 / 32 |
+| build: page made | 3034 | 16.1 | 3 / 9 / 27 |
+| build: single-key page made | 2566 | 13.6 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1457 | 7.7 | 11 / 16 / 32 |
+| byte node put above a page | 66 | 0.3 | 1 / 1 / 1 |
+| entry removed from a page | 55801 | 295.7 | 3 / 3 / 3 |
+| key added to a page in place | 31703 | 168.0 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 3 | 0.0 | 4 / 5 / 5 |
+| merge tried (node with children that are pages) | 7667 | 40.6 | 6 / 11 / 12 |
+| page shrinks to a smaller class | 2129 | 11.3 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 3409 | 18.1 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 1 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 5165 | 27.4 | 2 / 2 / 2 |
+| prepend refused: page stays below the node | 1 | 0.0 | 1 / 1 / 1 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 82 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 19 | 0.1 | 1 / 1 / 1 |
+| value added to a key in a page in place | 53747 | 284.8 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 1162 | 6.2 | 1 / 1 / 1 |
+
+runtime, build: 0.197 allocations and 44.7 bytes a write
+
+PASS
+
+## life links single-value n=4096 (10684 writes in the cycle, 14748 in the build)
+
+churn (one steady-state cycle): 10684 writes; in place 74.7 %, one object for one 12.5 %, other 12.8 %
+  objects made 0.190 a write (14.1 bytes), dropped 0.190 (14.1 bytes)
+  LIFO free list: 80.2 % of the objects made taken from it; writes from drop to reuse median 21, p90 293; bytes made in between median 256, p90 4096; held at most 32544 bytes, at the end 32544
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0749     0.0780    97.0%
+  multi-key page               64     0.0565     0.0307    54.1%
+  single-key page              64     0.0151     0.0409   100.0%
+  multi-key page              128     0.0268     0.0253    85.0%
+  multi-key page              256     0.0091     0.0091    85.6%
+  multi-key page               32     0.0037     0.0007    17.5%
+  multi-key page              384     0.0022     0.0022    82.6%
+  single-key page             128     0.0003     0.0018   100.0%
+  N5                           64     0.0006     0.0006    83.3%
+  multi-key page              512     0.0006     0.0006    33.3%
+
+events of one steady-state cycle (10684 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| entry removed from a page | 4657 | 435.9 | 3 / 3 / 3 |
+| key added to a page in place | 4016 | 375.9 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 879 | 82.3 | 9 / 12 / 12 |
+| page shrinks to a smaller class | 454 | 42.5 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 604 | 56.5 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 604 | 56.5 | 2 / 2 / 2 |
+| widen: key outside the common prefix joins the page | 37 | 3.5 | 1 / 1 / 1 |
+
+runtime, churn: 0.190 allocations and 14.1 bytes a write
+
+build stream from empty: 14748 writes; in place 71.5 %, one object for one 16.5 %, other 12.0 %
+  objects made 0.313 a write (36.3 bytes), dropped 0.220 (24.5 bytes)
+  LIFO free list: 65.6 % of the objects made taken from it; writes from drop to reuse median 19, p90 183; bytes made in between median 576, p90 6400; held at most 17952 bytes, at the end 17952
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0985     0.0734    72.7%
+  multi-key page               64     0.0716     0.0410    55.9%
+  multi-key page              128     0.0515     0.0342    65.0%
+  single-key page              64     0.0195     0.0284    95.5%
+  multi-key page              256     0.0286     0.0167    58.1%
+  multi-key page              384     0.0149     0.0104    70.0%
+  multi-key page              512     0.0106     0.0084    75.2%
+  N12                         128     0.0066     0.0033    49.0%
+  multi-key page               32     0.0041     0.0014    32.8%
+  N26                         256     0.0038     0.0003     7.1%
+
+events of build stream (14748 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 119 | 8.1 | 22 / 24 / 26 |
+| build: page made | 518 | 35.1 | 3 / 7 / 21 |
+| build: single-key page made | 439 | 29.8 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 120 | 8.1 | 22 / 24 / 26 |
+| entry removed from a page | 4704 | 319.0 | 3 / 3 / 3 |
+| key added to a page in place | 7249 | 491.5 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 873 | 59.2 | 10 / 12 / 12 |
+| page shrinks to a smaller class | 383 | 26.0 | 1 / 2 / 3 |
+| page with one entry left becomes a single-key page | 579 | 39.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 896 | 60.8 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 1 | 0.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 126 | 8.5 | 1 / 1 / 1 |
+
+runtime, build: 0.345 allocations and 51.4 bytes a write
+
+
+## life links single-value n=16384 (42814 writes in the cycle, 58716 in the build)
+
+churn (one steady-state cycle): 42814 writes; in place 78.0 %, one object for one 11.2 %, other 10.8 %
+  objects made 0.168 a write (13.2 bytes), dropped 0.168 (13.2 bytes)
+  LIFO free list: 82.0 % of the objects made taken from it; writes from drop to reuse median 24, p90 440; bytes made in between median 256, p90 5952; held at most 97184 bytes, at the end 97184
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0645     0.0688    97.2%
+  multi-key page               64     0.0483     0.0283    57.7%
+  multi-key page              128     0.0232     0.0222    92.6%
+  single-key page              64     0.0114     0.0313   100.0%
+  multi-key page              256     0.0092     0.0092    89.9%
+  multi-key page               32     0.0053     0.0010    19.4%
+  multi-key page              384     0.0028     0.0028    85.8%
+  N5                           64     0.0011     0.0011    82.6%
+  multi-key page              512     0.0010     0.0010    74.4%
+  single-key page             128     0.0003     0.0012   100.0%
+
+events of one steady-state cycle (42814 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 6 | 0.1 | 20 / 26 / 26 |
+| build: page made | 9 | 0.2 | 10 / 25 / 25 |
+| build: single-key page made | 9 | 0.2 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 6 | 0.1 | 20 / 26 / 26 |
+| byte node put above a page | 2 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 19087 | 445.8 | 3 / 3 / 3 |
+| key added to a page in place | 16956 | 396.0 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 1 | 0.0 | 5 / 5 / 5 |
+| merge tried (node with children that are pages) | 3036 | 70.9 | 8 / 12 / 12 |
+| page shrinks to a smaller class | 1708 | 39.9 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2027 | 47.3 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2023 | 47.3 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 7 | 0.2 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 110 | 2.6 | 1 / 1 / 1 |
+
+runtime, churn: 0.169 allocations and 13.4 bytes a write
+
+build stream from empty: 58716 writes; in place 73.0 %, one object for one 16.0 %, other 11.0 %
+  objects made 0.294 a write (35.3 bytes), dropped 0.210 (24.2 bytes)
+  LIFO free list: 67.1 % of the objects made taken from it; writes from drop to reuse median 21, p90 212; bytes made in between median 608, p90 7232; held at most 59840 bytes, at the end 59840
+  object                     size     made/w  dropped/w   reused
+  single-key page              32     0.0906     0.0691    74.4%
+  multi-key page               64     0.0664     0.0406    60.2%
+  multi-key page              128     0.0484     0.0330    66.9%
+  multi-key page              256     0.0278     0.0175    62.0%
+  single-key page              64     0.0148     0.0225    96.0%
+  multi-key page              384     0.0155     0.0106    68.0%
+  multi-key page              512     0.0115     0.0086    73.4%
+  N12                         128     0.0057     0.0025    43.6%
+  multi-key page               32     0.0057     0.0022    39.6%
+  N5                           64     0.0037     0.0014    35.5%
+
+events of build stream (58716 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 487 | 8.3 | 22 / 25 / 40 |
+| build: page made | 1781 | 30.3 | 3 / 11 / 26 |
+| build: single-key page made | 1543 | 26.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 490 | 8.3 | 22 / 25 / 40 |
+| byte node put above a page | 4 | 0.1 | 1 / 1 / 1 |
+| entry removed from a page | 18974 | 323.1 | 3 / 3 / 3 |
+| key added to a page in place | 29403 | 500.8 | 1 / 1 / 1 |
+| merge tried (node with children that are pages) | 2582 | 44.0 | 9 / 12 / 12 |
+| page shrinks to a smaller class | 1387 | 23.6 | 1 / 3 / 3 |
+| page with one entry left becomes a single-key page | 1919 | 32.7 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 3260 | 55.5 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 5 | 0.1 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 596 | 10.2 | 1 / 1 / 1 |
+
+runtime, build: 0.325 allocations and 50.7 bytes a write
+
+
+## life links natural n=4096 (467776 writes in the cycle, 642129 in the build)
+
+churn (one steady-state cycle): 467776 writes; in place 97.0 %, one object for one 2.4 %, other 0.7 %
+  objects made 0.028 a write (3.1 bytes), dropped 0.028 (3.1 bytes)
+  LIFO free list: 77.0 % of the objects made taken from it; writes from drop to reuse median 141, p90 76282; bytes made in between median 448, p90 200176; held at most 417760 bytes, at the end 417760
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0092     0.0094    86.3%
+  single-key page              32     0.0057     0.0057    83.9%
+  single-key page             128     0.0054     0.0056    68.2%
+  multi-key page              128     0.0020     0.0018    76.8%
+  multi-key page              256     0.0019     0.0017    67.8%
+  multi-key page              384     0.0009     0.0008    57.1%
+  multi-key page               64     0.0008     0.0007    75.7%
+  N5                           64     0.0007     0.0007    32.2%
+  single-key page             256     0.0004     0.0006   100.0%
+  multi-key page              512     0.0004     0.0003    38.3%
+
+events of one steady-state cycle (467776 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 56 | 0.1 | 3 / 7 / 12 |
+| build: page made | 42 | 0.1 | 2 / 4 / 5 |
+| build: single-key page made | 88 | 0.2 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 56 | 0.1 | 3 / 7 / 12 |
+| entry removed from a page | 82670 | 176.7 | 2 / 3 / 3 |
+| key added to a page in place | 646 | 1.4 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 14 | 0.0 | 4 / 6 / 11 |
+| merge tried (node with children that are pages) | 2168 | 4.6 | 4 / 10 / 12 |
+| page shrinks to a smaller class | 1194 | 2.6 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 710 | 1.5 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 17 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 730 | 1.6 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 205 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 167 | 0.4 | 1 / 1 / 1 |
+| value added to a key in a page in place | 81551 | 174.3 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 33 | 0.1 | 1 / 1 / 1 |
+
+runtime, churn: 0.032 allocations and 6.4 bytes a write
+
+build stream from empty: 642129 writes; in place 96.6 %, one object for one 2.8 %, other 0.7 %
+  objects made 0.040 a write (7.0 bytes), dropped 0.033 (5.9 bytes)
+  LIFO free list: 71.5 % of the objects made taken from it; writes from drop to reuse median 158, p90 4326; bytes made in between median 1312, p90 25888; held at most 405600 bytes, at the end 405600
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0079     0.0073    81.7%
+  single-key page             128     0.0053     0.0049    66.4%
+  single-key page              32     0.0049     0.0045    86.5%
+  multi-key page              256     0.0035     0.0032    72.4%
+  multi-key page              128     0.0033     0.0029    79.4%
+  multi-key page              384     0.0028     0.0024    79.3%
+  multi-key page              512     0.0025     0.0023    83.8%
+  single-key page             256     0.0019     0.0012    61.7%
+  multi-key page               64     0.0015     0.0013    80.6%
+  single-key page             384     0.0014     0.0010    76.5%
+
+events of build stream (642129 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 1377 | 2.1 | 5 / 15 / 24 |
+| build: page made | 1729 | 2.7 | 2 / 6 / 16 |
+| build: single-key page made | 3235 | 5.0 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 1377 | 2.1 | 5 / 15 / 24 |
+| byte node put above a page | 2 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 106736 | 166.2 | 3 / 3 / 3 |
+| key added to a page in place | 5301 | 8.3 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 11 | 0.0 | 4 / 7 / 11 |
+| merge tried (node with children that are pages) | 2264 | 3.5 | 5 / 10 / 12 |
+| page shrinks to a smaller class | 1145 | 1.8 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 845 | 1.3 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 3 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 1028 | 1.6 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 162 | 0.3 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 27 | 0.0 | 1 / 1 / 1 |
+| value added to a key in a page in place | 149324 | 232.5 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 161 | 0.3 | 1 / 1 / 1 |
+
+runtime, build: 0.058 allocations and 24.0 bytes a write
+
+
+## life links natural n=16384 (2005396 writes in the cycle, 2755494 in the build)
+
+churn (one steady-state cycle): 2005396 writes; in place 97.1 %, one object for one 2.3 %, other 0.6 %
+  objects made 0.028 a write (3.0 bytes), dropped 0.028 (3.0 bytes)
+  LIFO free list: 77.3 % of the objects made taken from it; writes from drop to reuse median 149, p90 676905; bytes made in between median 448, p90 1451776; held at most 1689600 bytes, at the end 1689600
+  object                     size     made/w  dropped/w   reused
+  single-key page              64     0.0092     0.0094    86.2%
+  single-key page             128     0.0056     0.0058    68.1%
+  single-key page              32     0.0055     0.0056    84.0%
+  multi-key page              128     0.0018     0.0017    79.1%
+  multi-key page              256     0.0018     0.0016    68.7%
+  multi-key page              384     0.0009     0.0008    61.1%
+  multi-key page               64     0.0008     0.0007    75.9%
+  N5                           64     0.0007     0.0007    27.1%
+  single-key page             256     0.0005     0.0006   100.0%
+  multi-key page              512     0.0004     0.0004    42.3%
+
+events of one steady-state cycle (2005396 operations):
+
+| event | count | per 1000 operations | entries of the page: median / 90th percentile / largest |
+|---|--:|--:|---|
+| build: byte node made | 288 | 0.1 | 3 / 7 / 18 |
+| build: page made | 243 | 0.1 | 2 / 4 / 7 |
+| build: single-key page made | 546 | 0.3 | 1 / 1 / 1 |
+| burst: page is full, page dissolves | 288 | 0.1 | 3 / 7 / 18 |
+| byte node put above a page | 3 | 0.0 | 1 / 1 / 1 |
+| entry removed from a page | 332841 | 166.0 | 2 / 3 / 3 |
+| key added to a page in place | 2388 | 1.2 | 1 / 1 / 1 |
+| merge done (node becomes a page) | 105 | 0.1 | 4 / 7 / 13 |
+| merge tried (node with children that are pages) | 8602 | 4.3 | 4 / 9 / 12 |
+| page shrinks to a smaller class | 4863 | 2.4 | 2 / 3 / 3 |
+| page with one entry left becomes a single-key page | 2642 | 1.3 | 1 / 1 / 1 |
+| pair refused: the two do not make a page | 45 | 0.0 | 1 / 1 / 1 |
+| pair: single-key page and new key make a page | 2669 | 1.3 | 2 / 2 / 2 |
+| rekey: a node above a single-key page goes away (its path length shrinks) | 894 | 0.4 | 1 / 1 / 1 |
+| split: a node is put above a single-key page (its path length grows) | 715 | 0.4 | 1 / 1 / 1 |
+| value added to a key in a page in place | 329973 | 164.5 | 1 / 1 / 1 |
+| widen: key outside the common prefix joins the page | 122 | 0.1 | 1 / 1 / 1 |
+
+runtime, churn: 0.032 allocations and 6.0 bytes a write
+

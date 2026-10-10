@@ -103,3 +103,37 @@ func TestRunPrintsTheCases(t *testing.T) {
 		t.Fatalf("%d rows, want 3:\n%s", n, out.String())
 	}
 }
+
+// TestNodeLinesCountsTheSecondLines makes sure the table of the nodes' second lines has a row for the case asked for and
+// that its counts are consistent.
+//
+// The table tells how many lookups read a child pointer from a second line of a node (descent-analysis.md, lever 2); a
+// count of second lines above the nodes passed would be a wrong offset.
+//
+// Expected: one row for street single-value 4096, and for every lookup at most as many second lines as nodes.
+func TestNodeLinesCountsTheSecondLines(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(&out, []string{"-nodelines", "-keys", "street", "-values", "single-value", "-sizes", "4096"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "| street single-value 4096 |"); n != 1 {
+		t.Fatalf("%d rows, want 1:\n%s", n, out.String())
+	}
+	m := &model{limit: 512}
+	items := corpusItems("street", 4096, "single-value", false)
+	for _, it := range items {
+		m.insert(it)
+	}
+	var c counts
+	for _, it := range items {
+		m.lookup(it, &c)
+	}
+	for k := range c.visits {
+		if c.second64[k] > c.visits[k] || c.second128[k] > c.second64[k] {
+			t.Fatalf("class %d: %d nodes, %d second lines of 64 B, %d of 128 B", k, c.visits[k], c.second64[k], c.second128[k])
+		}
+	}
+	if c.second64[0] != 0 {
+		t.Fatalf("an N5 is one line, but %d of its visits read a second one", c.second64[0])
+	}
+}

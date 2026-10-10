@@ -428,6 +428,37 @@ type counts struct {
 	pages, onePages, bigs, nodes   int
 	pageKeys                       []int
 	nodeBytes, pageBytes, bigBytes int
+	// by node class (N5, N12, N26, N58, N256): nodes passed, and those whose child slot lies outside the node's
+	// first line of 64 and of 128 bytes (a second dependent line inside the node); prefix tails read
+	visits, second64, second128 [5]int
+	tails                       int
+}
+
+// classIdx returns the index of the node class of capacity cap in counts.visits.
+func classIdx(cap int) int {
+	switch cap {
+	case 5:
+		return 0
+	case 12:
+		return 1
+	case 26:
+		return 2
+	case 58:
+		return 3
+	}
+	return 4
+}
+
+// slotLine counts node visit of class cap whose child slot is at offset off.
+func (c *counts) slotLine(cap, off int) {
+	k := classIdx(cap)
+	c.visits[k]++
+	if off+8 > 64 {
+		c.second64[k]++
+	}
+	if off+8 > 128 {
+		c.second128[k]++
+	}
 }
 
 func nodeCap(c int) (cap, size int) {
@@ -510,10 +541,12 @@ func (m *model) lookup(it *item, c *counts) {
 		ls := map[int]bool{0: true}
 		if len(n.prefix) > 12 {
 			lines++ // the tail of the prefix
+			c.tails++
 		}
 		q := n.q()
 		if len(it.key) == q {
 			ls[slotOff(cp, -1, 0)/64] = true
+			c.slotLine(cp, slotOff(cp, -1, 0))
 			lines += len(ls)
 			o, depth = n.end, q
 			break
@@ -526,6 +559,7 @@ func (m *model) lookup(it *item, c *counts) {
 			i = sort.SearchInts(n.starts, b)
 		}
 		ls[slotOff(cp, i, n.starts[i])/64] = true
+		c.slotLine(cp, slotOff(cp, i, n.starts[i]))
 		lines += len(ls)
 		if n.kids[i].k == kNode {
 			if n.starts[i] != b {
@@ -678,11 +712,15 @@ func run(w io.Writer, args []string) error {
 	limitsF := fs.String("limits", "512,384,256", "page sizes above which a page of a range splits (the proposal)")
 	str := fs.Bool("str", false, "string values (the names of the corpus) instead of uint64")
 	packF := fs.String("pack", "", "instead of the table of the trees: the byte nodes packed into objects of at most these bytes (0: as today), for today's pages and for ranges split above 512")
+	nodeLines := fs.Bool("nodelines", false, "instead of the table of the trees: the byte nodes a lookup passes by class, and how many of them read the child slot from a second line (64- and 128-byte lines), today's tree")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *packF != "" {
 		return runPack(w, *kindsF, *valuesF, *sizesF, *packF, *str)
+	}
+	if *nodeLines {
+		return runNodeLines(w, *kindsF, *valuesF, *sizesF, *str)
 	}
 	var limits []int
 	for _, s := range strings.Split(*limitsF, ",") {
@@ -785,6 +823,53 @@ func runPack(w io.Writer, kindsF, valuesF, sizesF, packF string, str bool) error
 					if err := m.packReport(w, fmt.Sprintf("%s %s %d, %s", kind, profile, n, tree), items, limits); err != nil {
 						return err
 					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// runNodeLines writes, for today's tree of every case, the byte nodes a lookup passes by class, those that read their
+// child slot from a second line of the node (64- and 128-byte lines), and the prefix tails read: the second dependent
+// lines inside the nodes that descent-analysis.md found to be 16 to 19 % of the descent's time on the PC.
+func runNodeLines(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
+	if _, err := fmt.Fprintln(w, "| case | objects a lookup | nodes N5 / N12 / N26 / N58 / N256 a lookup | second lines a lookup, 64 B: N12 / N26 / N58 / N256 = all | 128 B: all | prefix tails a lookup |\n|---|--:|---|---|--:|--:|"); err != nil {
+		return err
+	}
+	for _, ks := range strings.Split(kindsF, ",") {
+		kind := keys.Kind(ks)
+		if !keys.Available(kind) {
+			continue
+		}
+		for _, profile := range strings.Split(valuesF, ",") {
+			for _, ns := range strings.Split(sizesF, ",") {
+				n, err := strconv.Atoi(ns)
+				if err != nil {
+					return err
+				}
+				items := corpusItems(kind, n, profile, str)
+				m := &model{limit: page.Largest, str: str}
+				for _, it := range items {
+					m.insert(it)
+				}
+				var c counts
+				for _, it := range items {
+					m.lookup(it, &c)
+				}
+				l := float64(c.lookups)
+				nodes, s64, s128 := 0, 0, 0
+				for k := range c.visits {
+					nodes += c.visits[k]
+					s64 += c.second64[k]
+					s128 += c.second128[k]
+				}
+				if _, err := fmt.Fprintf(w, "| %s %s %d | %.2f | %.2f / %.2f / %.2f / %.2f / %.2f | %.2f / %.2f / %.2f / %.2f = %.2f | %.2f | %.2f |\n",
+					kind, profile, n, float64(nodes)/l+1,
+					float64(c.visits[0])/l, float64(c.visits[1])/l, float64(c.visits[2])/l, float64(c.visits[3])/l, float64(c.visits[4])/l,
+					float64(c.second64[1])/l, float64(c.second64[2])/l, float64(c.second64[3])/l, float64(c.second64[4])/l, float64(s64)/l,
+					float64(s128)/l, float64(c.tails)/l); err != nil {
+					return err
 				}
 			}
 		}
