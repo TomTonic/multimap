@@ -91,18 +91,35 @@ R1 to R3).
   byte nodes 40 to 60 % fewer.
 - **Memory**: block bytes a key 10 to 25 % less (fewer pages, less slack, fewer nodes).
 - **Speed** (structured keys, against the state before the step, M1 job `c1` and the same on the PC): lookups and ranges 10 to 30 %
-  faster from 16K keys on, about equal at 4K; churn about equal (fewer bursts, but splits and merges of ranges); build ±10 % (a split
-  costs one copy instead of a burst into many pages). The risk from section 3 point 3 (a weak band at mid sizes) does not apply if the
-  levels only go down, which the model has to show.
+  faster from about 64K keys on; churn about equal (fewer bursts, but splits and merges of ranges); build ±10 % (a split costs one
+  copy instead of a burst into many pages). **For point queries of small maps no improvement is predicted, and a loss is possible**
+  (section 5a).
+
+### 5a. The risk for point queries (added on the user's question, 2026-10-10)
+
+Fuller pages work against a point query in two ways: `locate` walks the keys of a page one after the other, so 8 to 15 keys a page
+instead of 3 to 4 mean more compares (the page search is already 21 to 43 % of a lookup); and in a page of 256 to 512 bytes the
+value lies at the end of the object, a cache line away from the key, where a page of 64 bytes has both in one line (the "serial cache
+hops" of node-pages). Against that stands only the saving of levels, and a level costs a few nanoseconds while the tree fits L1/L2
+(4K keys) and an L3 or memory access from about 64K keys on. That is the pattern of `afd1137` (losing at 4K and 16K, winning from
+32K to 64K), and cheaper levels do not change it. So:
+- the model counts, besides the nodes a lookup, **the remainders compared in the page a lookup** and **the cache lines touched a
+  lookup** (node lines, page lines up to the key, the value's line);
+- the gate includes the small maps: at 4K keys no more work a lookup than today (compares and lines);
+- **when a range child's page splits** (by bytes or by keys) is chosen from the model, as one fixed, explained rule, to balance the
+  levels against the page search; the lesson "pages of 256 bytes were worse" is the check of that rule;
+- the page search may have to come into this step: the offsets of the remainders follow from the key-length list by a SWAR prefix
+  sum, which allows a binary search in the page (3 to 4 compares instead of a walk) without a byte more in the page (an idea, not
+  measured).
 - Random keys (u64, uuid): pages fuller as well; only checked to stay in the band.
 
 ## 6. How it is checked, in this order
 
 1. **A model first** (no change of the tree): a program that builds the tree of section 4 from the sorted keys of street, dirs, links
    and url at 4K, 16K and 65K (both value profiles, the page sizes of `internal/page` with `NeedStrings`/`NeedFixed`), inserting in the
-   corpus order of the bench's build, and counts nodes a lookup, pages, keys a page, single-key pages and block bytes a key, next to
-   today's shape above. **Gate**: dirs and url at 65K with at least 30 % fewer nodes a lookup and fewer bytes a key, street and links
-   not worse; else stop and report.
+   corpus order of the bench's build, and counts nodes a lookup, remainders compared and cache lines touched a lookup, pages, keys a page, single-key
+   pages and block bytes a key, next to the same counts of today's tree. **Gate**: dirs and url at 65K with at least 30 % fewer nodes a lookup and fewer bytes a key, street and links
+   not worse, **and at 4K for every corpus no more compares and cache lines a lookup than today** (section 5a); else stop and report.
 2. Then the code, in steps with their own tests: the floor search and pages under range children (lookup, scan); the split; the merge;
    single slots. Every step keeps the tests, 100 % coverage, `-race`, lint, and the model's counts as a check of the real tree.
 3. rtcompare on the PC and the M1 against the state before the step (`c1`'s commit), on street, dirs, links, url (both profiles; 4K,
