@@ -287,6 +287,12 @@ Not part of a step yet; each gets a design note with a prediction before any cod
 - **The fast path of the one-key page** (see below): +13 % build and +11 % replay for `uint64` single-value in the probe (5.5c), +1 to +3 % build in the gate; belongs to the two points above.
 - **Reads** were measured late (5.5e); the probes of later steps include `readprobe_test.go`.
 
+- **Order of the levers after the profiles of 2026-10-10** (profiles-2026-10.md): (1) the routing layer, step 6
+  (step6-design.md); (2) **the search in a page**, 21 to 43 % of a lookup of the structured keys and 10 to 21 % of a write, nothing
+  of a range: only in a form that does not make the page larger (a larger page holds fewer keys and lengthens the walk of every
+  range), compared as rtcompare candidates (page-search-design.md, the probe figures there are not verified); (3) **the value sets**
+  of keys with many values (the value overflow's `Set3`): 34 to 36 % of a lookup and 46 to 60 % of a range of `links` natural.
+
 ## Feature: autotune of the keys per page (user, 2026-10-07; from the review, review-2026-10.md) — measured and dropped 2026-10-10
 
 **Decision (user, 2026-10-10): B, always the full page; the autotune is not built.** Experiment exp-maxkeys (autotune-design.md,
