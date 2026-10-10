@@ -385,7 +385,16 @@ license checked before the first commit.
 - **DBLP (author -> publications), CC0.** Strings as keys and values, one publication for most authors, hundreds
   for a few: `street` with a realistic tail. The smallest of the heavy-tailed corpora.
 - **Wikipedia pagelinks (page number -> linked page numbers).** `uint64` -> `uint64` with a power law: the
-  integer case with a real distribution.
+  integer case with a real distribution. **Built 2026-10-10 as the corpus `links`** (branch `corpus-links`,
+  commit `6e3e9c9`; task: [task-links-corpus.md](task-links-corpus.md)), but with titles instead of numbers:
+  keys are the titles of the pages of Simple English Wikipedia (dump of 2026-10-01) that link to at least one
+  namespace-0 page, natural values the titles they link to (`Names`, as `street` and `dirs`). 140,000 pages
+  drawn at random with a fixed seed out of 399,039, each with all its links: 6.5 million values, 974,425
+  distinct targets (719,666 of them red links), 23.9 MB gzipped, `Capacity` 70,000 keys (sizes 4,096 and 16,384
+  in the dev suite; 262,144 would need 524,288 keys, more than the wiki has). Keys with 1 / 2-8 / 9-64 / 65+
+  values: 29.0 / 16.1 / 38.2 / 16.7 %, 77.2 % of the values in sets of 65+, 46.4 values a key (median 11, max
+  5,693), key length 16.7 B; the keys with one value are the redirects (98 %). The shape is the opposite of `street` and `dirs`.
+  The numbers as `uint64` of the original idea are the values of the natural profile.
 - **The complete Debian file tree** (`Contents-*` of several releases; path -> packages): `dirs` without
   the reduction, past one million keys, for the 1M spot check. Possibly with a skewed choice of the keys.
 - **DNS records of the Tranco top list** (idea of the user). Keys: the domain names of one *numbered* Tranco list
