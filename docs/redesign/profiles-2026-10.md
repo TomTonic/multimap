@@ -91,7 +91,7 @@ few methods). The shares over the structured keys only (str, email, url, path, s
 | | 65,536 | 40 / 40 | 14 / 13 | 4 / 3 | 1 / 1 | 11 / 8 | 11 / 8 | 2 / 0 |
 | build | 4,096 | 16 / 20 | 16 / 20 | 7 / 6 | 2 / 2 | 16 / 14 | 13 / 12 | 17 / 9 |
 | | 65,536 | 30 / 36 | 11 / 12 | 7 / 4 | 1 / 1 | 12 / 8 | 12 / 10 | 10 / 4 |
-| range (walk of the scan 43 to 64 %) | 4,096 to 65,536 | 6 to 8 | 0 | 4 to 6 | 1 to 3 | | | |
+| range (walk of the scan 43 to 68 %) | 4,096 to 65,536 | 6 to 8 | 0 | 4 to 6 | 1 to 3 | | | |
 
 The order of the levers stays: the routing part first (it is the largest share of every operation and helps all four), the search
 in the page second (21 to 36 % of a lookup at every size, without growing the page), the changes of page and tree third. Point 4
