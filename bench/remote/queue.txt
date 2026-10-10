@@ -68,3 +68,10 @@ pg1 eb4a574 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|
 #   bench/remote/arm-run.sh --yes mx1
 # (on power; --yes answers the warnings, so nothing waits for an answer). About 4.5 to 5 hours; the Mac is free by 12:00.
 mx1 99b00af cc47992 300 -suite dev -keys u64,street,dirs,url -values natural,single-value -sizes 4096,16384,65536 -ops valuesFor,valuesBetween,churn,build -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map,ordered-mk1,ordered-mk2,ordered-mk4 -minprocs 4 -maxprocs 8
+# The state before step 6 (2026-10-10): cacheline after the decision for the full page (6e76275: locate, no fingerprints) with
+# the new corpus links (Wikipedia page links, built by the script before the run: about 2 minutes and 1.4 GB the first
+# time). The structured corpora only (PLAN.md, working rules: random keys do not set the course), against main and the
+# B-trees: the reference of step 6 on the M1. Start it with
+#   bench/remote/arm-run.sh --yes c1
+# (on power). About 2.5 hours.
+c1 affb848 cc47992 150 -suite dev -keys street,dirs,links,url -values natural,single-value -sizes 4096,16384,65536 -ops valuesFor,valuesBetween,churn,build -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
