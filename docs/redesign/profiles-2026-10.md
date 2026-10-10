@@ -76,3 +76,23 @@ uuid (29 % of a single-value churn at 4,096).
    part to blame; the descent is the largest for these keys, so step 6 is the first lever here too.
 4. **The single-value ranges of u64** (0.28 to 0.40 of btree-map at 16,384 and 65,536 keys): the walk is 70 % there, because random
    keys leave pages of 2 to 3 keys below the byte nodes. This is the routing part again, not the scan code.
+
+## Weighted as the user asks (2026-10-10): structured keys decide, random keys only stay in the band
+
+The user's two rules of 2026-10-10 (PLAN.md, working rules): random keys (u64, uuid) do not set the course, a user takes the hashed
+map for them; and the hot paths are written in "assembler thinking" (no reflection, interfaces, yield chains, closures, channels,
+few methods). The shares over the structured keys only (str, email, url, path, street, dirs), single-value / natural:
+
+| operation | n | desc | search | head | read | pchg | tree | GC + rt |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| lookup | 4,096 | 41 / 39 | 36 / 28 | 2 / 2 | 13 / 15 | | | |
+| | 65,536 | 55 / 55 | 28 / 21 | 1 / 1 | 10 / 12 | | | |
+| churn | 4,096 | 24 / 26 | 18 / 21 | 8 / 7 | 2 / 2 | 16 / 15 | 13 / 12 | 5 / 1 |
+| | 65,536 | 40 / 40 | 14 / 13 | 4 / 3 | 1 / 1 | 11 / 8 | 11 / 8 | 2 / 0 |
+| build | 4,096 | 16 / 20 | 16 / 20 | 7 / 6 | 2 / 2 | 16 / 14 | 13 / 12 | 17 / 9 |
+| | 65,536 | 30 / 36 | 11 / 12 | 7 / 4 | 1 / 1 | 12 / 8 | 12 / 10 | 10 / 4 |
+| range (walk of the scan 43 to 64 %) | 4,096 to 65,536 | 6 to 8 | 0 | 4 to 6 | 1 to 3 | | | |
+
+The order of the levers stays: the routing part first (it is the largest share of every operation and helps all four), the search
+in the page second (21 to 36 % of a lookup at every size, without growing the page), the changes of page and tree third. Point 4
+above (the u64 ranges) loses its weight under the first rule: u64 has to stay in the band, not to win.

@@ -57,6 +57,15 @@ strings. The rules below that are marked *new* come from that review.
   - `golangci-lint run` clean (the generated copy in `bench/baseline` is not ours);
   - the fuzz test running 60 s without a finding (`go test ./internal/art -run '^$' -fuzz FuzzOperations -fuzztime 60s`).
 - **Test docs.** Test documentation reads outside-in (AGENTS.md).
+- **Weight of random keys** *(user, 2026-10-10)*. A range index is used in practice on keys that are not scattered at random
+  (text, paths, names, addresses); for random keys (u64, uuid) a user wants point queries and takes the hashed map, which is
+  unbeatable there. Ordered stays a general-purpose structure, but in every trade-off the structured keys (str, email, url, path,
+  street, dirs) decide; the random ones must not fall out of the band, they do not set the course.
+- **Hot path in "assembler thinking"** *(user, 2026-10-10)*. On the hot paths (lookup, add, remove, the range walk): no
+  reflection, no interfaces or other dynamic dispatch, no yield chains or iterators, no closures as callbacks, no channels, few
+  or no method calls; plain loops over bytes and words, the code written out where Go's inliner would not inline it (a Go stack
+  frame rarely pays). No real assembler. The public API may return `iter.Seq`; behind it, one plain loop per page that the
+  compiler inlines into the caller's range loop (checked with `-gcflags=-m`), as the range walk does since scan-design.md.
 - **Measuring.** See [MEASURING.md](MEASURING.md): claims only from interleaved rtcompare runs,
   durations with clock time, a quiet machine during runs, one run at a time on the PC. Tell the
   user the duration and the expected end of every run longer than a few minutes. Jobs for the M1
