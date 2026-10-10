@@ -12,8 +12,9 @@ import (
 // results. It belongs to the cache-line analysis of the redesign (docs/redesign):
 // the statistic tells, per benchmark case, how well the objects of the ART
 // behind multimap.Ordered fill cache lines. Integer keys with one value each live
-// in pages and must report no violation of the 64- and 128-byte rules, while
-// the same keys with several values live in leaves and must report violations.
+// in multi-key pages (several keys a page, step 4 of the redesign) and report no
+// violation of the 64- and 128-byte rules, while the same keys with several
+// values live mostly in single-key pages and report violations.
 func TestRun(t *testing.T) {
 	var out bytes.Buffer
 	if err := run(&out, []string{"-keys", "u64", "-sizes", "4096"}); err != nil {
@@ -32,8 +33,8 @@ func TestRun(t *testing.T) {
 	if len(rows) != 4 {
 		t.Errorf("%d rows, want 4:\n%s", len(rows), out.String())
 	}
-	if r := rows["u64 single-value 4K"]; !strings.Contains(r[6], "single-key page") {
-		t.Errorf("integer keys with one value should live in single-key pages: %v", r)
+	if r := rows["u64 single-value 4K"]; !strings.Contains(r[6], "multi-key page 100%") || r[3] != "0.0 %" {
+		t.Errorf("integer keys with one value should live in multi-key pages, without violations: %v", r)
 	}
 	if r := rows["u64 natural 4K"]; !strings.Contains(r[6], "single-key page") {
 		t.Errorf("integer keys with several values should live in single-key pages: %v", r)
