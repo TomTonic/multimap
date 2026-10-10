@@ -1,0 +1,52 @@
+| values | keys | n | candidate | rounds | heap B/key | scannable B/key | GC CPU per cycle | heap B/key after removing half the keys |
+|---|---|---:|---|---:|---:|---:|---:|---:|
+| natural | u64 | 262144 | ordered | 3 | 102 | 7 | +7 ms | 59 |
+| natural | u64 | 262144 | btree-sets | 3 | 352 | 84 | +64 ms | 181 |
+| natural | u64 | 262144 | baseline | 3 | 163 | 89 | +39 ms | 84 |
+| natural | u64 | 262144 | ordered-mk1 | 3 | 125 | 23 | +20 ms | 66 |
+| natural | u64 | 262144 | ordered-mk2 | 3 | 122 | 20 | +16 ms | 65 |
+| natural | u64 | 262144 | ordered-mk4 | 3 | 114 | 15 | +12 ms | 61 |
+| natural | street | 212449 | ordered | 3 | 54 | 5 | +6 ms | 35 |
+| natural | street | 212449 | btree-sets | 3 | 285 | 81 | +49 ms | 144 |
+| natural | street | 212449 | baseline | 3 | 127 | 104 | +46 ms | 65 |
+| natural | street | 212449 | ordered-mk1 | 3 | 89 | 35 | +27 ms | 46 |
+| natural | street | 212449 | ordered-mk2 | 3 | 75 | 22 | +16 ms | 43 |
+| natural | street | 212449 | ordered-mk4 | 3 | 65 | 14 | +12 ms | 40 |
+| natural | dirs | 86215 | ordered | 3 | 74 | 8 | +4 ms | 47 |
+| natural | dirs | 86215 | btree-sets | 3 | 335 | 83 | +20 ms | 167 |
+| natural | dirs | 86215 | baseline | 3 | 179 | 128 | +24 ms | 90 |
+| natural | dirs | 86215 | ordered-mk1 | 3 | 106 | 38 | +11 ms | 54 |
+| natural | dirs | 86215 | ordered-mk2 | 3 | 90 | 25 | +7 ms | 52 |
+| natural | dirs | 86215 | ordered-mk4 | 3 | 83 | 16 | +5 ms | 50 |
+| natural | url | 262144 | ordered | 3 | 150 | 19 | +5 ms | 89 |
+| natural | url | 262144 | btree-sets | 3 | 416 | 88 | +45 ms | 209 |
+| natural | url | 262144 | baseline | 3 | 239 | 136 | +53 ms | 121 |
+| natural | url | 262144 | ordered-mk1 | 3 | 182 | 46 | +18 ms | 93 |
+| natural | url | 262144 | ordered-mk2 | 3 | 167 | 28 | +12 ms | 93 |
+| natural | url | 262144 | ordered-mk4 | 3 | 157 | 24 | +8 ms | 91 |
+| single-value | u64 | 262144 | ordered | 3 | 24 | 2 | +6 ms | 18 |
+| single-value | u64 | 262144 | btree-map | 3 | 45 | 37 | +22 ms | 27 |
+| single-value | u64 | 262144 | baseline | 3 | 87 | 87 | +34 ms | 46 |
+| single-value | u64 | 262144 | ordered-mk1 | 3 | 53 | 21 | +18 ms | 30 |
+| single-value | u64 | 262144 | ordered-mk2 | 3 | 50 | 18 | +14 ms | 29 |
+| single-value | u64 | 262144 | ordered-mk4 | 3 | 39 | 12 | +8 ms | 23 |
+| single-value | street | 212449 | ordered | 3 | 27 | 3 | +2 ms | 20 |
+| single-value | street | 212449 | btree-map | 3 | 55 | 37 | +20 ms | 28 |
+| single-value | street | 212449 | baseline | 3 | 104 | 104 | +40 ms | 53 |
+| single-value | street | 212449 | ordered-mk1 | 3 | 67 | 34 | +25 ms | 35 |
+| single-value | street | 212449 | ordered-mk2 | 3 | 51 | 21 | +16 ms | 31 |
+| single-value | street | 212449 | ordered-mk4 | 3 | 40 | 13 | +11 ms | 27 |
+| single-value | dirs | 86215 | ordered | 3 | 41 | 5 | +2 ms | 30 |
+| single-value | dirs | 86215 | btree-map | 3 | 96 | 37 | +7 ms | 49 |
+| single-value | dirs | 86215 | baseline | 3 | 149 | 128 | +20 ms | 76 |
+| single-value | dirs | 86215 | ordered-mk1 | 3 | 76 | 37 | +10 ms | 40 |
+| single-value | dirs | 86215 | ordered-mk2 | 3 | 58 | 24 | +6 ms | 37 |
+| single-value | dirs | 86215 | ordered-mk4 | 3 | 50 | 15 | +4 ms | 33 |
+| single-value | url | 262144 | ordered | 3 | 72 | 14 | +3 ms | 50 |
+| single-value | url | 262144 | btree-map | 3 | 109 | 42 | +15 ms | 55 |
+| single-value | url | 262144 | baseline | 3 | 163 | 130 | +47 ms | 83 |
+| single-value | url | 262144 | ordered-mk1 | 3 | 108 | 41 | +19 ms | 55 |
+| single-value | url | 262144 | ordered-mk2 | 3 | 92 | 28 | +9 ms | 55 |
+| single-value | url | 262144 | ordered-mk4 | 3 | 83 | 19 | +7 ms | 53 |
+
+n: keys per candidate. Heap figures exclude the key corpus. GC CPU is per full cycle minus a process that holds only the corpus. After removing every second key, bytes are still per key of the full corpus.

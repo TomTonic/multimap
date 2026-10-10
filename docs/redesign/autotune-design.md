@@ -77,3 +77,64 @@ keys; for k = 2 there are no merges); k = 1 is E1 (no multi-key pages, no merge 
 
 **Decision it prepares** (with the user, 2026-10-10): the rule that gives `maxKeys` from the number of pages, or a different
 answer if the curve says so (for example: mk2 and mk4 never pay, then the rule is a switch between 1 and the page's own limit).
+
+## Experiment exp-maxkeys: result (2026-10-10; PC 22:37 to 05:14, M1 job mx1 the same night)
+
+Code at 99b00af (c69349e with Go 1.27.2 and rtcompare v0.8.1; rtcompare's own code unchanged). Results: `bench/results-layout/maxkeys/`
+(PC: `pc-mx1`, `pc-mx2`; M1: branch `arm-results`, `mx1`); the tables "speed vs main" of every cell were made with `vs-main.py`
+(`pc-mx1/vs-main.txt`, `pc-mx2/vs-main.txt`, `m1-mx1-vs-main.txt`): each variant's speed relative to `main` (above 1 faster),
+derived from the pairs ordered/main and ordered/variant. Many cells stopped at 8 processes before the precision asked for (the
+`*` in those tables); the differences below are larger than that.
+
+**PC and M1 agree** in every finding (the M1 ratios differ by a few points, never in direction).
+
+**Speed against `main`, PC, single-value (natural is alike; u64 below):**
+
+| | n | ordered | mk1 | mk2 | mk4 |
+|---|--:|--:|--:|--:|--:|
+| valuesFor street / dirs / url | 4,096 | 0.81 / 0.85 / 0.84 | **0.99 / 0.96 / 1.00** | 0.89 / 0.89 / 0.88 | 0.87 / 0.88 / 0.86 |
+| | 65,536 | **1.05 / 1.07 / 1.15** | 1.03 / 1.04 / 1.14 | 0.99 / 1.04 / 1.10 | 0.99 / 1.05 / 1.10 |
+| | 212,449 | **1.48** / – / **1.40** | 1.06 / – / 1.21 | 1.17 / – / 1.25 | 1.19 / – / 1.30 |
+| churn street / dirs / url | 4,096 | 0.81 / 0.92 / 0.81 | **0.86 / 0.91 / 0.93** | 0.58 / 0.65 / 0.65 | 0.59 / 0.71 / 0.70 |
+| | 65,536 | **1.14 / 1.26 / 1.05** | 0.96 / 1.05 / 1.04 | 0.77 / 0.87 / 0.84 | 0.81 / 0.91 / 0.89 |
+| | 212,449 | **1.28** / – / **1.08** | 0.96 / – / 1.06 | 0.87 / – / 0.91 | 0.92 / – / 0.92 |
+| valuesBetween street / dirs / url | 4,096 | **2.83 / 1.92 / 1.60** | 0.66 / 0.67 / 0.67 | 0.84 / 0.86 / 0.84 | 1.12 / 1.17 / 1.13 |
+| | 212,449 | **3.70** / – / **2.01** | 0.92 / – / 0.91 | 1.15 / – / 1.09 | 1.51 / – / 1.44 |
+| valuesFor u64 | 4,096 / 65,536 / 212,449 | 0.51 / 0.71 / 1.02 | **0.86 / 0.85 / 1.20** | 0.85 / 0.75 / 1.07 | 0.85 / 0.71 / 0.97 |
+| churn u64 | 4,096 / 65,536 / 212,449 | 0.58 / 0.83 / **1.10** | **0.84 / 0.86** / 1.03 | 0.67 / 0.71 / 0.82 | 0.68 / 0.81 / 0.83 |
+
+**Memory** (heap B a key at 262,144 keys or the whole corpus; the same on both machines):
+
+| | ordered | mk4 | mk2 | mk1 | `main` | btree-map / btree-sets |
+|---|--:|--:|--:|--:|--:|--:|
+| single-value street / dirs / u64 / url | **27 / 41 / 24 / 72** | 40 / 50 / 39 / 83 | 51 / 58 / 50 / 92 | 67 / 76 / 53 / 108 | 104 / 149 / 87 / 163 | 55 / 96 / 45 / 109 |
+| natural street / dirs / u64 / url | **54 / 74 / 102 / 150** | 65 / 83 / 114 / 157 | 75 / 90 / 122 / 167 | 89 / 106 / 125 / 182 | 127 / 179 / 163 / 239 | 285 / 335 / 352 / 416 |
+
+**Against the prediction:**
+- valuesFor: mk1 the fastest ordered variant at 4K and 16K: **met** (1.13 to 1.22 times ordered on text keys at 4K, 1.07 to 1.12 at
+  16K; u64 1.69 at 4K, but only 1.06 at 16K, predicted 1.4 to 1.6). 65K within ±10 %: met for text keys; u64 1.20 (missed).
+- churn and build, mk1 against ordered at 4K and 16K: predicted 1.0 to 1.15, **more**: 1.06 to 1.16 single-value text, 1.3 to 1.45 natural
+  street and u64.
+- **mk2 and mk4 slower than ordered in writes: met for single-value text keys** (28 to 30 % at 4K), not for natural and u64 (equal).
+  They are slower than mk1 everywhere, and slower than or equal to ordered everywhere except valuesFor at 4K and 16K. Explanation (not
+  checked): a page at its limit bursts with every new key, so a small limit means a burst for nearly every insert, and a limit of 2 never
+  merges.
+- valuesBetween, mk1 against ordered: predicted 0.5 to 0.75, **missed, much worse**: 0.23 to 0.42 (single-value; mk1 is slower than `main`
+  in ranges, 0.62 to 0.78). E4 measured the full scan, not 100-key ranges, which carry the descent and the bounds for every one-key page.
+- memory: mk1 about twice ordered (single-value 2.2 to 2.5 times, natural 1.2 to 1.65 times), every variant below `main` (met); mk4 and
+  mk2 as predicted on street, more on u64.
+- the band: every variant beats the B-trees in point queries and in the writes of the natural profile (met); **single-value writes are
+  not in the band at small sizes, with any variant**: against btree-map, churn at 4K ordered 0.88 to 1.01 and mk1 0.88 to 1.01, build at
+  4K ordered 0.77 to 0.94 and mk1 0.88 to 0.99 (dirs and url lose with both); at 65K ordered wins (1.05 to 1.17), mk1 loses on dirs (0.91).
+
+**What follows** (for the decision with the user):
+1. Limits between 1 and the page's own are never the best choice for any operation at any size: the autotune is a **switch** between
+   one key a page and the full page, not a linear curve.
+2. The switch point for point queries and writes is between 16K and 65K keys for text keys (65K: the full page is as fast as one key a
+   page or faster, and from there it pulls ahead: 212K street valuesFor 1.48 against 1.06); for u64 lookups beyond 212K.
+3. Its price below the switch: ranges 3 to 4 times slower (one key a page is below `main` in ranges) and twice the memory, for 5 to 45 %
+   faster point queries and writes. Whether that pays is a question of the workload (the credo asks for both).
+4. The writes of single-value maps at small sizes are below btree-map with either form: that gap is not the page form's, it is the
+   write path of the tree (a separate question).
+5. One anomaly not understood: valuesBetween u64 single-value at 4,096 keys, ordered 3.69 and 3.54 times `main` on both machines but 0.94
+   and 0.86 at 16,384 (`main` is slow at 4K there, not ordered fast).
