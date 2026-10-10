@@ -206,7 +206,7 @@ func (s *strPage) need(nValues, remBytes, valBytes int) int {
 	if s.p.OneKey() {
 		return Header + s.p.PrefixLen() + nValues + valBytes
 	}
-	return Header + s.p.PrefixLen() + 3*nValues + remBytes + valBytes
+	return Header + s.p.PrefixLen() + 2*nValues + remBytes + valBytes
 }
 func (s *strPage) tooLong(key, val string) bool { return len(val) > MaxValue }
 func (s *strPage) flat() (out []mvFlat) {
@@ -237,27 +237,6 @@ func (s *strPage) invariants(t *testing.T) {
 	}
 	if bytes.Count(m[used:len(m)-vb], []byte{0}) != len(m)-vb-used {
 		t.Fatal("bytes between the keys and the values are not zero")
-	}
-	checkFingerprints(t, m, la)
-}
-
-// checkFingerprints checks the list of fingerprints of a many-key page: the fingerprint of the remainder of
-// every first value, and 0 for the values with Further.
-func checkFingerprints(t *testing.T, m []byte, la lay) {
-	t.Helper()
-	if !la.many {
-		return
-	}
-	off := la.rem
-	for i := range la.currentValues {
-		want := byte(0)
-		if rl := int(m[la.kl+i]); rl != Further {
-			want = Fingerprint(m[off : off+rl])
-			off += rl
-		}
-		if m[la.fp+i] != want {
-			t.Fatalf("fingerprint of idx %d is %d, want %d", i, m[la.fp+i], want)
-		}
 	}
 }
 
@@ -496,7 +475,7 @@ func (f *fixedPage) need(nValues, remBytes, _ int) int {
 	if f.p.OneKey() {
 		return Header + f.p.PrefixLen() + 8*nValues
 	}
-	return Header + f.p.PrefixLen() + 2*nValues + remBytes + 8*nValues
+	return Header + f.p.PrefixLen() + nValues + remBytes + 8*nValues
 }
 func (f *fixedPage) tooLong(string, string) bool { return false }
 func (f *fixedPage) flat() (out []mvFlat) {
@@ -527,7 +506,6 @@ func (f *fixedPage) invariants(t *testing.T) {
 	if bytes.Count(m[used:vs], []byte{0}) != vs-used {
 		t.Fatal("bytes between the keys and the values are not zero")
 	}
-	checkFingerprints(t, m, f.p.lay(false))
 }
 
 // ptrPool holds the values of the pointer pages in the tests: the pointer of "n" is &ptrPool[n], and holds n.
@@ -583,7 +561,7 @@ func (f *ptrPage) need(nValues, remBytes, _ int) int {
 	if f.p.OneKey() {
 		return Header + f.p.PrefixLen() + 8*nValues
 	}
-	return Header + f.p.PrefixLen() + 2*nValues + remBytes + 8*nValues
+	return Header + f.p.PrefixLen() + nValues + remBytes + 8*nValues
 }
 func (f *ptrPage) tooLong(string, string) bool { return false }
 func (f *ptrPage) flat() (out []mvFlat) {
@@ -617,7 +595,6 @@ func (f *ptrPage) invariants(t *testing.T) {
 	if bytes.Count(m[used:vs], []byte{0}) != vs-used {
 		t.Fatal("bytes between the keys and the values are not zero")
 	}
-	checkFingerprints(t, m, f.p.lay(false))
 }
 
 // FuzzPage lets the fuzzer drive the pages of every flavor against the model with keys and values of any

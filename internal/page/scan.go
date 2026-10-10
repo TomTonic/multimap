@@ -82,7 +82,7 @@ func (p *Fixed) ValuesIn[T comparable](b *Bounds) ([]T, bool) {
 	if p.one() || !b.HasLo && !b.HasHi {
 		return vs, false
 	}
-	start, end, over := valueRange(m, Header+l, n, Header+l+2*n, b)
+	start, end, over := valueRange(m, Header+l, n, Header+l+n, b)
 	return vs[start:end], over
 }
 
@@ -95,7 +95,7 @@ func (p *Str) AppendStrings(dst []string, b *Bounds) ([]string, bool) {
 	vl := Header + l // the value lengths of the one-key form follow the key part
 	start, end, over := 0, n, false
 	if !p.one() {
-		vl += 2 * n
+		vl += n
 		if b.HasLo || b.HasHi {
 			start, end, over = valueRange(m, Header+l, n, vl+n, b)
 		}
@@ -115,7 +115,7 @@ func (p *head) AppendKeys(buf []byte, ends []int, pre []byte, b *Bounds, str boo
 	m := p.mem()
 	n, l := int(p.currentValues), p.cpl()
 	kl := Header + l
-	rem := kl + 2*n
+	rem := kl + n
 	if str {
 		rem += n
 	}

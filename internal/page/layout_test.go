@@ -21,28 +21,26 @@ var exampleKeys = bs("Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofstras
 // The layout is what the tree and every later change of the page rely on: the head of four bytes
 // (type, the length of the key part, the number of values, rawWords), the key part right behind it,
 // then, as far as the page has them, the key lengths with 255 for a further value of the key before
-// it, the fingerprints of the remainders (0 for a further value), the value lengths, the remainders, free
-// bytes, and the values, which end with the object.
+// it, the value lengths, the remainders, free bytes, and the values, which end with the object.
 //
-// Expected: the six values of the example are the 128-byte page of strings (69 bytes, the fingerprints made
-// the page larger than class 64) and the 128-byte page of `uint64` with the bytes of the design note; a key with three values is the 32-byte page of
+// Expected: the six values of the example are the 63-byte page of strings (class 64) and the 128-byte
+// page of `uint64` with the bytes of the design note; a key with three values is the 32-byte page of
 // strings and the 64-byte page of `uint64` in the one-key form, without key lengths; a page of
 // pointers has rawWords of its byte area.
 func TestPageLayout(t *testing.T) {
 	// many keys, strings
 	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
-	want := []byte{TypeManyKeys + 4, 7, 6, 0} // class 128
+	want := []byte{TypeManyKeys + 2, 7, 6, 0} // class 64
 	want = append(want, "Bahnhof"...)
-	want = append(want, 0, 6, 7, Further, Further, 3) // key lengths
-	want = append(want, Fingerprint(nil), Fingerprint([]byte("sallee")), Fingerprint([]byte("strasse")), 0, 0, Fingerprint([]byte("weg")))
-	want = append(want, 5, 4, 3, 4, 4, 4)                  // value lengths
-	want = append(want, "sallee"+"strasse"+"weg"...)       // remainders
-	want = append(want, make([]byte, 128-24-len(want))...) // free
-	want = append(want, "MitteNordOstSuedWestRing"...)     // values, ending with the object
-	if got := p.mem(); !bytes.Equal(got, want) || p.Size() != 128 || p.Used() != 45 {
+	want = append(want, 0, 6, 7, Further, Further, 3)  // key lengths
+	want = append(want, 5, 4, 3, 4, 4, 4)              // value lengths
+	want = append(want, "sallee"+"strasse"+"weg"...)   // remainders
+	want = append(want, 0)                             // free
+	want = append(want, "MitteNordOstSuedWestRing"...) // values, ending with the object
+	if got := p.mem(); !bytes.Equal(got, want) || p.Size() != 64 || p.Used() != 39 {
 		t.Fatalf("many keys, strings:\n got %v\nwant %v (size %d, used %d)", got, want, p.Size(), p.Used())
 	}
-	if p.Len() != 6 || p.Keys() != 4 || p.PrefixLen() != 7 || p.OneKey() || p.Class() != 2 || p.RawWords() != 0 {
+	if p.Len() != 6 || p.Keys() != 4 || p.PrefixLen() != 7 || p.OneKey() || p.Class() != 1 || p.RawWords() != 0 {
 		t.Errorf("Len %d Keys %d PrefixLen %d OneKey %v Class %d RawWords %d", p.Len(), p.Keys(), p.PrefixLen(), p.OneKey(), p.Class(), p.RawWords())
 	}
 
@@ -51,19 +49,18 @@ func TestPageLayout(t *testing.T) {
 	want = []byte{TypeManyKeys + 4, 7, 6, 0} // class 128
 	want = append(want, "Bahnhof"...)
 	want = append(want, 0, 6, 7, Further, Further, 3)
-	want = append(want, Fingerprint(nil), Fingerprint([]byte("sallee")), Fingerprint([]byte("strasse")), 0, 0, Fingerprint([]byte("weg")))
 	want = append(want, "sallee"+"strasse"+"weg"...)
 	want = append(want, make([]byte, 128-6*8-len(want))...)
 	for _, v := range []uint64{7, 1, 2, 5, 9, 4} {
 		want = le(want, v)
 	}
-	if got := f.mem(); !bytes.Equal(got, want) || f.Size() != 128 || f.Used() != 39 {
+	if got := f.mem(); !bytes.Equal(got, want) || f.Size() != 128 || f.Used() != 33 {
 		t.Fatalf("many keys, uint64:\n got %v\nwant %v (size %d, used %d)", got, want, f.Size(), f.Used())
 	}
 
 	// many keys, pointers: the same bytes, rawWords is the byte area in words
 	pp := BuildFixed(exampleKeys, []*uint64{&ptrPool[7], &ptrPool[1], &ptrPool[2], &ptrPool[5], &ptrPool[9], &ptrPool[4]})
-	if pp.RawWords() != 5 || pp.Used() != 39 { // 39 bytes are 5 words
+	if pp.RawWords() != 5 || pp.Used() != 33 { // 33 bytes are 5 words
 		t.Errorf("pointer page: rawWords %d, used %d", pp.RawWords(), pp.Used())
 	}
 	if got, want := pp.mem()[:4], []byte{TypeManyKeys + 4, 7, 6, 5}; !bytes.Equal(got, want) {
@@ -184,9 +181,8 @@ func TestPageLimits(t *testing.T) {
 //
 // Expected: Add of another key to a one-key page returns a new page of the many-key form with all the values
 // (for 12 values of the first key too, the slices of the pairing are not limited), and Remove of the second
-// key turns the page back into the one-key form in place (or into a page of a smaller class, if the content
-// then fits one: with 12 values the many-key form needed more than the one-key form fills), with the key part
-// of the whole key and no key lengths and fingerprints; a key that does not fit is refused.
+// key turns the page back into the one-key form in place, with the key part of the whole key and no key
+// lengths; a key that does not fit is refused.
 func TestPageOneKeyBecomesMany(t *testing.T) {
 	for _, n := range []int{1, 3, 12} {
 		var vs [][]byte
@@ -200,7 +196,7 @@ func TestPageOneKeyBecomesMany(t *testing.T) {
 			t.Fatalf("%d values: Add of another key: %v, %v keys %d prefix %d", n, res, q.OneKey(), q.Keys(), q.PrefixLen())
 		}
 		r, rm := q.Remove([]byte("street-2"), []byte("z"))
-		if rm != Gone || (r != q && r.Size() >= q.Size()) || !r.OneKey() || r.Len() != n || r.Keys() != 1 || string(r.CP()) != "street-1" {
+		if rm != Gone || r != q || !r.OneKey() || r.Len() != n || r.Keys() != 1 || string(r.CP()) != "street-1" {
 			t.Fatalf("%d values: Remove of the second key: %v, one key %v, %d values, key part %q", n, rm, r.OneKey(), r.Len(), r.CP())
 		}
 		// the same for uint64: the one-key page of fixed values
@@ -249,9 +245,9 @@ func TestPageSkipAndPrepend(t *testing.T) {
 	if q != p || string(q.CP()) != "Bahnhof" {
 		t.Fatalf("Prepend in place: %q", q.CP())
 	}
-	big := q.Prepend([]byte(strings.Repeat("P", 80)))
-	if big == nil || big == q || big.Size() <= q.Size() || len(big.CP()) != 87 {
-		t.Fatalf("Prepend of 80 bytes: %v", big)
+	big := q.Prepend([]byte(strings.Repeat("P", 40)))
+	if big == nil || big == q || big.Size() <= q.Size() || len(big.CP()) != 47 {
+		t.Fatalf("Prepend of 40 bytes: %v", big)
 	}
 	if big.Prepend([]byte(strings.Repeat("P", 600))) != nil || big.Prepend([]byte(strings.Repeat("P", 470))) != nil {
 		t.Error("Prepend beyond the largest class")
@@ -278,10 +274,10 @@ func TestPageSkipAndPrepend(t *testing.T) {
 	if g.Prepend[uint64]([]byte(strings.Repeat("P", 600)), false) != nil || g.Prepend[uint64]([]byte(strings.Repeat("P", 470)), false) != nil {
 		t.Error("fixed Prepend beyond the limits")
 	}
-	// pointers: the byte area of the typed object is fixed: 39 bytes are 5 words (40 bytes), so 1 more byte is in place
+	// pointers: the byte area of the typed object is fixed: 33 bytes are 5 words (40 bytes), so 7 more bytes are in place
 	pp := BuildFixed(exampleKeys, []*uint64{&ptrPool[7], &ptrPool[1], &ptrPool[2], &ptrPool[5], &ptrPool[9], &ptrPool[4]})
-	if a := pp.Prepend[*uint64]([]byte("1"), true); a != pp || a.RawWords() != 5 {
-		t.Errorf("pointer page: Prepend of 1 byte in place: %v", a == pp)
+	if a := pp.Prepend[*uint64]([]byte("1234567"), true); a != pp || a.RawWords() != 5 {
+		t.Errorf("pointer page: Prepend of 7 bytes in place: %v", a == pp)
 	}
 	if b := pp.Prepend[*uint64]([]byte("1234567"), true); b == pp || b.RawWords() <= 5 {
 		t.Errorf("pointer page: Prepend beyond the byte area is a new object: %v, rawWords %d", b == pp, b.RawWords())
@@ -356,7 +352,7 @@ func TestPageWidenRefusals(t *testing.T) {
 	if deep.Widen([]byte("a"), []byte("n")) != nil {
 		t.Error("a remainder that grows beyond 254 bytes by the prefix tail")
 	}
-	full := BuildStrings(bs("a1", "a2"), bs(strings.Repeat("x", 247), strings.Repeat("y", 247)))
+	full := BuildStrings(bs("a1", "a2"), bs(strings.Repeat("x", 250), strings.Repeat("y", 250)))
 	if full == nil || full.Widen([]byte("b"), []byte("n")) != nil {
 		t.Error("content beyond 512 bytes")
 	}
@@ -469,14 +465,14 @@ func TestPageLookupsAndRemovals(t *testing.T) {
 // pages that do.
 //
 // Expected: for the six values of the example, NeedStrings and NeedFixed are the bytes the pages use (the key area
-// and the values), 69 and 87: three bytes a value of Str (key length, fingerprint, value length) and two of Fixed.
+// and the values), 63 and 81.
 func TestPageNeed(t *testing.T) {
 	p := BuildStrings(exampleKeys, bs("Mitte", "Nord", "Ost", "Sued", "West", "Ring"))
 	f := BuildFixed(exampleKeys, []uint64{7, 1, 2, 5, 9, 4})
-	if got := NeedStrings(6, 7, 16, 24); got != p.Used()+24 || got != 69 {
+	if got := NeedStrings(6, 7, 16, 24); got != p.Used()+24 || got != 63 {
 		t.Errorf("NeedStrings = %d, page uses %d", got, p.Used()+24)
 	}
-	if got := NeedFixed[uint64](6, 7, 16); got != f.Used()+48 || got != 87 {
+	if got := NeedFixed[uint64](6, 7, 16); got != f.Used()+48 || got != 81 {
 		t.Errorf("NeedFixed = %d, page uses %d", got, f.Used()+48)
 	}
 }
@@ -685,15 +681,11 @@ func TestPageCompareOrdersAsBytes(t *testing.T) {
 	p := BuildFixed(rests, vals)
 	m, la := p.mem(), p.lay(false)
 	for i, r := range rests {
-		if pos, _, found := find(m, la.kl, la.currentValues, la.rem, r[la.l:]); !found || pos != i {
+		if pos, _, found := locate(m, la.kl, la.currentValues, la.rem, r[la.l:]); !found || pos != i {
 			t.Errorf("key of %d bytes: idx %d, found %v", len(r), pos, found)
 		}
-		// the place of the key that follows it (in front of it, if the key is not there): its own value
-		if pos, _ := locate(m, la.kl, la.currentValues, la.rem, r[la.l:]); pos != i {
-			t.Errorf("place of the key of %d bytes: idx %d", len(r), pos)
-		}
 	}
-	if pos, off := locate(m, la.kl, la.currentValues, la.rem, []byte("kz")[la.l:]); pos != len(rests) || off != p.Used() {
-		t.Errorf("a key after all: idx %d, offset %d", pos, off)
+	if pos, _, found := locate(m, la.kl, la.currentValues, la.rem, []byte("kz")[la.l:]); found || pos != len(rests) {
+		t.Errorf("a key after all: idx %d, found %v", pos, found)
 	}
 }

@@ -142,14 +142,13 @@ func ptrDeref(t *testing.T, p *Fixed, key string, id int) *ptrRec {
 // its type, so the page keeps its byte area (rawWords) for its life and a change that fits the byte area and the
 // free values happens in place, which saves an allocation of up to 512 bytes and the work of the collector.
 //
-// Expected: for a page of 37 bytes of keys (5 words of byte area, a class of 128 bytes with free values) a further
+// Expected: for a page of 33 bytes of keys (5 words of byte area, a class of 128 bytes with free values) a further
 // value of a key, the removal of a value, and a key whose remainder fits the slack of the last word are in place; a key
 // that does not fit the byte area is a new object with a larger byte area, and the keys and values of the new
 // object are all there.
 func TestPointerPageChangesInPlace(t *testing.T) {
 	vs := []*uint64{&ptrPool[7], &ptrPool[1], &ptrPool[2], &ptrPool[5], &ptrPool[9], &ptrPool[4]}
-	keys := bs("Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofstrasse", "Bahnhofstrasse", "Bahnhofw")
-	p := BuildFixed(keys, vs)
+	p := BuildFixed(exampleKeys, vs)
 	if p.RawWords() != 5 || p.Size() != 128 {
 		t.Fatalf("setup: rawWords %d, size %d", p.RawWords(), p.Size())
 	}
@@ -161,7 +160,7 @@ func TestPointerPageChangesInPlace(t *testing.T) {
 	if q != p || rm != Removed {
 		t.Fatalf("remove that value: in place %v, %v", q == p, rm)
 	}
-	q, res = q.Add([]byte("Bahnhofz"), &ptrPool[12], true) // remainder "z": a byte more in the key lengths, the fingerprints and the remainders: 40 bytes
+	q, res = q.Add([]byte("Bahnhofz"), &ptrPool[12], true) // remainder "z": one byte more in the key lengths, one in the remainders: 35 bytes
 	if q != p || res != Added {
 		t.Fatalf("a short key: in place %v, %v", q == p, res)
 	}
@@ -173,7 +172,7 @@ func TestPointerPageChangesInPlace(t *testing.T) {
 	if long == p || res != Added || long.RawWords() <= 5 || long.Keys() != 5 || long.Len() != 7 {
 		t.Fatalf("a key beyond the byte area: new %v, %v, rawWords %d", long != p, res, long.RawWords())
 	}
-	for _, k := range []string{"Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofw", "Bahnhofzzzzzzzzzzzzzzzz"} {
+	for _, k := range []string{"Bahnhof", "Bahnhofsallee", "Bahnhofstrasse", "Bahnhofweg", "Bahnhofzzzzzzzzzzzzzzzz"} {
 		if _, ok := long.Get[*uint64]([]byte(k)); !ok {
 			t.Errorf("Get(%q) after the new object", k)
 		}

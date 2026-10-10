@@ -18,8 +18,6 @@
 //
 //	key lengths    currentValues bytes, many-key form only: the length of the remainder of value i, or Further (255)
 //	               for a value that is a further value of the key before it (no remainder)
-//	fingerprints   currentValues bytes, many-key form only: Fingerprint of the remainder of value i, or 0 for a value
-//	               with Further; a search compares only the remainders whose fingerprint is the one searched for
 //	value lengths  currentValues bytes, Str only: the length of value i
 //	remainders     many-key form only: the remainders of the keys, one behind the other
 //	free           zero
@@ -39,8 +37,6 @@ package page
 
 import (
 	"unsafe"
-
-	"github.com/TomTonic/multimap/internal/swar"
 )
 
 const (
@@ -182,17 +178,16 @@ func lcp(a, b []byte) int {
 // lay holds the offsets of the parts behind the key part of a page with currentValues values.
 type lay struct {
 	currentValues, l int  // the number of values the page holds, length of the key part
-	kl, fp, vl, rem  int  // offsets: key lengths, fingerprints, value lengths, remainders
-	many, str        bool // the many-key form has key lengths, fingerprints and remainders; Str has value lengths
+	kl, vl, rem      int  // offsets: key lengths, value lengths, remainders
+	many, str        bool // the many-key form has key lengths and remainders; Str has value lengths
 }
 
 func (p *head) lay(str bool) lay {
 	la := lay{currentValues: int(p.currentValues), l: p.cpl(), many: !p.one(), str: str}
 	la.kl = Header + la.l
-	la.fp, la.vl = la.kl, la.kl
+	la.vl = la.kl
 	if la.many {
-		la.fp += la.currentValues
-		la.vl += 2 * la.currentValues
+		la.vl += la.currentValues
 	}
 	la.rem = la.vl
 	if str {
@@ -220,76 +215,25 @@ func (la *lay) keyEndFrom(m []byte, pos, off int) int {
 	return off + sum - Further*further
 }
 
-// locate returns the position (value index) where the key whose remainder is r (after the key part) belongs in a many-key
-// page in which it is not (find said so): the first value of the key that follows it, or n, with the offset of that
-// key's remainder in the object (the end of the key area, if it goes at the end). kl is the offset of the key
-// lengths, n the number of values, rem the offset of the remainders.
-func locate(m []byte, kl, n, rem int, r []byte) (pos, off int) {
+// locate returns the position (value index) of the first value of the key whose remainder is r (after the key
+// part), or of the key that would follow it, with the offset of its remainder in the object (the end of the
+// key area, if it goes at the end). Many-key form only; kl is the offset of the key lengths, n the number
+// of values, rem the offset of the remainders.
+func locate(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
 	off = rem
 	pos = n
 	for i, rl := range m[kl : kl+n] {
 		if rl == Further {
 			continue
 		}
-		if compare(m[off:off+int(rl)], r) >= 0 {
-			pos = i
+		c := compare(m[off:off+int(rl)], r)
+		if c >= 0 {
+			pos, found = i, c == 0
 			break
 		}
 		off += int(rl)
 	}
-	return pos, off
-}
-
-// find returns the position (value index) of the first value of the key whose remainder is r (after the key part) in a
-// many-key page, with the offset of its remainder in the object, or false. kl is the offset of the key lengths, n
-// the number of values, rem the offset of the remainders. It compares the fingerprint of r with the n fingerprints
-// of the page, eight at a time, and compares a remainder only where the fingerprint and the length are equal
-// (docs/redesign/page-search-design.md).
-func find(m []byte, kl, n, rem int, r []byte) (pos, off int, found bool) {
-	if len(r) > MaxRemainder { // no value has this key length (Further is not one)
-		return 0, 0, false
-	}
-	f := Fingerprint(r)
-	fp := kl + n
-	off, at := rem, 0 // the offset of the remainder of the first value at or after at
-	for g := 0; g < n; g += 8 {
-		w := fingerprintWord(m, fp, g, n, f)
-		for i := swar.Index8(w, f); i < 8; i = swar.Index8(w, f) {
-			idx := g + i
-			if int(m[kl+idx]) == len(r) {
-				for ; at < idx; at++ {
-					if rl := m[kl+at]; rl != Further {
-						off += int(rl)
-					}
-				}
-				if string(m[off:off+len(r)]) == string(r) {
-					return idx, off, true
-				}
-			}
-			w = w&^(0xff<<(8*i)) | uint64(^f)<<(8*i) // look past this candidate
-		}
-	}
-	return 0, 0, false
-}
-
-// fingerprintWord returns the fingerprints of the values g to g+7 of the page m, whose fingerprint list begins at fp
-// and has n bytes, as a little-endian word; the places beyond the list hold ^f, which is not the fingerprint
-// searched for. It reads a whole word (the bytes behind the list are part of the object) unless the object ends too
-// soon.
-func fingerprintWord(m []byte, fp, g, n int, f byte) uint64 {
-	pad := uint64(^f) * 0x0101010101010101
-	if g+8 <= n {
-		return swar.Word(m[fp+g:])
-	}
-	if fp+g+8 <= len(m) {
-		keep := ^uint64(0) >> (8 * (8 - (n - g))) // the n-g bytes of the list
-		return swar.Word(m[fp+g:])&keep | pad&^keep
-	}
-	w := pad
-	for j := g; j < n; j++ {
-		w = w&^(0xff<<(8*(j-g))) | uint64(m[fp+j])<<(8*(j-g))
-	}
-	return w
+	return pos, off, found
 }
 
 // runEnd returns the value after the last value of the key whose first value is pos.
@@ -343,16 +287,15 @@ func classFor(need int) int {
 
 // NeedStrings returns the bytes a many-key Str page takes for n values whose remainders (after a key part
 // of cpl bytes) are remBytes in all (the values with Further have none) and whose values are valBytes in all.
-// Besides the remainders and values it needs three bytes a value: key length, fingerprint and value length.
 // The tree calls it to decide, before it builds anything, whether the entries of a subtree fit a page (at
 // most 512).
 func NeedStrings(n, cpl, remBytes, valBytes int) int {
-	return Header + cpl + 3*n + remBytes + valBytes
+	return Header + cpl + 2*n + remBytes + valBytes
 }
 
-// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths (two bytes a value), values of the size of T.
+// NeedFixed is NeedStrings for a many-key Fixed page of T: no value lengths, values of the size of T.
 func NeedFixed[T comparable](n, cpl, remBytes int) int {
-	return Header + cpl + 2*n + remBytes + n*size[T]()
+	return Header + cpl + n + remBytes + n*size[T]()
 }
 
 // ShrinkLimit returns how much of the room of a smaller class the content of a page may fill for
@@ -424,7 +367,7 @@ func (p *head) setHead(many bool, c, n, l, raw int) {
 }
 
 // toOneKey turns the many-key form of the object m with one key into the one-key form in place: the
-// remainder joins the key part, the key lengths and the fingerprints go. The page has la.currentValues values, the key part la.l bytes and the
+// remainder joins the key part, the key lengths go. The page has la.currentValues values, the key part la.l bytes and the
 // key area ends at e. It returns the new end of the key area. (The new key part fits nine bits: the page is
 // at most 512 bytes.)
 func toOneKey(p *head, m []byte, la lay, e int) int {

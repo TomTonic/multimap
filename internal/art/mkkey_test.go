@@ -110,8 +110,8 @@ func TestMultiKeyPageAboveAndUp(t *testing.T) {
 	t.Run("strings", func(t *testing.T) {
 		runAboveAndUp(t, 3, func(i int) string { return fmt.Sprint(i, strings.Repeat("v", 150)) })
 	})
-	t.Run("uint64", func(t *testing.T) { runAboveAndUp(t, 45, func(i int) uint64 { return uint64(i) }) })
-	t.Run("pointers", func(t *testing.T) { runAboveAndUp(t, 45, recPool()) })
+	t.Run("uint64", func(t *testing.T) { runAboveAndUp(t, 49, func(i int) uint64 { return uint64(i) }) })
+	t.Run("pointers", func(t *testing.T) { runAboveAndUp(t, 49, recPool()) })
 }
 
 func runAboveAndUp[T comparable](t *testing.T, n int, val func(i int) T) {
@@ -411,7 +411,7 @@ func runScans[T comparable](t *testing.T, val func(i int) T) {
 }
 
 // TestMultiKeyPageOfWordsCannotMoveUp is TestMultiKeyPageCannotMoveUp for a page of
-// uint64 values, which holds 45 keys behind a common prefix of 11 bytes and 46 without it:
+// uint64 values, which holds 49 keys behind a common prefix of 11 bytes and 50 without it:
 // the bytes of the node above it would take its content beyond 512.
 //
 // Expected: after the node's other child is removed, every key of the page is
@@ -420,18 +420,18 @@ func TestMultiKeyPageOfWordsCannotMoveUp(t *testing.T) {
 	var m Map[uint64]
 	p := "0123456789"
 	key := func(i int) []byte { return []byte(fmt.Sprint(p, "q", string(rune('A'+i)))) }
-	for i := range 45 {
+	for i := range 49 {
 		m.Add(key(i), uint64(i))
 	}
 	m.Add([]byte(p+"r"), 1) // does not fit the page: a node goes above it
 	m.Add([]byte(p+"r"), 2) // two values: a single-key page
-	m.Add(key(45), 45)      // 46 keys fit a page without the 11 bytes
+	m.Add(key(49), 49)      // 50 keys fit a page without the 11 bytes
 	m.RemoveKey([]byte(p + "r"))
 	checkInvariants(t, &m.t)
 	if isPage(m.t.root.objType) {
 		t.Fatalf("the page moved up although it is full")
 	}
-	for i := range 46 {
+	for i := range 50 {
 		if got := valuesOf(&m, key(i)); !slices.Equal(got, []uint64{uint64(i)}) {
 			t.Fatalf("key %d holds %v", i, got)
 		}

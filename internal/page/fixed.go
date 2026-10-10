@@ -75,7 +75,7 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T, ptr bool) *Fixed {
 		l = len(rests[0])
 		e += l
 	} else {
-		e += l + 2*n // key lengths and fingerprints
+		e += l + n
 		for i, r := range rests {
 			if !further(rests, i) {
 				if len(r)-l > MaxRemainder {
@@ -101,7 +101,6 @@ func BuildFixedOf[T comparable](rests [][]byte, vals []T, ptr bool) *Fixed {
 				m[la.kl+i] = Further
 			} else {
 				m[la.kl+i] = uint8(len(r) - l)
-				m[la.fp+i] = Fingerprint(r[l:])
 				off += copy(m[off:], r[l:])
 			}
 		}
@@ -149,7 +148,7 @@ func (p *Fixed) Get[T comparable](rest []byte) (T, bool) {
 			return zero, false
 		}
 		var found bool
-		if pos, _, found = find(m, Header+l, n, Header+l+2*n, rest[l:]); !found {
+		if pos, _, found = locate(m, Header+l, n, Header+l+n, rest[l:]); !found {
 			return zero, false
 		}
 	}
@@ -171,7 +170,7 @@ func (p *Fixed) EachValue[T comparable](rest []byte, fn func(v T) bool) bool {
 			return false
 		}
 		var found bool
-		if pos, _, found = find(m, Header+l, n, Header+l+2*n, rest[l:]); !found {
+		if pos, _, found = locate(m, Header+l, n, Header+l+n, rest[l:]); !found {
 			return false
 		}
 		for end = pos + 1; end < n && m[Header+l+end] == Further; end++ {
@@ -225,7 +224,7 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 	la := p.lay(false)
 	w := size[T]()
 	var idx, ro int
-	var kl, fp byte
+	var kl byte
 	var r []byte
 	res := AddedValue
 	e := la.rem
@@ -244,10 +243,7 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 			return p, Outside
 		}
 		r = rest[la.l:]
-		pos, off, found := find(m, la.kl, la.currentValues, la.rem, r)
-		if !found {
-			pos, off = locate(m, la.kl, la.currentValues, la.rem, r)
-		}
+		pos, off, found := locate(m, la.kl, la.currentValues, la.rem, r)
 		ro, idx = off-la.rem, pos
 		if found {
 			end := la.runEnd(m, pos)
@@ -259,14 +255,14 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 			if len(r) > MaxRemainder {
 				return p, Full
 			}
-			kl, fp, res = uint8(len(r)), Fingerprint(r), Added
+			kl, res = uint8(len(r)), Added
 		}
 		e = la.keyEndFrom(m, pos, off)
 	}
 	if la.currentValues >= MaxEntries {
 		return p, Full
 	}
-	ne := e + 2*b2i(la.many) + len(r)
+	ne := e + b2i(la.many) + len(r)
 	q := p
 	if !p.fits(ne, la.currentValues+1, w) {
 		c := classFor(ne + (la.currentValues+1)*w)
@@ -282,12 +278,10 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 	nv[idx] = v
 	if la.many { // insertion of a value in the page without value lengths, written out: the key lengths and the head of the remainders move together
 		rlen := len(r)
-		copy(m[la.rem+ro+2+rlen:e+2+rlen], m[la.rem+ro:e])
-		copy(m[la.fp+idx+2:la.rem+ro+2], m[la.fp+idx:la.rem+ro])
-		copy(m[la.kl+idx+1:la.fp+idx+1], m[la.kl+idx:la.fp+idx])
+		copy(m[la.rem+ro+1+rlen:e+1+rlen], m[la.rem+ro:e])
+		copy(m[la.kl+idx+1:la.rem+ro+1], m[la.kl+idx:la.rem+ro])
 		m[la.kl+idx] = kl
-		m[la.fp+1+idx] = fp
-		copy(m[la.rem+2+ro:], r)
+		copy(m[la.rem+1+ro:], r)
 	}
 	q.currentValues++
 	return q, res
@@ -348,7 +342,7 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 			return p, Absent
 		}
 		r := rest[la.l:]
-		pos, off, found := find(m, la.kl, la.currentValues, la.rem, r)
+		pos, off, found := locate(m, la.kl, la.currentValues, la.rem, r)
 		if !found {
 			return p, Absent
 		}
@@ -359,7 +353,7 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 		e = la.keyEndFrom(m, pos, off)
 		if idx == pos {
 			if end > pos+1 { // the next value takes the key's place: its value becomes the key's
-				m[la.kl+idx+1], m[la.fp+idx+1] = uint8(len(r)), m[la.fp+idx]
+				m[la.kl+idx+1] = uint8(len(r))
 			} else { // (a many-key page has two keys at least)
 				remLen, res = len(r), Gone
 				ro = off - la.rem
@@ -371,13 +365,12 @@ func (p *Fixed) Remove[T comparable](rest []byte, v T, ptr bool) (*Fixed, Remova
 	copy(vs[1:idx+1], vs[:idx])
 	vs[0] = zero
 	if la.many { // removal of a value from the page without value lengths, written out
-		copy(m[la.kl+idx:la.fp+idx-1], m[la.kl+idx+1:la.fp+idx])
-		copy(m[la.fp-1+idx:la.rem+ro-2], m[la.fp+idx+1:la.rem+ro])
-		copy(m[la.rem-2+ro:e-2-remLen], m[la.rem+ro+remLen:e])
-		clear(m[e-2-remLen : e])
+		copy(m[la.kl+idx:la.rem+ro-1], m[la.kl+idx+1:la.rem+ro])
+		copy(m[la.rem-1+ro:e-1-remLen], m[la.rem+ro+remLen:e])
+		clear(m[e-1-remLen : e])
 	}
 	p.currentValues--
-	e -= 2*b2i(la.many) + remLen
+	e -= b2i(la.many) + remLen
 	if la.many && res == Gone && oneKeyLeft(m, la.kl, int(p.currentValues)) {
 		e = toOneKey(&p.head, m, p.lay(false), e)
 	}
@@ -404,7 +397,7 @@ func (p *Fixed) Each[T comparable](fn func(rem []byte, v T, first bool) bool) bo
 		return true
 	}
 	kl := Header + l
-	off := kl + 2*n
+	off := kl + n
 	var rem []byte
 	for i, rl := range m[kl : kl+n] {
 		first := rl != Further
@@ -494,7 +487,7 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	if longest+d > MaxRemainder {
 		return nil
 	}
-	nk := Header + mis + 2*(la.currentValues+1) + (e - la.rem) + heads*d + len(newRem)
+	nk := Header + mis + (la.currentValues + 1) + (e - la.rem) + heads*d + len(newRem)
 	c := classFor(nk + (la.currentValues+1)*w)
 	if c < 0 {
 		return nil
@@ -516,7 +509,6 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 		out[nl.kl+i+b2i(i >= at)] = rl
 	}
 	out[nl.kl+at] = uint8(len(newRem))
-	out[nl.fp+at] = Fingerprint(newRem)
 	off := nl.rem
 	if first {
 		off += copy(out[off:], newRem)
@@ -525,11 +517,9 @@ func (p *Fixed) Widen[T comparable](rest []byte, v T, ptr bool) *Fixed {
 	src := la.rem
 	for i := range la.currentValues {
 		if rl := int(m[la.kl+i]); rl != Further {
-			start := off
 			off += copy(out[off:], extra)
 			off += copy(out[off:], m[src:src+rl])
 			src += rl
-			out[nl.fp+i+b2i(i >= at)] = Fingerprint(out[start:off]) // the remainder grew: its fingerprint is new
 		}
 	}
 	if !first {
