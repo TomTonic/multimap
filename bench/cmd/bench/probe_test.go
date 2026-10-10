@@ -24,7 +24,8 @@ import (
 //
 // For every case (key kind, value profile, size) it builds the tree as the benchmark does,
 // replays the steady-state cycle of workload.Cycle twice (the first time to reach the steady
-// state), and then once more under the CPU profiler. The events are counted only by a build
+// state), and then, if MKPROBE_PROF names a directory, under the CPU profiler: 40 cycles and at least 3 seconds, and the build stream from
+// empty for 3 seconds (a second file, -build.pprof). The events are counted only by a build
 // with the tag mkstats (art.EventsEnabled).
 //
 // The expectation: it prints, per case, the transitions of the value counts with their
@@ -148,15 +149,24 @@ func probeCase(t *testing.T, kind keys.Kind, profile string, n int) {
 	fmt.Printf("removing every second key value by value: %.0f ns per removal\n\n", float64(time.Since(start))/float64(max(1, removed)))
 	census("tree with every second key removed (Remove, value by value)", &hm)
 
-	// --- a plain replay (no per-operation timing) under the profiler
+	// --- a plain replay (no per-operation timing) under the profiler, and the build stream from empty
 	dir := os.Getenv("MKPROBE_PROF")
 	if dir != "" {
 		must(os.MkdirAll(dir, 0o755))
 		file, err := os.Create(fmt.Sprintf("%s/%s-%s-%d.pprof", dir, kind, profile, n))
 		must(err)
 		must(pprof.StartCPUProfile(file))
-		for range cyclesEnv() {
+		for start, i := time.Now(), 0; i < cyclesEnv() || time.Since(start) < 3*time.Second; i++ {
 			apply(&tm, f, cycle)
+		}
+		pprof.StopCPUProfile()
+		must(file.Close())
+		file, err = os.Create(fmt.Sprintf("%s/%s-%s-%d-build.pprof", dir, kind, profile, n))
+		must(err)
+		must(pprof.StartCPUProfile(file))
+		for start := time.Now(); time.Since(start) < 3*time.Second; {
+			var bm art.Map[V]
+			apply(&bm, f, build)
 		}
 		pprof.StopCPUProfile()
 		must(file.Close())
