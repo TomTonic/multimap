@@ -330,8 +330,8 @@ func census(what string, m *art.Map[V]) {
 	type row struct{ n, bytes, keys, values int }
 	rows := map[string]*row{}
 	var pageEntries []int
-	var skValues [4]int // single-key pages by number of values: 1, 2, 3-4, 5+
-	var bySize [513]row // multi-key pages by the size of the object
+	var skValues [4]int       // single-key pages by number of values: 1, 2, 3-4, 5+
+	var bySize [513]row       // multi-key pages by the size of the object
 	skBySize := map[int]int{} // single-key pages by the size of the object
 	total, blocks := 0, 0
 	m.Objects(func(o art.Object) {

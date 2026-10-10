@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/TomTonic/multimap/bench/keys"
-	"github.com/TomTonic/rtcompare/workload"
 	"github.com/TomTonic/multimap/internal/art"
+	"github.com/TomTonic/rtcompare/workload"
 )
 
 // TestLifeProbe shows what the writes of the benchmark do with the objects of the tree, which neither the speed figures nor
