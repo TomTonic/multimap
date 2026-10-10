@@ -64,7 +64,7 @@ func main() {
 	child := flag.Bool("child", false, "internal: run one speed process for -keys and -n")
 	memChild := flag.String("memchild", "", "internal: run one memory process for this candidate")
 	suite := flag.String("suite", "dev", "presets for the flags not given: dev (small and medium sizes, fewer processes and A/A runs, for frequent runs) or release (all sizes up to 1M at full precision)")
-	kindsF := flag.String("keys", strings.Join(kindNames(), ","), "key kinds ("+strings.Join(kindNames(), ", ")+"); a single kind for -child")
+	kindsF := flag.String("keys", strings.Join(kindNames(true), ","), "key kinds ("+strings.Join(kindNames(false), ", ")+"; links only if its corpus is built, see keys/testdata/README.md); a single kind for -child")
 	profilesF := flag.String("values", "natural,single-value", "value profiles: natural (a skewed number of values per key), single-value (one value per key); a single profile for -child")
 	sizesF := flag.String("sizes", "4096,1048576", "numbers of keys for the speed comparisons")
 	n := flag.Int("n", 4096, "internal: number of keys of a -child or -memchild process")
@@ -153,10 +153,14 @@ func applySuite(fs *flag.FlagSet, name string) error {
 	return nil
 }
 
-func kindNames() []string {
-	out := make([]string, len(keys.Kinds))
-	for i, k := range keys.Kinds {
-		out[i] = string(k)
+// kindNames returns the names of the key kinds, only those whose corpus can
+// be read if available is true.
+func kindNames(available bool) []string {
+	var out []string
+	for _, k := range keys.Kinds {
+		if !available || keys.Available(k) {
+			out = append(out, string(k))
+		}
 	}
 	return out
 }
@@ -170,6 +174,11 @@ const maxSingleValueRatio = 2
 func (c config) stream() stream { return stream{c.ratio, c.permChurn} }
 
 func (c *config) validate() error {
+	for _, k := range c.kinds {
+		if kind := keys.Kind(k); slices.Contains(keys.Kinds, kind) && !keys.Available(kind) {
+			return fmt.Errorf("-keys %s: its corpus is not built: run go run ./cmd/mkcorpora %s in the directory bench", k, k)
+		}
+	}
 	for _, v := range vsOnly {
 		switch {
 		case !slices.Contains([]string{hashed, btreeSets, mapSets, btreeMapC, baseline}, v):

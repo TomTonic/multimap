@@ -52,19 +52,22 @@ with 262,144 keys, which fit only partly, and in the release suite with
 | `path` | real file paths from the packages of Debian 12 | about 65 B, up to 300 |
 | `street` | real German street names from OpenStreetMap | about 14 B |
 | `dirs` | the directories of the same Debian file paths, with the closing slash | about 25 B |
+| `links` | the titles of Simple English Wikipedia pages that link to other articles | about 17 B, up to 255 |
 
 `dirs` is derived from `path`'s sample: its keys are the 172,431 directories of the 600,000 paths and
 its natural values the file names in them (see below). `path`, `street` and the hosts of `url` come from
 [`keys/testdata`](keys/testdata/README.md), where their sources and licenses
 are documented. `path` and `street` hold enough keys for 262,144 and 212,000
-keys respectively, and larger scenarios are skipped; `dirs` holds enough for 86,215; `url` has no limit.
+keys respectively, and larger scenarios are skipped; `dirs` holds enough for 86,215 and `links` for 199,519 (and is not in the repository, see [`keys/testdata`](keys/testdata/README.md): `go run ./cmd/mkcorpora links`); `url` has no limit.
 
 Values are `uint64`, and their number per key is skewed like a real index
 (`-values natural`, called `multi` until 2026-10-04): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and
 3% hold 17-200. Street names hold their real localities instead: 79% of the
 names have one, "Hauptstr." has 5,913. Directories hold the names of the files in them: 62% of the
 directories hold one file, 89% at most four, and the biggest holds 6,372 (the sample thins directories
-out, so real directories hold more).
+out, so real directories hold more). Pages (all 399,039 of Simple English Wikipedia) hold the pages they link to, the opposite shape: 29% of the
+pages hold one link (the redirects), 16% hold 2-8, 38% hold 9-64 and 16.5% hold 65 or more, 46 links on average and
+5,693 for the biggest, and the pages with 65 or more hold 77% of all links.
 
 With `-values single-value` (before 2026-10-04: `unique`), every key holds exactly one value, like an index on a
 unique column, and `ordered` is compared with `btree-map`. In `churn` and
@@ -74,8 +77,8 @@ keys, so `-ratio` is at most 2 with single-value entries. The old names `multi` 
 by `-values`, and result files of before keep them.
 
 Built with the tag `strvals`, the bench uses `string` values instead: each
-value number as 16 hex digits, like a record ID (for `street` and `dirs` the real names instead: the
-locality, 2 to 33 bytes, and the file name, 1 to 136 bytes, whose lengths vary; the transient values of
+value number as 16 hex digits, like a record ID (for `street`, `dirs` and `links` the real names instead: the
+locality, 2 to 33 bytes, the file name, 1 to 136 bytes, and the title of the linked page, 1 to 216 bytes, whose lengths vary; the transient values of
 churn and build stay hex)
 (`go run -tags strvals ./cmd/bench`). Values that hold a pointer take other
 paths than integers in some candidates, `ordered` among them, and the

@@ -56,13 +56,13 @@ func main() {
 // run builds the cases the arguments select and writes the table to w.
 func run(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("objstat", flag.ContinueOnError)
-	kindsF := fs.String("keys", "u64,str,uuid,email,url,path,street,dirs", "key kinds")
+	kindsF := fs.String("keys", strings.Join(defaultKinds(), ","), "key kinds (links only if its corpus is built, see keys/testdata/README.md)")
 	valuesF := fs.String("values", "natural,single-value", "value profiles: natural (a skewed number of values per key) and single-value (one value per key)")
 	strF := fs.Bool("strvals", true, "also measure every profile with string values (the bench's strvals build)")
 	sizesF := fs.String("sizes", "4096,16384,262144,1048576", "numbers of keys")
 	entriesF := fs.Bool("entries", false, "print the table of entries with several values (the single-key page statistic) after the object table")
 	halfF := fs.Bool("removehalf", false, "remove every second key before counting the objects: the shape of a tree after deletions (the pages that merge or do not)")
-	maxF := fs.Bool("max", true, "for a kind whose corpus holds fewer keys than a size, measure at the largest size the corpus allows (path, street)")
+	maxF := fs.Bool("max", true, "for a kind whose corpus holds fewer keys than a size, measure at the largest size the corpus allows (path, street, dirs, links)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -141,13 +141,27 @@ func sizesOf(kind keys.Kind, sizes []int, max bool) []int {
 	return out
 }
 
+// defaultKinds returns the key kinds whose corpus can be read.
+func defaultKinds() []string {
+	var out []string
+	for _, k := range keys.Kinds {
+		if keys.Available(k) {
+			out = append(out, string(k))
+		}
+	}
+	return out
+}
+
 func parseKinds(s string) ([]keys.Kind, error) {
-	known := []keys.Kind{keys.U64, keys.Str, keys.UUID, keys.Email, keys.URL, keys.Path, keys.Street, keys.Dirs}
+	known := []keys.Kind{keys.U64, keys.Str, keys.UUID, keys.Email, keys.URL, keys.Path, keys.Street, keys.Dirs, keys.Links}
 	var out []keys.Kind
 	for _, name := range strings.Split(s, ",") {
 		k := keys.Kind(name)
 		if !slices.Contains(known, k) {
 			return nil, fmt.Errorf("unknown key kind %q", name)
+		}
+		if !keys.Available(k) {
+			return nil, fmt.Errorf("the corpus of key kind %q is not built: run go run ./cmd/mkcorpora %s", name, name)
 		}
 		out = append(out, k)
 	}

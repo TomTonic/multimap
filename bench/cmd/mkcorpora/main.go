@@ -6,7 +6,7 @@
 //	go run ./cmd/mkcorpora                # all corpora, from the bench directory
 //	go run ./cmd/mkcorpora hosts streets  # only these
 //
-// Three corpora:
+// Four corpora:
 //   - streets.tsv.gz: German street names and the localities that have a
 //     street of that name, from the OpenPLZ API data, which is an extract of
 //     OpenStreetMap (ODbL 1.0, see keys/testdata/README.md).
@@ -15,11 +15,17 @@
 //     Contents files as of the snapshot below.
 //   - hosts.txt.gz: the most popular host names of the Tranco list below,
 //     including subdomains, in rank order (see keys/testdata/README.md).
+//   - links.tsv.gz: all pages of Simple English Wikipedia that link to
+//     articles and the articles they link to, from the database dump of
+//     2026-10-01 (CC BY-SA 4.0, see keys/testdata/README.md). It is written to
+//     cache/, which git ignores, and not to keys/testdata. Rebuilding it
+//     downloads 155 MB; it prints the statistics of the corpus.
 package main
 
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -49,22 +55,28 @@ const (
 )
 
 func main() {
-	out := filepath.Join("keys", "testdata")
-	all := map[string]func(string) error{"streets": streets, "paths": paths, "hosts": hosts}
+	all := map[string]func(string) error{"streets": streets, "paths": paths, "hosts": hosts, "links": links}
 	names := os.Args[1:]
 	if len(names) == 0 {
-		names = []string{"streets", "paths", "hosts"}
+		names = []string{"streets", "paths", "hosts", "links"}
 	}
 	for _, name := range names {
 		build, ok := all[name]
 		if !ok {
-			fail(fmt.Errorf("unknown corpus %q; want streets, paths or hosts", name))
+			fail(fmt.Errorf("unknown corpus %q; want streets, paths, hosts or links", name))
 		}
 		ext := ".txt.gz"
-		if name == "streets" {
+		if name == "streets" || name == "links" {
 			ext = ".tsv.gz"
 		}
-		if err := build(filepath.Join(out, name+ext)); err != nil {
+		dir := filepath.Join("keys", "testdata")
+		if name == "links" { // too big for the repository: see keys/testdata/README.md
+			dir = "cache"
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // a directory of corpus files, nothing secret
+			fail(err)
+		}
+		if err := build(filepath.Join(dir, name+ext)); err != nil {
 			fail(err)
 		}
 	}
@@ -75,9 +87,19 @@ func fail(err error) {
 	os.Exit(1)
 }
 
+// userAgent names this tool to the servers it downloads from; Wikimedia
+// refuses the default agent of Go's HTTP client (403) and asks clients for a
+// descriptive one with a way to reach their authors.
+const userAgent = "multimap-mkcorpora/1.0 (https://github.com/TomTonic/multimap)"
+
 // get returns the body of url; the caller closes it.
 func get(url string) (io.ReadCloser, error) {
-	resp, err := http.Get(url) //nolint:gosec,noctx // fixed URLs of this tool
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get %s: %w", url, err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // fixed URLs of this tool
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", url, err)
 	}
