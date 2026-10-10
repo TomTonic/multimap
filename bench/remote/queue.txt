@@ -75,3 +75,10 @@ mx1 99b00af cc47992 300 -suite dev -keys u64,street,dirs,url -values natural,sin
 #   bench/remote/arm-run.sh --yes c1
 # (on power). About 2.5 hours.
 c1 affb848 cc47992 150 -suite dev -keys street,dirs,links,url -values natural,single-value -sizes 4096,16384,65536 -ops valuesFor,valuesBetween,churn,build -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+# Lever 2 of descent-analysis.md on the M1 (128-byte lines): lookup profiles of 10 seconds of the six structured kinds
+# (links needs its cache next to the package and is left out), single-value, 4K/16K/64K, the ordered map alone; the probe
+# prints the source lines with the most own time into the log (MKLOOK_LINES), which is read by line: node.go:135 (the
+# type byte of the next object), lookup.go:69/79/85/91 (the child pointers). Start it after c1 with
+#   bench/remote/arm-run.sh --yes lp1
+# About 10 minutes.
+lp1 a0e75c5 - 10 env=MKLOOK=1,MKLOOK_KEYS=str+email+url+path+street+dirs,MKLOOK_VALUES=single-value,MKLOOK_N=4096+16384+65536,MKLOOK_SECS=10,MKLOOK_PROF=prof,MKLOOK_LINES=1 gotest -C bench ./cmd/bench -run TestLookProbe$ -count=1 -timeout 0 -v
