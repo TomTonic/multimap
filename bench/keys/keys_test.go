@@ -16,6 +16,7 @@ import (
 func TestGenerate(t *testing.T) {
 	for _, kind := range Kinds {
 		t.Run(string(kind), func(t *testing.T) {
+			skipUnavailable(t, kind)
 			const n = 3000
 			c := Generate(kind, n, 42)
 			seen := map[string]bool{}
@@ -61,6 +62,9 @@ func TestCapacity(t *testing.T) {
 		t.Error("synthetic kinds must have no limit")
 	}
 	for _, kind := range []Kind{Path, Street, Dirs, Links} {
+		if !Available(kind) {
+			continue
+		}
 		if c := Capacity(kind); c < 50_000 || c > 1_000_000 {
 			t.Errorf("%s: capacity %d", kind, c)
 		}
@@ -263,6 +267,7 @@ func TestDirs(t *testing.T) {
 // hold a single value (the redirects), about one in six holds 65 or more and
 // those hold three of four values, and the biggest set holds thousands.
 func TestLinks(t *testing.T) {
+	skipUnavailable(t, Links)
 	all := linkCorpus()
 	if !slices.IsSorted(all.names) || !slices.IsSorted(all.labels) || len(all.names) < 2*65536 {
 		t.Fatalf("%d titles, sorted: %v, %d target titles sorted: %v; want at least %d titles in ascending order", len(all.names), slices.IsSorted(all.names), len(all.labels), slices.IsSorted(all.labels), 2*65536)
@@ -302,5 +307,29 @@ func TestLinks(t *testing.T) {
 		if !slices.Equal(c.Natural[i], all.vals[index[k]]) {
 			t.Fatalf("page %q has the links %v in the corpus and %v in the benchmark", k, all.vals[index[k]], c.Natural[i])
 		}
+	}
+}
+
+// skipUnavailable skips a test that needs the corpus of kind, which is not part
+// of the repository for kinds that Available reports as false.
+func skipUnavailable(t *testing.T, kind Kind) {
+	t.Helper()
+	if !Available(kind) {
+		t.Skipf("the corpus %s is not built: go run ./cmd/mkcorpora %s", kind, kind)
+	}
+}
+
+// TestAvailable makes sure the benchmark learns which corpora it can use before
+// it asks for one: all kinds that the repository holds are available, and a
+// kind whose corpus is built outside the repository is available exactly when
+// its file is found.
+func TestAvailable(t *testing.T) {
+	for _, kind := range Kinds {
+		if kind != Links && !Available(kind) {
+			t.Errorf("%s: not available", kind)
+		}
+	}
+	if got, want := Available(Links), linksPath() != ""; got != want {
+		t.Errorf("Available(Links) = %v, but the file is found: %v", got, want)
 	}
 }

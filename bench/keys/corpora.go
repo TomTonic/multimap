@@ -5,6 +5,9 @@ import (
 	"compress/gzip"
 	"embed"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,9 +16,10 @@ import (
 )
 
 // The real-world corpora, made by cmd/mkcorpora. See testdata/README.md for
-// their sources and licenses.
+// their sources and licenses. The corpus links is too big to embed: it is a
+// file in a directory cache (see linksFile).
 //
-//go:embed testdata/paths.txt.gz testdata/streets.tsv.gz testdata/hosts.txt.gz testdata/links.tsv.gz
+//go:embed testdata/paths.txt.gz testdata/streets.tsv.gz testdata/hosts.txt.gz
 var corpora embed.FS
 
 // list is a corpus of keys in ascending order with natural values: for each
@@ -47,21 +51,26 @@ var (
 	hostCorpus   = sync.OnceValue(func() []string { return readLines("testdata/hosts.txt.gz") })
 )
 
-// readLines returns the lines of a gzipped corpus file. The corpora are part
-// of this package, so a broken one is a bug, not an input error.
+// readLines returns the lines of a gzipped corpus file that is part of this
+// package, so a broken one is a bug, not an input error.
 func readLines(name string) []string {
 	f, err := corpora.Open(name)
 	if err != nil {
 		panic(err)
 	}
 	defer func() { _ = f.Close() }()
-	zr, err := gzip.NewReader(f)
+	return scanGzip(f, name)
+}
+
+// scanGzip returns the lines of a gzipped text; name is for the messages.
+func scanGzip(r io.Reader, name string) []string {
+	zr, err := gzip.NewReader(r)
 	if err != nil {
 		panic(fmt.Sprintf("%s: %v", name, err))
 	}
 	var out []string
 	sc := bufio.NewScanner(zr)
-	sc.Buffer(make([]byte, 1<<16), 1<<16)
+	sc.Buffer(make([]byte, 1<<16), 1<<20)
 	for sc.Scan() {
 		out = append(out, sc.Text())
 	}
@@ -72,18 +81,56 @@ func readLines(name string) []string {
 }
 
 // loadStreets parses streets.tsv.gz, see parseList.
-func loadStreets() list { return parseList("testdata/streets.tsv.gz") }
+func loadStreets() list { return parseList(readLines("testdata/streets.tsv.gz"), "streets") }
 
-// loadLinks parses links.tsv.gz, see parseList: the names of the values are
-// the titles of the link targets.
-func loadLinks() list { return parseList("testdata/links.tsv.gz") }
+// linksFile is the file name of the corpus of page links. It is the whole
+// Simple English Wikipedia, 60 MB, and is built by go run ./cmd/mkcorpora links
+// into the directory bench/cache, where git ignores it.
+const linksFile = "links.tsv.gz"
+
+// linksPath returns where the file of the links corpus is, or "" if it is
+// nowhere: in a directory cache of the working directory (a go run in bench),
+// of its parent (a test in a package of bench) or of the executable (a bench
+// copied to another machine together with the file).
+func linksPath() string {
+	dirs := []string{"cache", filepath.Join("..", "cache")}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Join(filepath.Dir(exe), "cache"))
+	}
+	for _, d := range dirs {
+		if _, err := os.Stat(filepath.Join(d, linksFile)); err == nil {
+			return filepath.Join(d, linksFile)
+		}
+	}
+	return ""
+}
+
+// Available reports whether the corpus of kind can be read: always, except for
+// the kinds whose corpus is too big for the repository (links), which have to
+// be built with go run ./cmd/mkcorpora first.
+func Available(kind Kind) bool { return kind != Links || linksPath() != "" }
+
+// loadLinks parses the file of the links corpus, see parseList: the names of
+// the values are the titles of the link targets. A missing file is a mistake of
+// the caller, who is told what to do about it.
+func loadLinks() list {
+	path := linksPath()
+	if path == "" {
+		panic("the corpus links is not built: run go run ./cmd/mkcorpora links in the directory bench (see keys/testdata/README.md), then run from there or put cache/" + linksFile + " next to the executable")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = f.Close() }()
+	return parseList(scanGzip(f, path), path)
+}
 
 // parseList parses a corpus file of keys with numbered values: the number of
 // names of values, the names one per line, then per key the key, a tab and the
 // comma-separated indexes of the names of its values. Every index is stored
 // plus one.
-func parseList(file string) list {
-	lines := readLines(file)
+func parseList(lines []string, file string) list {
 	nl, err := strconv.Atoi(lines[0])
 	if err != nil {
 		panic(fmt.Sprintf("%s: %v", file, err))

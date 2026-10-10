@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"slices"
 	"sort"
 	"strconv"
@@ -12,17 +11,11 @@ import (
 	"unicode/utf8"
 )
 
-const (
-	// linksDumpURL is the dump of Simple English Wikipedia of 2026-10-01; the
-	// files are named <linksDumpURL><table>.sql.gz. A dated dump stays on the
-	// server, "latest" does not.
-	linksDumpURL = "https://dumps.wikimedia.org/simplewiki/20261001/simplewiki-20261001-"
-	// linksSample is how many keys (linking pages) the corpus keeps: enough
-	// for 64K keys with as many miss keys (see keys.Generate), with some to
-	// spare. A kept key keeps all its links, so the distribution of the
-	// number of values per key stays that of the whole dump.
-	linksSample = 140_000
-)
+// linksDumpURL is the dump of Simple English Wikipedia of 2026-10-01; the
+// files are named <linksDumpURL><table>.sql.gz. Wikimedia keeps a dump for
+// about ten months only, so the built corpus is kept as a release asset of
+// the repository (see keys/testdata/README.md).
+const linksDumpURL = "https://dumps.wikimedia.org/simplewiki/20261001/simplewiki-20261001-"
 
 // linkKey is a page of namespace 0 with the link targets of namespace 0 that
 // it links to.
@@ -42,22 +35,20 @@ type linkGraph struct {
 
 // links writes the corpus of page links: the titles of the link targets, then
 // one line per page: its title, a tab and the comma-separated indexes of its
-// targets in the list. See keys/testdata/README.md.
+// targets in the list. Every page that links to a page of namespace 0 is in
+// it, with all its links: the corpus is the wiki, not a sample of it. See
+// keys/testdata/README.md.
 func links(path string) error {
 	g, err := readLinks(downloadTable)
 	if err != nil {
 		return err
 	}
-	sample, err := sampleLinks(g.keys, linksSample)
+	titles, err := targetTitles(g)
 	if err != nil {
 		return err
 	}
-	titles, err := targetTitles(g, sample)
-	if err != nil {
-		return err
-	}
-	fmt.Print(linkStats(g, sample, titles))
-	return writeGzip(path, func(w *strings.Builder) { formatLinks(w, g, sample, titles) })
+	fmt.Print(linkStats(g, titles))
+	return writeGzip(path, func(w *strings.Builder) { formatLinks(w, g, titles) })
 }
 
 // downloadTable returns the unpacked SQL dump of a table of the Wikipedia
@@ -174,26 +165,12 @@ func numbers(r []field, want int) (id uint64, ns int64, err error) {
 	return id, ns, err
 }
 
-// sampleLinks returns n of the keys, picked at random with a fixed seed so
-// that the corpus can be rebuilt byte for byte, ascending by title.
-func sampleLinks(keys []linkKey, n int) ([]linkKey, error) {
-	if len(keys) < n {
-		return nil, fmt.Errorf("only %d pages link, want a sample of %d", len(keys), n)
-	}
-	all := slices.Clone(keys)
-	rng := rand.New(rand.NewPCG(2026, 10)) //nolint:gosec // a reproducible sample, not a secret
-	rng.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
-	sample := all[:n]
-	sort.Slice(sample, func(i, j int) bool { return sample[i].title < sample[j].title })
-	return sample, nil
-}
-
-// targetTitles returns the titles of all targets that the sample links to,
+// targetTitles returns the titles of all targets that the pages link to,
 // ascending. A title that would break the line format is an error.
-func targetTitles(g *linkGraph, sample []linkKey) ([]string, error) {
+func targetTitles(g *linkGraph) ([]string, error) {
 	seen := map[uint32]bool{}
 	var titles []string
-	for _, k := range sample {
+	for _, k := range g.keys {
 		if err := checkTitle(k.title); err != nil {
 			return nil, err
 		}
@@ -223,7 +200,7 @@ func checkTitle(t string) error {
 // formatLinks writes the number of target titles, the titles one per line in
 // ascending order, then one line per key: its title, a tab and the ascending,
 // comma-separated indexes of its targets in the list of titles.
-func formatLinks(w *strings.Builder, g *linkGraph, sample []linkKey, titles []string) {
+func formatLinks(w *strings.Builder, g *linkGraph, titles []string) {
 	index := make(map[string]int, len(titles))
 	w.WriteString(strconv.Itoa(len(titles)) + "\n")
 	for i, t := range titles {
@@ -231,7 +208,7 @@ func formatLinks(w *strings.Builder, g *linkGraph, sample []linkKey, titles []st
 		w.WriteString(t + "\n")
 	}
 	var ids []int
-	for _, k := range sample {
+	for _, k := range g.keys {
 		ids = ids[:0]
 		for _, t := range k.targets {
 			ids = append(ids, index[g.targets[t]])
@@ -253,14 +230,14 @@ func formatLinks(w *strings.Builder, g *linkGraph, sample []linkKey, titles []st
 // linkStats returns what the README reports about the corpus: the number of
 // keys and values, how many values the keys hold, and how many of the values
 // stand in large sets.
-func linkStats(g *linkGraph, sample []linkKey, titles []string) string {
+func linkStats(g *linkGraph, titles []string) string {
 	var w strings.Builder
 	bounds := []int{1, 2, 4, 8, 16, 64, 256, 1 << 30}
 	labels := []string{"1", "2", "3-4", "5-8", "9-16", "17-64", "65-256", "257+"}
 	keysIn, valsIn := make([]int, len(bounds)), make([]int, len(bounds))
-	counts := make([]int, len(sample))
+	counts := make([]int, len(g.keys))
 	total, keyBytes, redirects := 0, 0, 0
-	for i, k := range sample {
+	for i, k := range g.keys {
 		n := len(k.targets)
 		counts[i], total, keyBytes = n, total+n, keyBytes+len(k.title)
 		if k.redirect {
@@ -277,9 +254,9 @@ func linkStats(g *linkGraph, sample []linkKey, titles []string) string {
 			red++
 		}
 	}
-	nk := float64(len(sample))
-	fmt.Fprintf(&w, "links: %d keys of %d linking pages, %d values, %d target titles (%d of them no page: red links)\n",
-		len(sample), len(g.keys), total, len(titles), red)
+	nk := float64(len(g.keys))
+	fmt.Fprintf(&w, "links: %d keys, %d values, %d target titles (%d of them no page: red links)\n",
+		len(g.keys), total, len(titles), red)
 	fmt.Fprintf(&w, "links: values a key: mean %.1f, median %d, max %d; key length mean %.1f B; redirects %.1f %% of the keys\n",
 		float64(total)/nk, counts[len(counts)/2], counts[len(counts)-1], float64(keyBytes)/nk, 100*float64(redirects)/nk)
 	w.WriteString("links: values a key   keys     values\n")

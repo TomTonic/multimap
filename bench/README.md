@@ -58,15 +58,15 @@ with 262,144 keys, which fit only partly, and in the release suite with
 its natural values the file names in them (see below). `path`, `street` and the hosts of `url` come from
 [`keys/testdata`](keys/testdata/README.md), where their sources and licenses
 are documented. `path` and `street` hold enough keys for 262,144 and 212,000
-keys respectively, and larger scenarios are skipped; `dirs` holds enough for 86,215 and `links` for 70,000; `url` has no limit.
+keys respectively, and larger scenarios are skipped; `dirs` holds enough for 86,215 and `links` for 199,519 (and is not in the repository, see [`keys/testdata`](keys/testdata/README.md): `go run ./cmd/mkcorpora links`); `url` has no limit.
 
 Values are `uint64`, and their number per key is skewed like a real index
 (`-values natural`, called `multi` until 2026-10-04): 50% of keys hold 1 value, 35% hold 2-4, 12% hold 5-16 and
 3% hold 17-200. Street names hold their real localities instead: 79% of the
 names have one, "Hauptstr." has 5,913. Directories hold the names of the files in them: 62% of the
 directories hold one file, 89% at most four, and the biggest holds 6,372 (the sample thins directories
-out, so real directories hold more). Pages hold the pages they link to, the opposite shape: 29% of the
-pages hold one link (the redirects), 16% hold 2-8, 38% hold 9-64 and 17% hold 65 or more, 46 links on average and
+out, so real directories hold more). Pages (all 399,039 of Simple English Wikipedia) hold the pages they link to, the opposite shape: 29% of the
+pages hold one link (the redirects), 16% hold 2-8, 38% hold 9-64 and 16.5% hold 65 or more, 46 links on average and
 5,693 for the biggest, and the pages with 65 or more hold 77% of all links.
 
 With `-values single-value` (before 2026-10-04: `unique`), every key holds exactly one value, like an index on a

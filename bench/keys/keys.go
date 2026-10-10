@@ -78,14 +78,15 @@ const (
 	// most directories to thousands in a few (derived from
 	// testdata/paths.txt.gz, so the sample thins the directories out).
 	Dirs Kind = "dirs"
-	// Links are the titles of the pages of Simple English Wikipedia that link to
-	// other articles, with underscores, about 17 bytes, and the titles of the
+	// Links are the titles of all pages of Simple English Wikipedia that link
+	// to articles, with underscores, about 17 bytes, and the titles of the
 	// articles they link to as their natural values: strings, many to a key,
 	// the opposite of street and dirs, where most keys hold one value. 29% of
-	// the keys hold one (the redirects), 16% hold 2-8, 38% hold 9-64 and 17%
-	// hold 65 or more, up to 5,693, and those last keys hold 77% of the values
-	// (testdata/links.tsv.gz, see cmd/mkcorpora: a sample of 140,000 pages, with
-	// all their links).
+	// the keys hold one (the redirects), 16% hold 2-8, 38% hold 9-64 and 16.5%
+	// hold 65 or more, up to 5,693, and those last keys hold 77% of the 18.3
+	// million values. It is the whole wiki, 399,039 keys, and not part of the
+	// repository: go run ./cmd/mkcorpora links builds it into bench/cache (see
+	// testdata/README.md and Available).
 	Links Kind = "links"
 )
 

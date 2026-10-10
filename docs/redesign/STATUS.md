@@ -2,7 +2,7 @@
 
 ## 2026-10-10: the corpus `links` (Wikipedia page links), branch `corpus-links`, not yet merged into `cacheline`
 
-- Built by a separate session ([task-links-corpus.md](task-links-corpus.md)): `cmd/mkcorpora links` (parser for the SQL dumps, fixed seed, same file every run), `keys.Links`, `keys/testdata/links.tsv.gz` (23.9 MB, CC BY-SA 4.0, documented in the testdata README), commit `6e3e9c9`. The library is untouched. Numbers in PLAN.md (backlog entry) and the testdata README.
+- Built by a separate session ([task-links-corpus.md](task-links-corpus.md)): `cmd/mkcorpora links` (parser for the SQL dumps; the same content every run), `keys.Links`, documented in the testdata README (CC BY-SA 4.0). **The whole wiki** (399,039 keys, 18.3 million values, 60 MB), built into `bench/cache/` and kept as a release asset, not in the repository (user's decision after the first commit `6e3e9c9`, which held a sample). The library is untouched. Numbers in PLAN.md (backlog entry) and the testdata README.
 - Found on the way, not touched: `bench/cmd/objstat` `TestRun` fails and `golangci-lint` in `bench` reports 3 issues (`skmodel`, `ovbench`), both already at `bbc6d32`.
 
 ## 2026-10-08 to 2026-10-10: page search, then the curve of the autotune; decision B

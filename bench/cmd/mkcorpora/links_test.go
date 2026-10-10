@@ -89,41 +89,28 @@ func TestReadLinksFailures(t *testing.T) {
 	}
 }
 
-// TestSampleAndFormatLinks makes sure the corpus file can be rebuilt byte for
-// byte and says what the README promises: the same keys every time, in ascending
-// order, each with all its links as ascending indexes into the ascending list of
-// target titles, and a title that cannot be stored stops the builder. It covers
-// sampleLinks, targetTitles, formatLinks and linkStats.
-func TestSampleAndFormatLinks(t *testing.T) {
+// TestFormatLinks makes sure the corpus file says what the README promises:
+// every page that links is a key, in ascending order, each with all its links as
+// ascending indexes into the ascending list of target titles, and a title that
+// cannot be stored stops the builder. It covers targetTitles, formatLinks,
+// linkStats and checkTitle on the tiny dump.
+func TestFormatLinks(t *testing.T) {
 	g, err := readLinks(miniDump)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sample, err := sampleLinks(g.keys, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, _ := sampleLinks(g.keys, 2)
-	if len(sample) != 2 || sample[0].title >= sample[1].title || !slices.EqualFunc(sample, again, func(a, b linkKey) bool { return a.title == b.title }) {
-		t.Errorf("sample %v, again %v; want two keys in ascending order, the same both times", sample, again)
-	}
-	if _, err := sampleLinks(g.keys, 4); err == nil {
-		t.Error("a sample larger than the keys must fail")
-	}
-
-	all, _ := sampleLinks(g.keys, 3)
-	titles, err := targetTitles(g, all)
+	titles, err := targetTitles(g)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var w strings.Builder
-	formatLinks(&w, g, all, titles)
+	formatLinks(&w, g, titles)
 	const want = "4\nAlpha\nBeta\nGamma\nRed\n" + "Alpha\t1,2,3\nBeta\t0\nMoved\t0\n"
 	if w.String() != want {
 		t.Errorf("file %q, want %q", w.String(), want)
 	}
-	stats := linkStats(g, all, titles)
-	for _, s := range []string{"3 keys of 3 linking pages, 5 values, 4 target titles (1 of them no page", "max 3", "redirects 33.3 %"} {
+	stats := linkStats(g, titles)
+	for _, s := range []string{"3 keys, 5 values, 4 target titles (1 of them no page", "max 3", "redirects 33.3 %"} {
 		if !strings.Contains(stats, s) {
 			t.Errorf("statistics lack %q:\n%s", s, stats)
 		}
@@ -131,13 +118,13 @@ func TestSampleAndFormatLinks(t *testing.T) {
 
 	for _, bad := range []string{"", "a\tb", "a\nb", "a\xffb"} {
 		g.targets[10] = bad
-		if _, err := targetTitles(g, all); err == nil {
+		if _, err := targetTitles(g); err == nil {
 			t.Errorf("target title %q was accepted", bad)
 		}
 	}
 	g.targets[10] = "Alpha"
-	all[0].title = "x\ty"
-	if _, err := targetTitles(g, all); err == nil {
+	g.keys[0].title = "x\ty"
+	if _, err := targetTitles(g); err == nil {
 		t.Error("a key title with a tab was accepted")
 	}
 }

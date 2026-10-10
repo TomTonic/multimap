@@ -232,6 +232,8 @@ func TestValidate(t *testing.T) {
 		{"rejects a parallel run of none", config{profiles: []string{natural}, ratio: 2, minProcs: 6, maxProcs: 6}, true},
 		{"rejects permanent churn of everything", config{profiles: []string{natural}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1, permChurn: 1}, true},
 		{"rejects negative permanent churn", config{profiles: []string{natural}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1, permChurn: -0.1}, true},
+		{"accepts the kinds whose corpus is in the repository", config{kinds: []string{"u64", "street"}, profiles: []string{natural}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1}, false},
+		{"rejects the kind links exactly when its corpus is not built", config{kinds: []string{"links"}, profiles: []string{natural}, ratio: 2, minProcs: 5, maxProcs: 5, parallel: 1}, !keys.Available(keys.Links)},
 		{"rejects a ratio beyond the extra keys for single-value", config{profiles: []string{singleValue}, ratio: maxSingleValueRatio + 1, minProcs: 5, maxProcs: 5, parallel: 1}, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

@@ -15,11 +15,11 @@
 //     Contents files as of the snapshot below.
 //   - hosts.txt.gz: the most popular host names of the Tranco list below,
 //     including subdomains, in rank order (see keys/testdata/README.md).
-//   - links.tsv.gz: the pages of Simple English Wikipedia and the pages they
-//     link to, a deterministic sample of the pages from the database dump of
-//     2026-10-01 (CC BY-SA 4.0, see keys/testdata/README.md). Rebuilding it
-//     downloads 155 MB and needs about 1 GB of memory; it prints the
-//     statistics of the sample.
+//   - links.tsv.gz: all pages of Simple English Wikipedia that link to
+//     articles and the articles they link to, from the database dump of
+//     2026-10-01 (CC BY-SA 4.0, see keys/testdata/README.md). It is written to
+//     cache/, which git ignores, and not to keys/testdata. Rebuilding it
+//     downloads 155 MB; it prints the statistics of the corpus.
 package main
 
 import (
@@ -55,7 +55,6 @@ const (
 )
 
 func main() {
-	out := filepath.Join("keys", "testdata")
 	all := map[string]func(string) error{"streets": streets, "paths": paths, "hosts": hosts, "links": links}
 	names := os.Args[1:]
 	if len(names) == 0 {
@@ -70,7 +69,14 @@ func main() {
 		if name == "streets" || name == "links" {
 			ext = ".tsv.gz"
 		}
-		if err := build(filepath.Join(out, name+ext)); err != nil {
+		dir := filepath.Join("keys", "testdata")
+		if name == "links" { // too big for the repository: see keys/testdata/README.md
+			dir = "cache"
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // a directory of corpus files, nothing secret
+			fail(err)
+		}
+		if err := build(filepath.Join(dir, name+ext)); err != nil {
 			fail(err)
 		}
 	}
