@@ -3,8 +3,9 @@
 A check that the new key kind `links` (see `bench/keys/testdata/README.md`) runs through the bench in all its
 parts. It answers no question about the library and draws no conclusion; the tables are as rtcompare wrote them.
 
-- When and where: 2026-10-10, 09:28 to 09:29, the PC (Ryzen 9 7900) through WSL, nothing else running; 26 s.
-- Commit: `6e3e9c9` (branch `corpus-links`), `uint64` values (no `strvals` build).
+- When and where: 2026-10-10, 09:46 to 09:47, the PC (Ryzen 9 7900) through WSL, nothing else running; 65 s.
+- Commit: `e44b5b3` (branch `corpus-links`), the whole corpus (399,039 keys), `uint64` values (no `strvals` build).
+  (A first run with the 140,000-page sample of `6e3e9c9` was replaced by this one.)
 - Command, from `bench`:
 
   ```

@@ -1,9 +1,9 @@
 | values | keys | n | operation | A | B | processes | A ns/op | B ns/op | A speed vs B | difference | 95% across processes | sd between | inflation | precise | resolved |
 |---|---|---:|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---|---|
-| natural | links | 4096 | valuesFor | ordered | btree-sets | 4 | 225 | 435 | 1.93× [1.90, 1.96] | +48.1% | [+47.3%, +48.9%] | 0.5 pts | 0.8 | yes | yes |
-| natural | links | 4096 | churn | ordered | btree-sets | 4 | 157 | 199 | 1.24× [1.18, 1.31] | +19.6% | [+15.3%, +23.9%] | 2.7 pts | 2.3 | no | yes |
-| single-value | links | 4096 | valuesFor | ordered | btree-map | 4 | 54.2 | 98.5 | 1.82× [1.76, 1.87] | +44.9% | [+43.2%, +46.6%] | 1.1 pts | 2.2 | yes | yes |
-| single-value | links | 4096 | churn | ordered | btree-map | 4 | 151 | 157 | 1.04× [1.01, 1.08] | +4.1% | [+0.8%, +7.3%] | 2.0 pts | 1.5 | no | yes |
+| natural | links | 4096 | valuesFor | ordered | btree-sets | 4 | 201 | 410 | 2.02× [1.97, 2.08] | +50.6% | [+49.2%, +52.0%] | 0.9 pts | 1.1 | yes | yes |
+| natural | links | 4096 | churn | ordered | btree-sets | 4 | 156 | 194 | 1.23× [1.18, 1.29] | +19.0% | [+15.4%, +22.6%] | 2.2 pts | 1.5 | no | yes |
+| single-value | links | 4096 | valuesFor | ordered | btree-map | 4 | 54.4 | 99.1 | 1.82× [1.81, 1.84] | +45.2% | [+44.8%, +45.6%] | 0.3 pts | 0.4 | yes | yes |
+| single-value | links | 4096 | churn | ordered | btree-map | 4 | 141 | 154 | 1.09× [1.03, 1.16] | +8.4% | [+3.2%, +13.5%] | 3.2 pts | 1.9 | no | yes |
 
 Regime: serial: one process at a time, each with the machine to itself.
 
@@ -13,7 +13,6 @@ Warnings from pooling:
 
 - natural links n=4096 valuesFor: ordered vs btree-sets: only 4 processes were combined; below five the interval is wide and the heterogeneity figures are rough
 - natural links n=4096 churn: ordered vs btree-sets: only 4 processes were combined; below five the interval is wide and the heterogeneity figures are rough
-- natural links n=4096 churn: ordered vs btree-sets: the processes scatter 2.3 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - single-value links n=4096 valuesFor: ordered vs btree-map: only 4 processes were combined; below five the interval is wide and the heterogeneity figures are rough
-- single-value links n=4096 valuesFor: ordered vs btree-map: the processes scatter 2.2 times as widely as one process's interval implies, so a single process's result for this comparison is not to be trusted on its own
 - single-value links n=4096 churn: ordered vs btree-map: only 4 processes were combined; below five the interval is wide and the heterogeneity figures are rough
+- single-value links n=4096 churn: ordered vs btree-map: the A/A validations found a systematic difference of +0.61% between identical code, the same in every process; the harness favours one position, and pooling cannot remove that
