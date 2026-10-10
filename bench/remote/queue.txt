@@ -56,12 +56,12 @@ m43 3e1e952 fe120f5 150 -suite dev -keys u64,street,dirs -values natural,single-
 # (m43 took 1h40 for the cases of m48, not the 150 minutes estimated; the estimates below are of that size.)
 m48  eb4a574 fe120f5 100 -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 m48s eb4a574 fe120f5 65  tags=strvals -suite dev -keys street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
-m48p eb4a574 fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
+# superseded 2026-10-10 (state before step 6 is job c1): m48p eb4a574 fe120f5 100 tags=ptrvals -suite dev -keys u64,street,dirs -values natural,single-value -sizes 4096,16384,65536 -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
 
 # Step 5.5b (docs/redesign/step5-one-page.md): the page-level benchmarks of the one page (internal/page) and its placement
 # benchmark (values at the end of the object or behind the byte area; cold: 64 MiB of pages, 128-byte cache lines here).
 # A few minutes; the machine must be at rest.
-pg1 eb4a574 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
+# superseded 2026-10-10: pg1 eb4a574 - 12 gotest ./internal/page -run ^$ -bench Placement|BenchmarkPage$|BenchmarkFixed$|BenchmarkFixedPointers|BenchmarkOneKey -benchtime 300ms -count 3
 # Experiment exp-maxkeys (2026-10-09, docs/redesign/autotune-design.md, "Experiment exp-maxkeys"): the curve of the autotune,
 # Ordered with at most 1, 2 and 4 keys a page (ordered-mk1/2/4) against today's form (ordered), main (baseline) and the
 # B-trees. One job for the whole night; the PC runs the same arguments. Start it with
