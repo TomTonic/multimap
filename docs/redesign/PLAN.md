@@ -292,6 +292,12 @@ Not part of a step yet; each gets a design note with a prediction before any cod
   of a range: only in a form that does not make the page larger (a larger page holds fewer keys and lengthens the walk of every
   range), compared as rtcompare candidates (page-search-design.md, the probe figures there are not verified); (3) **the value sets**
   of keys with many values (the value overflow's `Set3`): 34 to 36 % of a lookup and 46 to 60 % of a range of `links` natural.
+- **Order set by the user (2026-10-10, afternoon):** first find out what the descent's time is made of (descent-analysis.md: 64 to
+  79 % of `Tree.find` is waiting for dependent lines, the objects on the way and the second line inside N12/N26/N58 nodes; a
+  structure question); then the write path of small maps, starting with a free list for pages; the value sets are not a lever
+  (the order of the values does not matter; their share is reading many values, as expected for keys with ~50 values). The
+  packed "bundle" with fixed compartments (cheap splits by copying, proposed in the session) did not convince the user and is not
+  pursued.
 
 ## Feature: autotune of the keys per page (user, 2026-10-07; from the review, review-2026-10.md) — measured and dropped 2026-10-10
 

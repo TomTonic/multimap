@@ -17,7 +17,8 @@ import (
 // profile of each if MKLOOK_PROF names a directory: the diagnosis of the lookups of small maps against main
 // (docs/redesign/review-2026-10.md). It only runs if MKLOOK is set.
 //
-// MKLOOK_KEYS, MKLOOK_VALUES and MKLOOK_N select the corpus as MKPROBE_* do for TestProbe.
+// MKLOOK_KEYS, MKLOOK_VALUES and MKLOOK_N select the corpus as MKPROBE_* do for TestProbe; MKLOOK_SECS sets how long each
+// profile runs (default 3 seconds; longer for a view of single instructions).
 func TestLookProbe(t *testing.T) {
 	if os.Getenv("MKLOOK") == "" {
 		t.Skip("set MKLOOK=1 to run the lookup probe")
@@ -47,6 +48,8 @@ func TestLookProbe(t *testing.T) {
 	}
 	ord, base := f.valuesFor(ordered), f.valuesFor(baseline)
 	if dir := os.Getenv("MKLOOK_PROF"); dir != "" {
+		secs, err := strconv.Atoi(envOr("MKLOOK_SECS", "3"))
+		must(err)
 		must(os.MkdirAll(dir, 0o755))
 		for _, w := range []struct {
 			name string
@@ -55,7 +58,7 @@ func TestLookProbe(t *testing.T) {
 			file, err := os.Create(fmt.Sprintf("%s/%s-%s-%d-%s.pprof", dir, kind, profile, n, w.name))
 			must(err)
 			must(pprof.StartCPUProfile(file))
-			for start := time.Now(); time.Since(start) < 3*time.Second; {
+			for start := time.Now(); time.Since(start) < time.Duration(secs)*time.Second; {
 				w.fn(batch)
 			}
 			pprof.StopCPUProfile()

@@ -13,6 +13,10 @@
 - Experiment exp-maxkeys (autotune-design.md): PC and M1 overnight. Limits of 2 and 4 never win; one key a page wins point queries and
   writes of small maps, loses ranges 3 to 4 times and doubles memory. **User's decision 2026-10-10: B, always the full page, no
   autotune.** Next: the gap of small maps to `main` in the search in the page and the write path (PLAN.md, "Open after step 5").
+- Profiles of all scenarios (profiles-2026-10.md), corpus `links` merged, step 6 modelled (step6-design.md, sections 8 and 9: range
+  children leave the depth as it is; packing cuts objects a lookup, its maintenance is open). The descent resolved to instructions
+  (descent-analysis.md): 64 to 79 % of `Tree.find` waits for dependent lines. Next (user): the write path of small maps, starting
+  with a free list for pages.
 
 ## 2026-10-06 night: step 5.5a, 5.5b done; stopped for the user ([step5-one-page.md](step5-one-page.md), sections 6.1 and 6.2)
 
