@@ -278,7 +278,12 @@ Not part of a step yet; each gets a design note with a prediction before any cod
 - **The fast path of the one-key page** (see below): +13 % build and +11 % replay for `uint64` single-value in the probe (5.5c), +1 to +3 % build in the gate; belongs to the two points above.
 - **Reads** were measured late (5.5e); the probes of later steps include `readprobe_test.go`.
 
-## Feature: autotune of the keys per page (user, 2026-10-07; from the review, review-2026-10.md)
+## Feature: autotune of the keys per page (user, 2026-10-07; from the review, review-2026-10.md) — measured and dropped 2026-10-10
+
+**Decision (user, 2026-10-10): B, always the full page; the autotune is not built.** Experiment exp-maxkeys (autotune-design.md,
+result and decision): limits of 2 and 4 keys a page never win; one key a page wins point queries and writes up to 16K keys by 5 to 45 %
+but loses ranges three to four times (below `main` and far below `btree-map`) and doubles the memory. The gap of small maps to `main`
+goes to the search in the page and the write path of the tree ("Open after step 5").
 
 **Idea (the user's):** the hybrid of E1 as an automatic feature. The map keeps count of its pages (and keys) and infers its memory from
 them; with that count it raises, step by step and by a suitable heuristic, the largest number of keys a page may hold. A small map,

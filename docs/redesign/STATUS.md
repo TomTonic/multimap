@@ -1,5 +1,14 @@
 # Status
 
+## 2026-10-08 to 2026-10-10: page search, then the curve of the autotune; decision B
+
+- Fingerprint search (page-search-design.md, option 2) built on `cacheline` (`828bf1f`, `52b785c`): missed (u64 lookups 26 % slower, the
+  hash costs more than it saves; memory +1.5 to +2.9 B a key). A hash-free SWAR search on first byte and length measured alone: 2 to 6 ns
+  faster than `locate` in the kernel. Not built. Head byte `n` renamed `currentValues`, the word slot dropped (`85d6e1d`).
+- Experiment exp-maxkeys (autotune-design.md): PC and M1 overnight. Limits of 2 and 4 never win; one key a page wins point queries and
+  writes of small maps, loses ranges 3 to 4 times and doubles memory. **User's decision 2026-10-10: B, always the full page, no
+  autotune.** Next: the gap of small maps to `main` in the search in the page and the write path (PLAN.md, "Open after step 5").
+
 ## 2026-10-06 night: step 5.5a, 5.5b done; stopped for the user ([step5-one-page.md](step5-one-page.md), sections 6.1 and 6.2)
 
 - 5.5a (model): memory of the one page is neutral against today's pages (-0.3 to +0.2 B a key).

@@ -1,4 +1,4 @@
-# Autotune of the keys per page: concept (2026-10-07, not implemented)
+# Autotune of the keys per page: concept (2026-10-07), measured and dropped (2026-10-10)
 
 Words as in [GLOSSARY.md](GLOSSARY.md). Origin: the review of the approach ([review-2026-10.md](review-2026-10.md), E1 to E6) and the
 user's decision of 2026-10-07. **This note fixes the concept; it is implemented later**, after the hysteresis (E6) is adopted.
@@ -138,3 +138,16 @@ derived from the pairs ordered/main and ordered/variant. Many cells stopped at 8
    write path of the tree (a separate question).
 5. One anomaly not understood: valuesBetween u64 single-value at 4,096 keys, ordered 3.69 and 3.54 times `main` on both machines but 0.94
    and 0.86 at 16,384 (`main` is slow at 4K there, not ordered fast).
+
+## Decision (user, 2026-10-10): B, always the full page; the autotune is not built
+
+Asked where A (the switch: one key a page up to some 32K keys, the full page above) and B (always the full page) stand against the
+B-trees, the user chose **B**. Against the B-trees (PC, see the result above): both beat them in every point query and in every
+write of the natural profile; in the single-value writes of small maps both lose on dirs and url (A 0.88 to 1.0, B 0.77 to 0.93); in
+the single-value ranges `btree-map` wins against both, but A falls to 0.19 to 0.29 of it at 4K and 16K keys, B stays at 0.5 to 0.9
+(u64 0.28 to 0.40 at 16K and 65K). A would trade a large loss in ranges and twice the memory for 5 to 45 % in point queries and writes
+of small maps; B keeps ranges and memory and leaves the gap to `main` in point queries and writes of small maps (credo 3) to the two
+paths that cost there: the search in the page and the write path of the tree. `hashed` was not in the run (the bench compares it in
+the natural profile only); A and B both beat it in ranges, where it scans every key.
+
+The branch `exp-maxkeys` stays as the record of the experiment; `SetMaxKeys` does not go into the library.
