@@ -13,6 +13,7 @@ import (
 
 	"github.com/TomTonic/multimap/bench/keys"
 	"github.com/TomTonic/multimap/internal/art"
+	"github.com/TomTonic/multimap/internal/page"
 	"github.com/TomTonic/rtcompare/workload"
 )
 
@@ -107,8 +108,12 @@ func probeCase(t *testing.T, kind keys.Kind, profile string, n int) {
 	// --- the build stream, from empty
 	var m art.Map[V]
 	art.ResetEvents()
+	lays := page.LayCalls()
 	start := time.Now()
 	apply(&m, f, build)
+	if art.EventsEnabled {
+		fmt.Printf("page layouts computed (head.lay) in the build stream: %.2f a write\n", float64(page.LayCalls()-lays)/float64(len(build)))
+	}
 	fmt.Printf("build stream: %.0f ns per operation\n\n", float64(time.Since(start))/float64(len(build)))
 	printEvents("build stream", len(build))
 	census("tree after the build stream", &m)
@@ -127,9 +132,14 @@ func probeCase(t *testing.T, kind keys.Kind, profile string, n int) {
 	census("tree after one cycle", &tm)
 
 	art.ResetEvents()
+	lays = page.LayCalls()
 	run := replayTimed(&tm, f, cycle, counts)
+	lays = page.LayCalls() - lays
 	printRun(run)
 	printEvents("one steady-state cycle", len(cycle))
+	if art.EventsEnabled {
+		fmt.Printf("page layouts computed (head.lay) in one steady-state cycle: %.2f a write\n\n", float64(lays)/float64(len(cycle)))
+	}
 
 	// --- the corpus tree with every second key's values removed value by value
 	var hm art.Map[V]

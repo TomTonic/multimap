@@ -159,8 +159,9 @@ lowest one refuses and the ones above are not tried. Where the time of a try goe
 size check `mergeFits` 6 to 10 % of a churn, the second descent from the root and the rest of `mergeUp` 2 to 8 %.
 
 **Against the prediction:**
-1. At least 70 % of the merge ups from a page left with one key: missed. Only 22 to 39 % are; 61 to 78 % start from a page left
-   with two entries.
+1. At least 70 % of the merge ups from a page left with one key: missed. Only 22 to 39 % are. (Corrected after the second count
+   below: the rest is not all "two entries left", as first written here; about 35 to 45 % start from a removal that left no page
+   entry at all, the removal of a key from a single-key page, and 25 to 32 % from two entries left.)
 2. At least 80 % of the refusals by size: missed (6 to 92 %; the node with more than 12 children and the child that is a node are
    as frequent). Not near misses, at least twice `mergeFill` in the median: about hit (1.6 to 4.0 times, 2.1 to 2.3 for most;
    under 1.5 times only 1 to 12 %, links natural and email 4K about 30 %).
@@ -171,8 +172,29 @@ size check `mergeFits` 6 to 10 % of a churn, the second descent from the root an
 **What it says (no decision, for the user):**
 - the merge tries fail for reasons that are known before any page is read: a node of more than 12 children (refused at once, but
   only after the second descent from the root), a child that is a node (found while walking the children); the walk over all
-  sibling pages (`mergeFits`, 6 to 10 % of a churn) is spent on a size that is twice the limit in the median. A trigger of one
-  entry left instead of two would take away 61 to 78 % of the tries (whether merges that matter would be lost then is not counted);
-  remembering the path of the removal would take away the second descent;
+  sibling pages (`mergeFits`, 6 to 10 % of a churn) is spent on a size that is twice the limit in the median. Which trigger could
+  go is counted in the second count below; remembering the path of the removal would take away the second descent;
 - the pair could be made in place, in the object the single-key page already has, in 70 to 99 % of the cases: that takes away most
   of the pendulum's objects without any memory, unlike keeping single-key pages one class larger (up to 50 bytes a key).
+
+**Second count (2026-10-10, 17:45):** the merges done by what started their merge up, and how often the layout of a page is computed
+(`head.lay`, a counter in `internal/page` under mkstats). `bench/results-layout/write-2026-10/events-2.txt`.
+
+| kind | merge ups a 1,000 writes | started by 0 / 1 / 2 entries left | merges done in the cycle | of them from 0 / 1 / 2 left |
+|---|--:|--:|--:|--:|
+| str single-value 4K / 16K | 54 / 70 | 21/37/42 / 7/29/64 % | 0 / 0 | |
+| email single-value 4K / 16K | 28 / 462 | 19/23/57 / 41/39/20 % | 0 / 0 | |
+| url single-value 4K / 16K | 280 / 275 | 42/32/26 / 41/32/27 % | 12 / 33 | 7/1/4 / 14/7/12 |
+| path single-value 4K / 16K | 232 / 196 | 37/31/32 / 37/33/30 % | 5 / 16 | 1/3/1 / 4/7/5 |
+| street single-value 4K / 16K | 113 / 120 | 35/34/31 / 35/33/32 % | 0 / 0 | |
+| dirs single-value 4K / 16K | 201 / 155 | 36/33/31 / 37/33/30 % | 1 / 5 | 1/0/0 / 2/2/1 |
+| links single-value 4K / 16K | 168 / 145 | 38/34/28 / 37/33/30 % | 0 / 1 | 0/1/0 at 16K |
+| links natural 4K / 16K | 6 / 5 | 59/27/14 / 61/26/13 % | 14 / 105 | 3/3/8 / 36/43/26 |
+
+"0 entries left" is a removal from a single-key page (the key goes, `removeValue` returns 0): the largest trigger, 35 to 45 % in
+most cases. The merges done (0 to 33 in a cycle of 10,684 or 42,814 writes; 105 for links natural 16K) come from all three
+triggers alike. So no trigger can go without losing merges (they may come later, from another removal; not counted): moving the
+trigger from two entries to one takes away 25 to 32 % of the tries and about a third of the merges done.
+
+The page layout (`head.lay`) is computed 0.75 to 1.26 times a write (0.98 to 1.26 single-value): not again and again; its 5 % is
+the cost of the one computation, a function that is not inlined.

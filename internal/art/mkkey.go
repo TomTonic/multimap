@@ -642,7 +642,7 @@ func (m *Map[T]) tryMerge(loc **header, pathLen int) bool {
 	eachByteNode(n, func(b byte, c *header) { collect(int(b), c) })
 	// mergeFits allowed at most mergeFill bytes, which keeps every remainder, value and slot count within the
 	// page's own limits (each of them alone would take more): pageOf builds the page.
-	ev(evMergeOK, len(items))
+	evMergeDone(len(items))
 	*loc = m.pageOf(items)
 	return true
 }

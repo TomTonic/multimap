@@ -183,6 +183,7 @@ type lay struct {
 }
 
 func (p *head) lay(str bool) lay {
+	countLay()
 	la := lay{currentValues: int(p.currentValues), l: p.cpl(), many: !p.one(), str: str}
 	la.kl = Header + la.l
 	la.vl = la.kl

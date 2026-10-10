@@ -31,11 +31,18 @@ const (
 	evMergeSlots
 	evMergeBig
 	evPairFit
+	evMergeOKFrom
 	evCount
 )
 
 // ev counts event e once, with n entries of the page it concerns.
 func ev(event, int) {}
+
+// evMergeStart counts a merge up started by a removal; see events_on.go.
+func evMergeStart(int) {}
+
+// evMergeDone counts a merge done; see events_on.go.
+func evMergeDone(int) {}
 
 // evPairRoom counts how much of the object of a single-key page a pair fills; see events_on.go.
 func evPairRoom[T comparable](*Map[T], *singleKeyHead, *header) {}

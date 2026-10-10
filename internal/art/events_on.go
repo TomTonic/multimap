@@ -32,6 +32,7 @@ const (
 	evMergeSlots
 	evMergeBig
 	evPairFit
+	evMergeOKFrom
 	evCount
 )
 
@@ -59,6 +60,7 @@ var eventNames = [evCount]string{
 	evMergeNoPage:    "merge refused: a child is a node or a value overflow, or fewer than two keys (entries: the node's children)",
 	evMergeSlots:     "merge refused: the children hold more than mergeLimit values (entries: the values)",
 	evMergeBig:       "merge refused: the merged page would need more than mergeFill (entries: need in 64ths of mergeFill)",
+	evMergeOKFrom:    "merge done, by what started its merge up (entries: the entries left in the page)",
 	evPairFit:        "pair: the page of two keys against the object of the single-key page (entries: its bytes in 64ths of the object)",
 }
 
@@ -104,4 +106,19 @@ func evPairRoom[T comparable](m *Map[T], l *singleKeyHead, q *header) {
 		used, size = asMKFix(q).Used(), asFixed(l).Size()
 	}
 	ev(evPairFit, used*64/size)
+}
+
+// mergeLeft is the number of entries left in the page whose removal started the current merge up.
+var mergeLeft int
+
+// evMergeStart counts a merge up (evMergeUp) started by a removal that left a page left entries.
+func evMergeStart(left int) {
+	mergeLeft = left
+	ev(evMergeUp, left)
+}
+
+// evMergeDone counts a merge done of items entries (evMergeOK), and by what started its merge up (evMergeOKFrom).
+func evMergeDone(items int) {
+	ev(evMergeOK, items)
+	ev(evMergeOKFrom, mergeLeft)
 }
