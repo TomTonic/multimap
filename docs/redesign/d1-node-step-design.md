@@ -80,3 +80,22 @@ code the same for all but N256, so that there is nothing left to guess.
   for url, path, dirs (most levels); writes +2 to +5 % (their descent); ranges within noise; memory unchanged.
 - A result below this on the M1 means the M1's switch lines were mostly the wait for the next object after all (section 1), not
   the branch: then D1 stops, and the descent is a question of structure only (D3).
+
+## 4a. The counts (2026-10-11, 17:55; `bench/results-layout/descent-2026-10/d1-counts.md`)
+
+The model, today's tree, single-value, the seven structured kinds, 4K/16K/64K:
+
+| | type changes a lookup, 5 types → 3 (after D1b) | share of level pairs that change, 5 → 3 | N12 visits that need the second key word, a lookup (share of N12 visits) |
+|---|---|---|---|
+| str | 1.4 to 2.7 → 1.1 to 2.0 | 99 to 100 → 73 to 84 % | 0.26 to 0.35 (18 to 25 %) |
+| email | 0 to 0.06 (all N26) | 0 to 3 % | 0 to 0.02 |
+| url | 4.0 to 4.9 → 2.6 to 3.0 | 61 to 83 → 41 to 54 % | 0.05 to 0.12 (5 to 8 %) |
+| path | 6.1 to 7.1 → 3.1 to 3.8 | 65 to 85 → 35 to 42 % | 0.84 to 0.87 (24 to 39 %) |
+| street | 1.7 to 2.8 → 1.2 to 1.7 | 73 to 84 → 44 to 61 % | 0.10 to 0.16 (9 to 11 %) |
+| dirs | 6.0 to 7.9 → 3.1 to 3.8 | 76 to 91 → 37 to 46 % | 0.05 to 0.81 (2 to 39 %) |
+| links | 1.3 to 2.6 → 0.6 to 1.9 | 56 to 79 → 23 to 56 % | 0.05 to 0.08 (9 to 14 %) |
+
+The node type changes on most levels of a lookup (but for email, whose trees are all N26): a predictor that guesses "the same type
+as last time at this place" is wrong on 56 to 100 % of the level pairs today and still on 23 to 84 % with three types (D1b). Only
+D1c (no branch between the sorted and the bitmap nodes) takes the guess away. The second key word of D1b is needed on 0 to 0.9 N12
+visits a lookup (path and dirs at 64K most), an extra line on the PC for those.

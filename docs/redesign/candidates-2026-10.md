@@ -86,3 +86,28 @@ Built on `cacheline` in `e8d370e` (its parent `df110e6` is the baseline of the m
   type fixes its split of words). A pair in place keeps the class of the old object, which may be one class above what a new page
   would take: the memory check of the run tells whether it matters.
 - Tests: 100 % of both packages, `-race`, fuzz 60 s each of `FuzzPage` and `FuzzOperations`, lint 0.
+
+## Result of W1 + W2 on the PC (2026-10-11, 09:54 to 17:50) — prediction missed
+
+`bench/results-layout/w12-pc/matrix.md` (ordered = `e8d370e` against baseline = `df110e6`, >1 faster). Churn single-value at 4,096
+keys: street 1.03, dirs 1.00, url 1.00, links **0.95**; 16,384: 1.01 to 1.02, links 0.95; natural 0.99 to 1.02 everywhere. Build
+0.98 to 1.01. Lookups 0.98 to 1.00, ranges 1.00 to 1.09, memory unchanged (±2 bytes a key). **Predicted +8 to +15 % (url, path, dirs)
+and +5 to +12 % (street, links) for churn: missed.** The M1's job w12 has not reported yet.
+
+**Why** (CPU profiles of 10 seconds of churn, single-value 4,096, before and after, inclusive shares):
+
+| | url before → after | links | dirs |
+|---|---|---|---|
+| `mergeUp` | 16.4 → 11.5 % | 11.0 → 8.7 % | 12.7 → 10.2 % |
+| `mergeFits` | 9.0 → 5.4 %, of it `mergeBound` 5.2 % | 8.3 → 6.9 %, `mergeBound` 6.9 % | 5.9 → 3.3 %, `mergeBound` 3.2 % |
+| `pairWithFixed` | 5.2 → **6.8 %** | 4.9 → **7.5 %** | 3.9 → 4.2 % |
+
+- **W1:** the exact walk now runs rarely, but the bound costs almost what the walk cost: it still reads every sibling page's head
+  and sums its key lengths (`Used` walks the key length bytes). The cost of a merge try was the touching of the sibling pages, not
+  the closure walk over their entries. What W1 saved is 2 to 4 points of a churn, not 6 to 10.
+- **W2:** the pair got more expensive: `pairWithFixed` declares its 512-byte buffer at the top, so Go zeroes it on every pair (in
+  place or not), and the pair in place clears and rewrites the whole object. That is more than the allocation of a 64-byte object
+  it saves. A flaw of the implementation, and also a question whether a pair in place can be cheaper at all than a new small page.
+
+Both together come to about zero, links below. Stopped here for the user (working rule: a result outside the prediction stops the
+work before the next step).
