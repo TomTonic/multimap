@@ -110,7 +110,8 @@ func TestRunPrintsTheCases(t *testing.T) {
 // The table tells how many lookups read a child pointer from a second line of a node (descent-analysis.md, lever 2); a
 // count of second lines above the nodes passed would be a wrong offset.
 //
-// Expected: one row for street single-value 4096, and for every lookup at most as many second lines as nodes.
+// Expected: one row for street single-value 4096, at most as many second lines as nodes, at most as many type
+// changes as level pairs (and fewer with three types than with five), and at most as many second key words as N12 visits.
 func TestNodeLinesCountsTheSecondLines(t *testing.T) {
 	var out bytes.Buffer
 	if err := run(&out, []string{"-nodelines", "-keys", "street", "-values", "single-value", "-sizes", "4096"}); err != nil {
@@ -135,5 +136,8 @@ func TestNodeLinesCountsTheSecondLines(t *testing.T) {
 	}
 	if c.second64[0] != 0 {
 		t.Fatalf("an N5 is one line, but %d of its visits read a second one", c.second64[0])
+	}
+	if c.change3 > c.change5 || c.change5 > c.pairs || c.n12second > c.visits[1] {
+		t.Fatalf("type changes %d (3 types %d) of %d level pairs; %d second key words of %d N12 visits", c.change5, c.change3, c.pairs, c.n12second, c.visits[1])
 	}
 }

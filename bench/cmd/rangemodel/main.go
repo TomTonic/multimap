@@ -432,7 +432,14 @@ type counts struct {
 	// first line of 64 and of 128 bytes (a second dependent line inside the node); prefix tails read
 	visits, second64, second128 [5]int
 	tails                       int
+	// for D1 (d1-node-step-design.md): level pairs on the way of a lookup, how many of them change the node type (five
+	// types as today; three after D1b: sorted N5/N12, bitmap N26/N58, N256), and N12 visits whose byte is not among
+	// the node's first eight key bytes (the second key word of D1b)
+	pairs, change5, change3, n12second int
 }
+
+// typeGroup is the code a node class runs after D1b: 0 sorted (N5, N12), 1 bitmap (N26, N58), 2 the 256-way node.
+func typeGroup(k int) int { return [5]int{0, 0, 1, 1, 2}[k] }
 
 // classIdx returns the index of the node class of capacity cap in counts.visits.
 func classIdx(cap int) int {
@@ -530,6 +537,7 @@ func (m *model) census(o obj, c *counts) {
 func (m *model) lookup(it *item, c *counts) {
 	o, depth := m.root, 0
 	lines := 0
+	prev := -1
 	for o.k == kNode {
 		n := o.n
 		c.nodesPassed++
@@ -538,6 +546,18 @@ func (m *model) lookup(it *item, c *counts) {
 			cnt++
 		}
 		cp, _ := nodeCap(cnt)
+		if k := classIdx(cp); prev >= 0 {
+			c.pairs++
+			if k != prev {
+				c.change5++
+			}
+			if typeGroup(k) != typeGroup(prev) {
+				c.change3++
+			}
+			prev = k
+		} else {
+			prev = k
+		}
 		ls := map[int]bool{0: true}
 		if len(n.prefix) > 12 {
 			lines++ // the tail of the prefix
@@ -560,6 +580,9 @@ func (m *model) lookup(it *item, c *counts) {
 		}
 		ls[slotOff(cp, i, n.starts[i])/64] = true
 		c.slotLine(cp, slotOff(cp, i, n.starts[i]))
+		if cp == 12 && i >= 8 {
+			c.n12second++
+		}
 		lines += len(ls)
 		if n.kids[i].k == kNode {
 			if n.starts[i] != b {
@@ -834,7 +857,7 @@ func runPack(w io.Writer, kindsF, valuesF, sizesF, packF string, str bool) error
 // child slot from a second line of the node (64- and 128-byte lines), and the prefix tails read: the second dependent
 // lines inside the nodes that descent-analysis.md found to be 16 to 19 % of the descent's time on the PC.
 func runNodeLines(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
-	if _, err := fmt.Fprintln(w, "| case | objects a lookup | nodes N5 / N12 / N26 / N58 / N256 a lookup | second lines a lookup, 64 B: N12 / N26 / N58 / N256 = all | 128 B: all | prefix tails a lookup |\n|---|--:|---|---|--:|--:|"); err != nil {
+	if _, err := fmt.Fprintln(w, "| case | objects a lookup | nodes N5 / N12 / N26 / N58 / N256 a lookup | second lines a lookup, 64 B: N12 / N26 / N58 / N256 = all | 128 B: all | prefix tails a lookup | type changes a lookup, 5 / 3 types (share of level pairs) | N12 visits with the second key word a lookup (share of N12 visits) |\n|---|--:|---|---|--:|--:|---|---|"); err != nil {
 		return err
 	}
 	for _, ks := range strings.Split(kindsF, ",") {
@@ -864,11 +887,14 @@ func runNodeLines(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
 					s64 += c.second64[k]
 					s128 += c.second128[k]
 				}
-				if _, err := fmt.Fprintf(w, "| %s %s %d | %.2f | %.2f / %.2f / %.2f / %.2f / %.2f | %.2f / %.2f / %.2f / %.2f = %.2f | %.2f | %.2f |\n",
+				pairs := float64(max(c.pairs, 1))
+				if _, err := fmt.Fprintf(w, "| %s %s %d | %.2f | %.2f / %.2f / %.2f / %.2f / %.2f | %.2f / %.2f / %.2f / %.2f = %.2f | %.2f | %.2f | %.2f / %.2f (%.0f / %.0f %%) | %.2f (%.0f %%) |\n",
 					kind, profile, n, float64(nodes)/l+1,
 					float64(c.visits[0])/l, float64(c.visits[1])/l, float64(c.visits[2])/l, float64(c.visits[3])/l, float64(c.visits[4])/l,
 					float64(c.second64[1])/l, float64(c.second64[2])/l, float64(c.second64[3])/l, float64(c.second64[4])/l, float64(s64)/l,
-					float64(s128)/l, float64(c.tails)/l); err != nil {
+					float64(s128)/l, float64(c.tails)/l,
+					float64(c.change5)/l, float64(c.change3)/l, 100*float64(c.change5)/pairs, 100*float64(c.change3)/pairs,
+					float64(c.n12second)/l, 100*float64(c.n12second)/float64(max(c.visits[1], 1))); err != nil {
 					return err
 				}
 			}
