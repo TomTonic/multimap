@@ -1,0 +1,938 @@
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 367 ns per operation (median)
+B: 671.3 ns per operation (median)
+A needs 45% less time than B: B takes 1.82 times as long as A.
+With 95% confidence the difference lies between 43.7% and 46.6% less time (B takes between 1.78 and 1.87 times as long as A).
+Noise floor: 2.47%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.10), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 373 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 352.2 ns per operation (median)
+B: 352.3 ns per operation (median)
+A needs 0.92% less time than B: B takes 1.01 times as long as A.
+With 95% confidence the difference lies between 2.68% more time and 2.72% less time (B takes between 0.974 and 1.03 times as long as A).
+Noise floor: 0.974%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.18), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 0.92% does not clear the 0.97% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-2.68%, 2.72%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 373 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.547e+04 ns per operation (median)
+B: 4.443e+04 ns per operation (median)
+A needs 65% less time than B: B takes 2.86 times as long as A.
+With 95% confidence the difference lies between 64% and 65.6% less time (B takes between 2.78 and 2.91 times as long as A).
+Noise floor: 2.08%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.02), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 373 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.482e+04 ns per operation (median)
+B: 1.47e+04 ns per operation (median)
+A needs 1.62% less time than B: B takes 1.02 times as long as A.
+With 95% confidence the difference lies between 4.04% more time and 4.12% less time (B takes between 0.961 and 1.04 times as long as A).
+Noise floor: 2.56%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.04), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 1.62% does not clear the 2.56% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-4.04%, 4.12%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 373 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 256.4 ns per operation (median)
+  B: 365 ns per operation (median)
+  A needs 30.5% less time than B: B takes 1.44 times as long as A.
+  With 95% confidence the difference lies between 29.7% and 31.6% less time (B takes between 1.42 and 1.46 times as long as A).
+  Noise floor: 1.83%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.09), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 571 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.493e+08 ns per operation (median)
+  B: 8.886e+08 ns per operation (median)
+  A needs 26.6% less time than B: B takes 1.36 times as long as A.
+  With 95% confidence the difference lies between 25.9% and 27.8% less time (B takes between 1.35 and 1.38 times as long as A).
+  Noise floor: 1.7%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are correlated (autocorrelation +0.21), so they were resampled in blocks of 3.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 527 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 246.5 ns per operation (median)
+  B: 228.8 ns per operation (median)
+  A needs 11.6% more time than B: B takes only 0.90 times as long as A.
+  With 95% confidence the difference lies between 13.9% more time and 11.1% less time (B takes between 0.878 and 1.13 times as long as A).
+  Noise floor: 11.1%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.43), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the interval [-13.91%, 11.14%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 567 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.187e+08 ns per operation (median)
+  B: 6.23e+08 ns per operation (median)
+  A needs 0.4% less time than B: B takes 1.00 times as long as A.
+  With 95% confidence the difference lies between 0.0963% more time and 1.92% less time (B takes between 0.999 and 1.02 times as long as A).
+  Noise floor: 1.82%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.07), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of 0.40% does not clear the 1.82% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-0.10%, 1.92%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 537291240887071
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 368.4 ns per operation (median)
+B: 691 ns per operation (median)
+A needs 46.8% less time than B: B takes 1.88 times as long as A.
+With 95% confidence the difference lies between 44.8% and 48.6% less time (B takes between 1.81 and 1.95 times as long as A).
+Noise floor: 1.51%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.07), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 393 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 357 ns per operation (median)
+B: 355.7 ns per operation (median)
+A needs 1.42% less time than B: B takes 1.01 times as long as A.
+With 95% confidence the difference lies between 2.48% more time and 5.47% less time (B takes between 0.976 and 1.06 times as long as A).
+Noise floor: 1.89%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.27), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 1.42% does not clear the 1.89% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-2.48%, 5.47%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 393 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.526e+04 ns per operation (median)
+B: 4.457e+04 ns per operation (median)
+A needs 65% less time than B: B takes 2.85 times as long as A.
+With 95% confidence the difference lies between 64.2% and 66.1% less time (B takes between 2.8 and 2.95 times as long as A).
+Noise floor: 4.32%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.02), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 393 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 100% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.44e+04 ns per operation (median)
+B: 1.494e+04 ns per operation (median)
+A needs 0.808% less time than B: B takes 1.01 times as long as A.
+With 95% confidence the difference lies between 0.808% more time and 5.9% less time (B takes between 0.992 and 1.06 times as long as A).
+Noise floor: 3.06%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.02), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 0.81% does not clear the 3.06% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-0.81%, 5.90%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 393 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 257.3 ns per operation (median)
+  B: 368.2 ns per operation (median)
+  A needs 29.7% less time than B: B takes 1.42 times as long as A.
+  With 95% confidence the difference lies between 29.5% and 30.5% less time (B takes between 1.42 and 1.44 times as long as A).
+  Noise floor: 1%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.20), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 528 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.258e+08 ns per operation (median)
+  B: 8.643e+08 ns per operation (median)
+  A needs 27.2% less time than B: B takes 1.37 times as long as A.
+  With 95% confidence the difference lies between 26.7% and 28.1% less time (B takes between 1.36 and 1.39 times as long as A).
+  Noise floor: 0.578%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.10), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 249.3 ns per operation (median)
+  B: 235.1 ns per operation (median)
+  A needs 8.62% more time than B: B takes only 0.92 times as long as A.
+  With 95% confidence the difference lies between 13% more time and 10.6% less time (B takes between 0.885 and 1.12 times as long as A).
+  Noise floor: 9.34%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.86), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -8.62% does not clear the 9.34% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-13.01%, 10.59%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 567 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.25e+08 ns per operation (median)
+  B: 6.176e+08 ns per operation (median)
+  A needs 0.92% more time than B: B takes only 0.99 times as long as A.
+  With 95% confidence the difference lies between 2.37% more time and 0.0176% less time (B takes between 0.977 and 1.00 times as long as A).
+  Noise floor: 2.18%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.08), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -0.92% does not clear the 2.18% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-2.37%, 0.02%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 528989634001079
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 379.9 ns per operation (median)
+B: 700.5 ns per operation (median)
+A needs 47.1% less time than B: B takes 1.89 times as long as A.
+With 95% confidence the difference lies between 44.9% and 48% less time (B takes between 1.81 and 1.92 times as long as A).
+Noise floor: 2.2%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.36), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 356 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - candidate A drifted during the run: its measurements were 4.65% higher in the second half than in the first, so the machine did not hold still
+  - candidate B drifted during the run: its measurements were 6% higher in the second half than in the first, so the machine did not hold still
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 363.5 ns per operation (median)
+B: 353.7 ns per operation (median)
+A needs 0.577% less time than B: B takes 1.01 times as long as A.
+With 95% confidence the difference lies between 2.86% more time and 3.12% less time (B takes between 0.972 and 1.03 times as long as A).
+Noise floor: 2.69%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.27), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 0.58% does not clear the 2.69% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-2.86%, 3.12%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 356 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - candidate A drifted during the run: its measurements were 8.46% higher in the second half than in the first, so the machine did not hold still
+  - candidate B drifted during the run: its measurements were 10% higher in the second half than in the first, so the machine did not hold still
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.52e+04 ns per operation (median)
+B: 4.477e+04 ns per operation (median)
+A needs 65.7% less time than B: B takes 2.91 times as long as A.
+With 95% confidence the difference lies between 64.9% and 66.6% less time (B takes between 2.85 and 2.99 times as long as A).
+Noise floor: 4.13%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.06), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 356 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.468e+04 ns per operation (median)
+B: 1.481e+04 ns per operation (median)
+A needs 0.747% less time than B: B takes 1.01 times as long as A.
+With 95% confidence the difference lies between 2.07% more time and 2.76% less time (B takes between 0.98 and 1.03 times as long as A).
+Noise floor: 3.54%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.00), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 0.75% does not clear the 3.54% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-2.07%, 2.76%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 356 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 254.3 ns per operation (median)
+  B: 359.7 ns per operation (median)
+  A needs 30.5% less time than B: B takes 1.44 times as long as A.
+  With 95% confidence the difference lies between 29.5% and 31.2% less time (B takes between 1.42 and 1.45 times as long as A).
+  Noise floor: 1.5%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.02), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 603 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.314e+08 ns per operation (median)
+  B: 8.615e+08 ns per operation (median)
+  A needs 26.7% less time than B: B takes 1.36 times as long as A.
+  With 95% confidence the difference lies between 25.6% and 27% less time (B takes between 1.34 and 1.37 times as long as A).
+  Noise floor: 0.613%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.06), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 527 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 250.4 ns per operation (median)
+  B: 228.6 ns per operation (median)
+  A needs 12.7% more time than B: B takes only 0.89 times as long as A.
+  With 95% confidence the difference lies between 13.4% more time and 11.2% less time (B takes between 0.882 and 1.13 times as long as A).
+  Noise floor: 8.39%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.91), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the interval [-13.42%, 11.24%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 568 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.274e+08 ns per operation (median)
+  B: 6.307e+08 ns per operation (median)
+  A needs 0.221% less time than B: B takes 1.00 times as long as A.
+  With 95% confidence the difference lies between 0.709% more time and 1.11% less time (B takes between 0.993 and 1.01 times as long as A).
+  Noise floor: 0.966%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.09), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of 0.22% does not clear the 0.97% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-0.71%, 1.11%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 527 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+checksum 524974190350896
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 369.6 ns per operation (median)
+B: 682.6 ns per operation (median)
+A needs 46.9% less time than B: B takes 1.88 times as long as A.
+With 95% confidence the difference lies between 44.7% and 47.9% less time (B takes between 1.81 and 1.92 times as long as A).
+Noise floor: 2.29%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.19), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 407 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 352.3 ns per operation (median)
+B: 353.7 ns per operation (median)
+A needs 0.276% more time than B: B takes only 1.00 times as long as A.
+With 95% confidence the difference lies between 3.33% more time and 2.66% less time (B takes between 0.968 and 1.03 times as long as A).
+Noise floor: 1.64%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.16), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of -0.28% does not clear the 1.64% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-3.33%, 2.66%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 407 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.536e+04 ns per operation (median)
+B: 4.43e+04 ns per operation (median)
+A needs 65.8% less time than B: B takes 2.92 times as long as A.
+With 95% confidence the difference lies between 64.1% and 66.5% less time (B takes between 2.79 and 2.99 times as long as A).
+Noise floor: 2.25%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.05), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 407 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.463e+04 ns per operation (median)
+B: 1.476e+04 ns per operation (median)
+A needs 1.28% less time than B: B takes 1.01 times as long as A.
+With 95% confidence the difference lies between 1.69% more time and 5.26% less time (B takes between 0.983 and 1.06 times as long as A).
+Noise floor: 1.91%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.20), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of 1.28% does not clear the 1.91% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-1.69%, 5.26%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 407 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 256.8 ns per operation (median)
+  B: 362.5 ns per operation (median)
+  A needs 30% less time than B: B takes 1.43 times as long as A.
+  With 95% confidence the difference lies between 29.5% and 31% less time (B takes between 1.42 and 1.45 times as long as A).
+  Noise floor: 1.23%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.24), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 531 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.317e+08 ns per operation (median)
+  B: 8.803e+08 ns per operation (median)
+  A needs 27.8% less time than B: B takes 1.39 times as long as A.
+  With 95% confidence the difference lies between 26.5% and 28.9% less time (B takes between 1.36 and 1.41 times as long as A).
+  Noise floor: 0.767%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.04), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 528 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 245.4 ns per operation (median)
+  B: 230.4 ns per operation (median)
+  A needs 9.32% more time than B: B takes only 0.91 times as long as A.
+  With 95% confidence the difference lies between 13.5% more time and 11.4% less time (B takes between 0.881 and 1.13 times as long as A).
+  Noise floor: 8.14%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.87), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the interval [-13.48%, 11.42%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 567 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.27e+08 ns per operation (median)
+  B: 6.205e+08 ns per operation (median)
+  A needs 0.428% more time than B: B takes only 1.00 times as long as A.
+  With 95% confidence the difference lies between 1.25% more time and 0.214% less time (B takes between 0.988 and 1.00 times as long as A).
+  Noise floor: 2.61%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.01), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -0.43% does not clear the 2.61% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-1.25%, 0.21%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 537698568041020
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 371 ns per operation (median)
+B: 671.8 ns per operation (median)
+A needs 44.4% less time than B: B takes 1.80 times as long as A.
+With 95% confidence the difference lies between 42.9% and 47% less time (B takes between 1.75 and 1.89 times as long as A).
+Noise floor: 2.65%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.28), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 361 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 356.6 ns per operation (median)
+B: 354.4 ns per operation (median)
+A needs 0.155% more time than B: B takes only 1.00 times as long as A.
+With 95% confidence the difference lies between 3.8% more time and 1.85% less time (B takes between 0.963 and 1.02 times as long as A).
+Noise floor: 3.12%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.27), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of -0.16% does not clear the 3.12% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-3.80%, 1.85%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 361 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.555e+04 ns per operation (median)
+B: 4.439e+04 ns per operation (median)
+A needs 65.8% less time than B: B takes 2.92 times as long as A.
+With 95% confidence the difference lies between 64% and 66.2% less time (B takes between 2.78 and 2.96 times as long as A).
+Noise floor: 1.48%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.08), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 361 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.48e+04 ns per operation (median)
+B: 1.46e+04 ns per operation (median)
+A needs 0.944% more time than B: B takes only 0.99 times as long as A.
+With 95% confidence the difference lies between 5.65% more time and 3.93% less time (B takes between 0.947 and 1.04 times as long as A).
+Noise floor: 2.31%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.15), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of -0.94% does not clear the 2.31% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-5.65%, 3.93%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 361 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 253.9 ns per operation (median)
+  B: 359.4 ns per operation (median)
+  A needs 29.7% less time than B: B takes 1.42 times as long as A.
+  With 95% confidence the difference lies between 29.3% and 30.1% less time (B takes between 1.42 and 1.43 times as long as A).
+  Noise floor: 1.02%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.42), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 605 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.288e+08 ns per operation (median)
+  B: 8.492e+08 ns per operation (median)
+  A needs 26.2% less time than B: B takes 1.36 times as long as A.
+  With 95% confidence the difference lies between 25.9% and 27.3% less time (B takes between 1.35 and 1.37 times as long as A).
+  Noise floor: 1.01%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.16), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 527 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 247.9 ns per operation (median)
+  B: 228.3 ns per operation (median)
+  A needs 9.32% more time than B: B takes only 0.91 times as long as A.
+  With 95% confidence the difference lies between 11.7% more time and 10% less time (B takes between 0.895 and 1.11 times as long as A).
+  Noise floor: 8.75%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.16), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the interval [-11.68%, 10.00%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 569 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.235e+08 ns per operation (median)
+  B: 6.207e+08 ns per operation (median)
+  A needs 0.0647% more time than B: B takes only 1.00 times as long as A.
+  With 95% confidence the difference lies between 1.22% more time and 0.86% less time (B takes between 0.988 and 1.01 times as long as A).
+  Noise floor: 2.23%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.00), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -0.06% does not clear the 2.23% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-1.22%, 0.86%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 528 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 537550482925440
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 368.7 ns per operation (median)
+B: 673.5 ns per operation (median)
+A needs 45.6% less time than B: B takes 1.84 times as long as A.
+With 95% confidence the difference lies between 43.8% and 46.8% less time (B takes between 1.78 and 1.88 times as long as A).
+Noise floor: 2.91%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.35), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 344 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 358.7 ns per operation (median)
+B: 355.1 ns per operation (median)
+A needs 0.733% more time than B: B takes only 0.99 times as long as A.
+With 95% confidence the difference lies between 1.9% more time and 1.72% less time (B takes between 0.981 and 1.02 times as long as A).
+Noise floor: 0.591%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are correlated (autocorrelation +0.45), so they were resampled in blocks of 3.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the interval [-1.90%, 1.72%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 344 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.543e+04 ns per operation (median)
+B: 4.432e+04 ns per operation (median)
+A needs 64.8% less time than B: B takes 2.84 times as long as A.
+With 95% confidence the difference lies between 64.3% and 65.4% less time (B takes between 2.8 and 2.89 times as long as A).
+Noise floor: 1.17%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.16), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 344 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.461e+04 ns per operation (median)
+B: 1.5e+04 ns per operation (median)
+A needs 1.04% more time than B: B takes only 0.99 times as long as A.
+With 95% confidence the difference lies between 3.52% more time and 4.44% less time (B takes between 0.966 and 1.05 times as long as A).
+Noise floor: 3.38%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.06), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of -1.04% does not clear the 3.38% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-3.52%, 4.44%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 344 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 254.3 ns per operation (median)
+  B: 361.6 ns per operation (median)
+  A needs 31% less time than B: B takes 1.45 times as long as A.
+  With 95% confidence the difference lies between 29.6% and 31.6% less time (B takes between 1.42 and 1.46 times as long as A).
+  Noise floor: 1.82%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are correlated (autocorrelation +0.63), so they were resampled in blocks of 3.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 603 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.26e+08 ns per operation (median)
+  B: 8.522e+08 ns per operation (median)
+  A needs 27% less time than B: B takes 1.37 times as long as A.
+  With 95% confidence the difference lies between 25.6% and 28% less time (B takes between 1.34 and 1.39 times as long as A).
+  Noise floor: 0.522%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.03), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 248.8 ns per operation (median)
+  B: 237 ns per operation (median)
+  A needs 8.04% more time than B: B takes only 0.93 times as long as A.
+  With 95% confidence the difference lies between 13.5% more time and 11.9% less time (B takes between 0.881 and 1.14 times as long as A).
+  Noise floor: 8.22%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.37), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -8.04% does not clear the 8.22% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-13.54%, 11.92%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 568 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.269e+08 ns per operation (median)
+  B: 6.392e+08 ns per operation (median)
+  A needs 0.274% less time than B: B takes 1.00 times as long as A.
+  With 95% confidence the difference lies between 1.38% more time and 3.18% less time (B takes between 0.986 and 1.03 times as long as A).
+  Noise floor: 3.17%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.20), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of 0.27% does not clear the 3.17% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-1.38%, 3.18%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 100% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 536088733137762
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 401.4 ns per operation (median)
+B: 715.4 ns per operation (median)
+A needs 44.7% less time than B: B takes 1.81 times as long as A.
+With 95% confidence the difference lies between 42.2% and 46% less time (B takes between 1.73 and 1.85 times as long as A).
+Noise floor: 1.4%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.41), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 417 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - candidate A drifted during the run: its measurements were 11.6% lower in the second half than in the first, so the machine did not hold still
+  - candidate B drifted during the run: its measurements were 8.82% lower in the second half than in the first, so the machine did not hold still
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 350.9 ns per operation (median)
+B: 345 ns per operation (median)
+A needs 1.71% more time than B: B takes only 0.98 times as long as A.
+With 95% confidence the difference lies between 0.284% and 3.4% more time (B takes between 0.967 and 1.00 times as long as A).
+Noise floor: 0.978%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.02), so they were resampled one by one.
+
+Verdict: RESOLVED. A is slower than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 417 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.569e+04 ns per operation (median)
+B: 4.545e+04 ns per operation (median)
+A needs 65.6% less time than B: B takes 2.91 times as long as A.
+With 95% confidence the difference lies between 64.5% and 66.1% less time (B takes between 2.82 and 2.95 times as long as A).
+Noise floor: 1.18%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.03), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 417 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - candidate B drifted during the run: its measurements were 3.86% higher in the second half than in the first, so the machine did not hold still
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.46e+04 ns per operation (median)
+B: 1.428e+04 ns per operation (median)
+A needs 0.0787% more time than B: B takes only 1.00 times as long as A.
+With 95% confidence the difference lies between 2.53% more time and 2.67% less time (B takes between 0.975 and 1.03 times as long as A).
+Noise floor: 3.97%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.13), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the difference of -0.08% does not clear the 3.97% noise floor, which is what this setup reports between two runs of identical code
+  - the interval [-2.53%, 2.67%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 417 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 256.6 ns per operation (median)
+  B: 373 ns per operation (median)
+  A needs 31.8% less time than B: B takes 1.47 times as long as A.
+  With 95% confidence the difference lies between 30.8% and 32.2% less time (B takes between 1.44 and 1.47 times as long as A).
+  Noise floor: 1.37%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.17), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 550 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.228e+08 ns per operation (median)
+  B: 8.625e+08 ns per operation (median)
+  A needs 27.5% less time than B: B takes 1.38 times as long as A.
+  With 95% confidence the difference lies between 26.8% and 29.4% less time (B takes between 1.37 and 1.42 times as long as A).
+  Noise floor: 0.392%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation +0.01), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 245.4 ns per operation (median)
+  B: 224.1 ns per operation (median)
+  A needs 13.1% more time than B: B takes only 0.88 times as long as A.
+  With 95% confidence the difference lies between 14.9% more time and 11.8% less time (B takes between 0.87 and 1.13 times as long as A).
+  Noise floor: 6.44%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.88), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the interval [-14.89%, 11.83%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 566 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.233e+08 ns per operation (median)
+  B: 6.134e+08 ns per operation (median)
+  A needs 1.52% more time than B: B takes only 0.98 times as long as A.
+  With 95% confidence the difference lies between 3.56% more time and 0.00976% less time (B takes between 0.966 and 1.00 times as long as A).
+  Noise floor: 1.9%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.00), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -1.52% does not clear the 1.90% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-3.56%, 0.01%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 100% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 527640056021604
+== links natural n=16384 valuesFor: ordered vs btree-sets
+A: 398.2 ns per operation (median)
+B: 731 ns per operation (median)
+A needs 46.3% less time than B: B takes 1.86 times as long as A.
+With 95% confidence the difference lies between 44.5% and 46.9% less time (B takes between 1.8 and 1.88 times as long as A).
+Noise floor: 1.47%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.28), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 360 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+  - candidate A drifted during the run: its measurements were 11.6% higher in the second half than in the first, so the machine did not hold still
+  - candidate B drifted during the run: its measurements were 13.6% higher in the second half than in the first, so the machine did not hold still
+
+== links natural n=16384 valuesFor: ordered vs baseline
+A: 356.8 ns per operation (median)
+B: 349 ns per operation (median)
+A needs 1.74% more time than B: B takes only 0.98 times as long as A.
+With 95% confidence the difference lies between 4.71% more time and 2.85% less time (B takes between 0.955 and 1.03 times as long as A).
+Noise floor: 1.68%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.25), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the interval [-4.71%, 2.85%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 360 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs btree-sets
+A: 1.56e+04 ns per operation (median)
+B: 4.447e+04 ns per operation (median)
+A needs 65.5% less time than B: B takes 2.90 times as long as A.
+With 95% confidence the difference lies between 64.3% and 65.9% less time (B takes between 2.8 and 2.94 times as long as A).
+Noise floor: 2.47%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation -0.08), so they were resampled one by one.
+
+Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+
+Warnings:
+  - the program holds 360 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 valuesBetween: ordered vs baseline
+A: 1.463e+04 ns per operation (median)
+B: 1.458e+04 ns per operation (median)
+A needs 1.78% more time than B: B takes only 0.98 times as long as A.
+With 95% confidence the difference lies between 4.11% more time and 2.14% less time (B takes between 0.961 and 1.02 times as long as A).
+Noise floor: 0.81%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+Neighbouring measurements are nearly independent (autocorrelation +0.05), so they were resampled one by one.
+
+Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+
+Warnings:
+  - the interval [-4.11%, 2.14%] includes zero, so a difference in either direction is consistent with these measurements
+  - the program holds 360 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+== links natural n=16384 churn and build: ordered vs btree-sets
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 257.7 ns per operation (median)
+  B: 360.3 ns per operation (median)
+  A needs 28.3% less time than B: B takes 1.39 times as long as A.
+  With 95% confidence the difference lies between 28.1% and 30% less time (B takes between 1.39 and 1.43 times as long as A).
+  Noise floor: 2.03%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.26), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 605 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.344e+08 ns per operation (median)
+  B: 8.684e+08 ns per operation (median)
+  A needs 24.9% less time than B: B takes 1.33 times as long as A.
+  With 95% confidence the difference lies between 24.2% and 26.8% less time (B takes between 1.32 and 1.37 times as long as A).
+  Noise floor: 0.56%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.03), so they were resampled one by one.
+  
+  Verdict: RESOLVED. A is faster than B: the difference is real, as its interval excludes zero and it exceeds the noise floor.
+  
+  Warnings:
+    - the program holds 528 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - candidate B drifted during the run: its measurements were 3.47% higher in the second half than in the first, so the machine did not hold still
+
+== links natural n=16384 churn and build: ordered vs baseline
+steady state, per insertion or deletion in a structure of 767898 elements (cycle of 2005396 operations, first pass untimed):
+  A: 250.2 ns per operation (median)
+  B: 242.7 ns per operation (median)
+  A needs 6.4% more time than B: B takes only 0.94 times as long as A.
+  With 95% confidence the difference lies between 12.1% more time and 11.1% less time (B takes between 0.892 and 1.12 times as long as A).
+  Noise floor: 8.14%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are nearly independent (autocorrelation -0.28), so they were resampled one by one.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -6.40% does not clear the 8.14% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-12.06%, 11.10%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 568 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+
+build from empty to 767898 elements, per whole build (2755494 operations):
+  A: 6.274e+08 ns per operation (median)
+  B: 6.166e+08 ns per operation (median)
+  A needs 1.14% more time than B: B takes only 0.99 times as long as A.
+  With 95% confidence the difference lies between 2.01% more time and 0.536% less time (B takes between 0.98 and 1.01 times as long as A).
+  Noise floor: 1.41%. Identical code measured against itself on this setup can look that different, so smaller differences mean nothing.
+  Neighbouring measurements are correlated (autocorrelation +0.32), so they were resampled in blocks of 3.
+  
+  Verdict: NOT RESOLVED. This run did not establish which candidate is faster. That is not the same as "equally fast": the warnings below say what is missing.
+  
+  Warnings:
+    - the difference of -1.14% does not clear the 1.41% noise floor, which is what this setup reports between two runs of identical code
+    - the interval [-2.01%, 0.54%] includes zero, so a difference in either direction is consistent with these measurements
+    - the program holds 526 MB of live data, more than the caches of many machines; for data that size, where it lies in memory can shift the result by several points in ways the interval does not cover, and differently in the next process; run the comparison in several processes with the multiproc package
+    - in 50% of A/A runs this setup reported a difference between identical code, well above the 10% expected; treat any confidence from it with suspicion
+
+checksum 533064836478878
