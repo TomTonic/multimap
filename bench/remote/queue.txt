@@ -82,3 +82,8 @@ c1 affb848 cc47992 150 -suite dev -keys street,dirs,links,url -values natural,si
 #   bench/remote/arm-run.sh --yes lp1
 # About 10 minutes.
 lp1 a0e75c5 - 10 env=MKLOOK=1,MKLOOK_KEYS=str+email+url+path+street+dirs,MKLOOK_VALUES=single-value,MKLOOK_N=4096+16384+65536,MKLOOK_SECS=10,MKLOOK_PROF=prof,MKLOOK_LINES=1 gotest -C bench ./cmd/bench -run TestLookProbe$ -count=1 -timeout 0 -v
+# W1 + W2 of candidates-2026-10.md (cheaper merge tries, pairs in place) against the code before them (df110e6) and the
+# B-trees, the four structured corpora, all four operations and memory: the arguments of c1. Start it with
+#   bench/remote/arm-run.sh --yes w12
+# (on power). About 6 hours (c1 took 5 h 44 min).
+w12 e8d370e df110e6 360 -suite dev -keys street,dirs,links,url -values natural,single-value -sizes 4096,16384,65536 -ops valuesFor,valuesBetween,churn,build -memn 262144 -memrounds 3 -vs baseline,btree-sets,btree-map -minprocs 4 -maxprocs 8
