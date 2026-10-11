@@ -111,3 +111,8 @@ and +5 to +12 % (street, links) for churn: missed.** The M1's job w12 has not re
 
 Both together come to about zero, links below. Stopped here for the user (working rule: a result outside the prediction stops the
 work before the next step).
+
+**The M1 (job w12, 2026-10-11, done 18:02; `bench/results-layout/w12-m1/matrix.md`):** the same picture. Churn single-value 0.98 to
+1.02 at every size; build 0.99 to 1.01; lookups and ranges 0.99 to 1.04; memory unchanged. Natural churn at 65,536 keys lower but
+not precise: street 0.94*, dirs 0.91*, links 0.83*, url 0.87* (links 16,384 0.91*); on the PC natural churn at 65,536 was 0.96* to
+1.00. Whether that is W2 (pairs of keys with many values, the zeroed buffer) or noise of the large intervals is open.
