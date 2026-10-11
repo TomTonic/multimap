@@ -61,7 +61,7 @@ var eventNames = [evCount]string{
 	evMergeSlots:     "merge refused: the children hold more than mergeLimit values (entries: the values)",
 	evMergeBig:       "merge refused: the merged page would need more than mergeFill (entries: need in 64ths of mergeFill)",
 	evMergeOKFrom:    "merge done, by what started its merge up (entries: the entries left in the page)",
-	evPairFit:        "pair: the page of two keys against the object of the single-key page (entries: its bytes in 64ths of the object)",
+	evPairFit:        "pair: the page of two keys against the object of the single-key page (entries: its class size in 64ths of the object)",
 }
 
 // EventsEnabled says whether this build counts the events of the multi-key pages.
@@ -95,17 +95,18 @@ func Events() map[string]*EventCount {
 // ResetEvents sets all counts to zero.
 func ResetEvents() { counts = [evCount]EventCount{} }
 
-// evPairRoom counts, for a pair (evPair), how much of the object of single-key page l the new page q of two
-// keys fills, in 64ths: up to 64 the two keys would have fit the object of l, so that the pair could have been
-// made in place.
+// evPairRoom counts, for a pair (evPair), the class of the new page q of two keys against the object of single-key
+// page l, in 64ths: q is built in the smallest class that holds it, so up to 64 the two keys would have fit the
+// object of l and the pair could have been made in place. (Corrected 2026-10-11: it compared the bytes up to the
+// end of the remainders, without the values at the end of the object.)
 func evPairRoom[T comparable](m *Map[T], l *singleKeyHead, q *header) {
-	var used, size int
+	var size, old int
 	if m.flat == 3 {
-		used, size = asMKStr(q).Used(), asSK(l).Size()
+		size, old = asMKStr(q).Size(), asSK(l).Size()
 	} else {
-		used, size = asMKFix(q).Used(), asFixed(l).Size()
+		size, old = asMKFix(q).Size(), asFixed(l).Size()
 	}
-	ev(evPairFit, used*64/size)
+	ev(evPairFit, size*64/old)
 }
 
 // mergeLeft is the number of entries left in the page whose removal started the current merge up.
@@ -121,4 +122,12 @@ func evMergeStart(left int) {
 func evMergeDone(items int) {
 	ev(evMergeOK, items)
 	ev(evMergeOKFrom, mergeLeft)
+}
+
+// evMergeNeed counts a merge refused by the exact need of the merged page (evMergeBig), if mergeNeed found one (ok)
+// above mergeFill.
+func evMergeNeed(ok bool, need int) {
+	if ok && need > mergeFill {
+		ev(evMergeBig, need*64/mergeFill)
+	}
 }

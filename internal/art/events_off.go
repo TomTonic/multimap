@@ -44,6 +44,9 @@ func evMergeStart(int) {}
 // evMergeDone counts a merge done; see events_on.go.
 func evMergeDone(int) {}
 
+// evMergeNeed counts a merge refused by the exact need; see events_on.go.
+func evMergeNeed(bool, int) {}
+
 // evPairRoom counts how much of the object of a single-key page a pair fills; see events_on.go.
 func evPairRoom[T comparable](*Map[T], *singleKeyHead, *header) {}
 

@@ -15,37 +15,54 @@ func (la *lay) valueStart(m []byte, pos int) int {
 // one-key form; else the common prefix of the page is the longest one all keys share (up to MaxKeyPart).
 // The tree calls it when pages meet and when it builds the subtree of a burst.
 func BuildStrings(rests, vals [][]byte) *Str {
-	n := len(rests)
-	if n == 0 || n > MaxEntries || len(vals) != n {
+	one, l, need, vb, ok := strLayout(rests, vals)
+	if !ok {
 		return nil
-	}
-	one := string(rests[0]) == string(rests[n-1])
-	l := min(lcp(rests[0], rests[n-1]), MaxKeyPart)
-	if one {
-		l = len(rests[0])
-	}
-	need := Header + l + n
-	vb := 0
-	if !one {
-		need += n
-	}
-	for i, r := range rests {
-		if !one && !further(rests, i) {
-			if len(r)-l > MaxRemainder {
-				return nil
-			}
-			need += len(r) - l
-		}
-		if len(vals[i]) > MaxValue {
-			return nil
-		}
-		vb += len(vals[i])
 	}
 	c := classFor(need + vb)
 	if c < 0 {
 		return nil
 	}
 	p := (*Str)(allocRaw(c))
+	p.fill(rests, vals, one, c, l, vb)
+	return p
+}
+
+// strLayout returns the layout of the page of BuildStrings: whether it holds one key, the length of its key part, the
+// bytes up to the end of the remainders and the bytes of the values; false if they do not fit a page (no value, more
+// than MaxEntries, a remainder beyond MaxRemainder, a value beyond MaxValue).
+func strLayout(rests, vals [][]byte) (one bool, l, need, vb int, ok bool) {
+	n := len(rests)
+	if n == 0 || n > MaxEntries || len(vals) != n {
+		return false, 0, 0, 0, false
+	}
+	one = string(rests[0]) == string(rests[n-1])
+	l = min(lcp(rests[0], rests[n-1]), MaxKeyPart)
+	if one {
+		l = len(rests[0])
+	}
+	need = Header + l + n
+	if !one {
+		need += n
+	}
+	for i, r := range rests {
+		if !one && !further(rests, i) {
+			if len(r)-l > MaxRemainder {
+				return false, 0, 0, 0, false
+			}
+			need += len(r) - l
+		}
+		if len(vals[i]) > MaxValue {
+			return false, 0, 0, 0, false
+		}
+		vb += len(vals[i])
+	}
+	return one, l, need, vb, true
+}
+
+// fill writes the entries of rests and vals into the zeroed object p of class c, in the layout strLayout returned.
+func (p *Str) fill(rests, vals [][]byte, one bool, c, l, vb int) {
+	n := len(rests)
 	p.setHead(!one, c, n, l, 0)
 	m := p.mem()
 	copy(m[Header:], rests[0][:l])
@@ -63,7 +80,6 @@ func BuildStrings(rests, vals [][]byte) *Str {
 		m[la.vl+i] = uint8(len(vals[i]))
 		vo += copy(m[vo:], vals[i])
 	}
-	return p
 }
 
 // NewStr returns the one-key page of the key part rest (the key from the end of the path on) with the one value
@@ -260,14 +276,40 @@ func (p *Str) regrow(c, e, vb int) *Str {
 }
 
 // pairWith makes the page of the two keys that a one-key page and a new key rest make, in the
-// many-key form: both keys with the values of the one-key page and val. It returns the page, or p and
+// many-key form: both keys with the values of the one-key page and val. If they fit the object of p, it
+// makes them there, in place: no new object (candidates-2026-10.md, W2). It returns the page, or p and
 // Full if they do not fit.
 func (p *Str) pairWith(rest, val []byte) (*Str, Result) {
 	m := p.mem()
+	var rb, vb [9][]byte
+	rests, vals := p.pairItems(m, rest, val, rb[:0], vb[:0])
+	one, l, need, vbytes, ok := strLayout(rests, vals)
+	if !ok {
+		return p, Full
+	}
+	c := classFor(need + vbytes)
+	if c < 0 {
+		return p, Full
+	}
+	if c <= p.class() {
+		var old [Largest]byte
+		copy(old[:], m)
+		rests, vals = p.pairItems(old[:len(m)], rest, val, rb[:0], vb[:0])
+		c = p.class()
+		clear(m)
+		p.fill(rests, vals, one, c, l, vbytes)
+		return p, Added
+	}
+	q := (*Str)(allocRaw(c))
+	q.fill(rests, vals, one, c, l, vbytes)
+	return q, Added
+}
+
+// pairItems returns the entries of the pair of the one-key page p, whose object is m (or a copy of it), and the new
+// key rest with val, in key order, in rests and vals.
+func (p *Str) pairItems(m, rest, val []byte, rests, vals [][]byte) ([][]byte, [][]byte) {
 	la := p.lay(true)
 	key := m[Header : Header+la.l]
-	var rb, vb [9][]byte
-	rests, vals := rb[:0], vb[:0]
 	first := bytes.Compare(rest, key) < 0
 	if first {
 		rests, vals = append(rests, rest), append(vals, val)
@@ -281,10 +323,7 @@ func (p *Str) pairWith(rest, val []byte) (*Str, Result) {
 	if !first {
 		rests, vals = append(rests, rest), append(vals, val)
 	}
-	if q := BuildStrings(rests, vals); q != nil {
-		return q, Added
-	}
-	return p, Full
+	return rests, vals
 }
 
 // Remove removes the value val of the key rest and says whether it was there (Removed) and

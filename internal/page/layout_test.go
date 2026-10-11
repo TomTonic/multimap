@@ -179,8 +179,9 @@ func TestPageLimits(t *testing.T) {
 // A user who adds a second key near a key that has a few values gets one page for both; one who
 // removes the second key again gets the cheaper page of one key back, in place.
 //
-// Expected: Add of another key to a one-key page returns a new page of the many-key form with all the values
-// (for 12 values of the first key too, the slices of the pairing are not limited), and Remove of the second
+// Expected: Add of another key to a one-key page returns the page of the many-key form with all the values
+// (for 12 values of the first key too, the slices of the pairing are not limited): the same object if the two
+// keys fit it (in place), else a new page of a larger class; and Remove of the second
 // key turns the page back into the one-key form in place, with the key part of the whole key and no key
 // lengths; a key that does not fit is refused.
 func TestPageOneKeyBecomesMany(t *testing.T) {
@@ -191,8 +192,12 @@ func TestPageOneKeyBecomesMany(t *testing.T) {
 			ks, vs = append(ks, []byte("street-1")), append(vs, []byte{byte('a' + i)})
 		}
 		p := BuildStrings(ks, vs)
+		size := p.Size()
 		q, res := p.Add([]byte("street-2"), []byte("z"))
-		if res != Added || q == p || q.OneKey() || q.Len() != n+1 || q.Keys() != 2 || q.PrefixLen() != 7 {
+		if q == p && q.Size() != size || q != p && q.Size() <= size {
+			t.Fatalf("%d values: the pair took a page of %d bytes for one of %d (same object %v)", n, q.Size(), size, q == p)
+		}
+		if res != Added || q.OneKey() || q.Len() != n+1 || q.Keys() != 2 || q.PrefixLen() != 7 {
 			t.Fatalf("%d values: Add of another key: %v, %v keys %d prefix %d", n, res, q.OneKey(), q.Keys(), q.PrefixLen())
 		}
 		r, rm := q.Remove([]byte("street-2"), []byte("z"))
@@ -205,8 +210,12 @@ func TestPageOneKeyBecomesMany(t *testing.T) {
 			fs[i] = uint64(i)
 		}
 		f := BuildFixed(ks, fs)
+		fsize := f.Size()
 		g, res := f.Add([]byte("street-0"), uint64(99), false)
-		if res != Added || g == f || g.OneKey() || g.Len() != n+1 {
+		if g == f && g.Size() != fsize || g != f && g.Size() <= fsize {
+			t.Fatalf("fixed, %d values: the pair took a page of %d bytes for one of %d (same object %v)", n, g.Size(), fsize, g == f)
+		}
+		if res != Added || g.OneKey() || g.Len() != n+1 {
 			t.Fatalf("fixed, %d values: Add of another key: %v", n, res)
 		}
 		h, rm := g.Remove([]byte("street-0"), uint64(99), false)
@@ -222,6 +231,15 @@ func TestPageOneKeyBecomesMany(t *testing.T) {
 	bigf := BuildFixed(bs("k"), []uint64{1})
 	if q, res := bigf.Add([]byte("j"+strings.Repeat("y", 520)), uint64(2), false); res != Full || q != bigf {
 		t.Errorf("fixed, another key that does not fit: %v", res)
+	}
+	// two keys whose remainders fit each but not together: the pair needs more than the largest class
+	longf := BuildFixed(bs("k"+strings.Repeat("y", 250)), []uint64{1})
+	if q, res := longf.Add([]byte("j"+strings.Repeat("y", 250)), uint64(2), false); res != Full || q != longf {
+		t.Errorf("fixed, two long keys: %v", res)
+	}
+	// a new key whose remainder is too long for a many-key page of strings
+	if q, res := BuildStrings(bs("k"), bs("v")).Add([]byte("j"+strings.Repeat("y", 300)), []byte("w")); res != Full {
+		t.Errorf("another key with a remainder too long: %v, %v", res, q.OneKey())
 	}
 }
 

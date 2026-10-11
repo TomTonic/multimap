@@ -496,11 +496,95 @@ const (
 // operation, and a tree that had half of its keys removed value by value took 3 % more memory.
 const mergeBelow = 2
 
-// mergeFits reports whether the children of byte node n, which has prefix pre, are all pages
-// (value overflows excepted) whose entries fit half of the largest page together (mergeFill), without building anything: it
-// adds up the sizes the merged page would take. The node branches, so the common prefix of the
-// merged page is pre, exactly.
+// mergeFits reports whether the children of byte node n, which has prefix pre, are all pages (value overflows
+// excepted) whose entries fit half of the largest page together (mergeFill). It decides first from the page heads
+// (mergeBound): most tries fail there, at about twice the limit, without a walk over the entries
+// (docs/redesign/candidates-2026-10.md, W1); only a bound within the limit is checked exactly (mergeNeed). The bound is
+// never above the exact need, so the decisions are those of mergeNeed alone.
 func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
+	lb, ok := m.mergeBound(n)
+	if !ok {
+		return false
+	}
+	if lb > mergeFill {
+		ev(evMergeBig, lb*64/mergeFill)
+		return false
+	}
+	need, ok := m.mergeNeed(n, pre)
+	evMergeNeed(ok, need)
+	return ok && need <= mergeFill
+}
+
+// mergeBound returns a lower bound of the bytes the page merged from the children of byte node n would need, from
+// the heads of the child pages alone: the bytes every value takes (its key length, its value or value length) and the
+// bytes of every key that its page stores (a merged page stores at least those, behind a common prefix that is no
+// longer than the node's path). It returns false, as mergeNeed does, if a child is a node or a value overflow or the
+// children hold more than mergeLimit values. A 256-way node gets no bound (0, true).
+func (m *Map[T]) mergeBound(n *header) (int, bool) {
+	var child []*header
+	switch n.objType {
+	case kN5, kN12:
+		_, child = sorted(n)
+	case kN26, kN58:
+		_, child = bitmapOf(n)
+		child = child[:n.count]
+	default:
+		return 0, true
+	}
+	str := m.flat == 3
+	head, perValue := page.NeedFixed[T](0, 0, 0), page.NeedFixed[T](1, 0, 0)-page.NeedFixed[T](0, 0, 0)
+	if str {
+		head, perValue = page.NeedStrings(0, 0, 0, 0), 2
+	}
+	values, keyBytes := 0, 0
+	e := endPageOf(n)
+	for i := -1; i < len(child); i++ {
+		var c *header
+		if i < 0 {
+			if e == nil {
+				continue
+			}
+			c = singleKeyHdr(e)
+		} else {
+			c = child[i]
+		}
+		if !isPage(c.objType) {
+			ev(evMergeNoPage, int(n.count))
+			return 0, false
+		}
+		var used, nv, lists int
+		switch {
+		case isMultiKey(c.objType) && str:
+			p := asMKStr(c)
+			used, nv, lists = p.Used()-p.PrefixLen(), p.Len(), 2
+		case isMultiKey(c.objType):
+			p := asMKFix(c)
+			used, nv, lists = p.Used()-p.PrefixLen(), p.Len(), 1
+		case asSingleKey(c).isValueOverflow():
+			ev(evMergeNoPage, int(n.count))
+			return 0, false
+		case str:
+			p := asSK(asSingleKey(c))
+			used, nv, lists = p.Used(), p.Len(), 1
+		default:
+			p := asFixed(asSingleKey(c))
+			used, nv = p.Used(), p.Len()
+		}
+		values += nv
+		keyBytes += used - head - lists*nv
+	}
+	if values > mergeLimit {
+		ev(evMergeSlots, values)
+		return 0, false
+	}
+	return head + values*perValue + keyBytes, true
+}
+
+// mergeNeed returns the bytes the page merged from the children of byte node n, which has prefix pre, would need,
+// without building anything: it adds up the sizes of all their entries. It returns false if a child is not a page
+// (or a value overflow), the children hold more than mergeLimit values or fewer than two keys. The node branches, so
+// the common prefix of the merged page is pre, exactly.
+func (m *Map[T]) mergeNeed(n *header, pre []byte) (int, bool) {
 	slots, keys, sumRest, sumVal, ok := 0, 0, 0, 0, true
 	collect := func(extra int, c *header) {
 		if !ok || !isPage(c.objType) {
@@ -554,23 +638,16 @@ func (m *Map[T]) mergeFits(n *header, pre []byte) bool {
 	switch {
 	case !ok && slots > mergeLimit:
 		ev(evMergeSlots, slots)
-		return false
+		return 0, false
 	case !ok || keys < 2:
 		ev(evMergeNoPage, int(n.count))
-		return false
+		return 0, false
 	}
 	cp := min(len(pre), page.MaxKeyPart)
-	var need int
 	if m.flat == 3 {
-		need = page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal)
-	} else {
-		need = page.NeedFixed[T](slots, cp, sumRest-keys*cp)
+		return page.NeedStrings(slots, cp, sumRest-keys*cp, sumVal), true
 	}
-	if need > mergeFill {
-		ev(evMergeBig, need*64/mergeFill)
-		return false
-	}
-	return true
+	return page.NeedFixed[T](slots, cp, sumRest-keys*cp), true
 }
 
 // mergeFill is the most bytes a merged page may need: half of the largest page, the size at which a page bursts.
