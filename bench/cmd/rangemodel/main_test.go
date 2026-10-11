@@ -141,3 +141,19 @@ func TestNodeLinesCountsTheSecondLines(t *testing.T) {
 		t.Fatalf("type changes %d (3 types %d) of %d level pairs; %d second key words of %d N12 visits", c.change5, c.change3, c.pairs, c.n12second, c.visits[1])
 	}
 }
+
+// TestNodeFillPrintsBothSmallNodes makes sure the table of how full the small nodes are has a row for the N5 and one for
+// the N12 of the case asked for.
+//
+// The table shows what is degenerate in the small nodes (d1-node-step-design.md); a missing row would hide a class.
+//
+// Expected: two rows for street single-value 4096, one for N5 and one for N12.
+func TestNodeFillPrintsBothSmallNodes(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(&out, []string{"-nodefill", "-keys", "street", "-values", "single-value", "-sizes", "4096"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "| street single-value 4096 |"); n != 2 {
+		t.Fatalf("%d rows, want 2:\n%s", n, out.String())
+	}
+}

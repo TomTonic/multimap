@@ -735,6 +735,7 @@ func run(w io.Writer, args []string) error {
 	limitsF := fs.String("limits", "512,384,256", "page sizes above which a page of a range splits (the proposal)")
 	str := fs.Bool("str", false, "string values (the names of the corpus) instead of uint64")
 	packF := fs.String("pack", "", "instead of the table of the trees: the byte nodes packed into objects of at most these bytes (0: as today), for today's pages and for ranges split above 512")
+	nodeFill := fs.Bool("nodefill", false, "instead of the table of the trees: how full the N5 and N12 of today's tree are (slots used, end pages, prefix tails)")
 	nodeLines := fs.Bool("nodelines", false, "instead of the table of the trees: the byte nodes a lookup passes by class, and how many of them read the child slot from a second line (64- and 128-byte lines), today's tree")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -744,6 +745,9 @@ func run(w io.Writer, args []string) error {
 	}
 	if *nodeLines {
 		return runNodeLines(w, *kindsF, *valuesF, *sizesF, *str)
+	}
+	if *nodeFill {
+		return runNodeFill(w, *kindsF, *valuesF, *sizesF, *str)
 	}
 	var limits []int
 	for _, s := range strings.Split(*limitsF, ",") {
@@ -896,6 +900,81 @@ func runNodeLines(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
 					float64(c.change5)/l, float64(c.change3)/l, 100*float64(c.change5)/pairs, 100*float64(c.change3)/pairs,
 					float64(c.n12second)/l, 100*float64(c.n12second)/float64(max(c.visits[1], 1))); err != nil {
 					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// fillCount is the census of one node class for runNodeFill.
+type fillCount struct {
+	nodes, end, tail int
+	used             [13]int // nodes by slots used (children and the end page)
+}
+
+// nodeFill adds the N5 and N12 below o to f (index 0: N5, 1: N12).
+func nodeFill(o obj, f *[2]fillCount) {
+	if o.k != kNode {
+		return
+	}
+	n := o.n
+	cnt := len(n.starts)
+	if n.end.k != kNil {
+		cnt++
+	}
+	if cp, _ := nodeCap(cnt); cp <= 12 {
+		c := &f[classIdx(cp)]
+		c.nodes++
+		c.used[cnt]++
+		if n.end.k != kNil {
+			c.end++
+		}
+		if len(n.prefix) > 12 {
+			c.tail++
+		}
+	}
+	nodeFill(n.end, f)
+	for _, k := range n.kids {
+		nodeFill(k, f)
+	}
+}
+
+// runNodeFill writes, for today's tree of every case, how full its N5 and N12 are: the nodes a key, by slots used (byte
+// children and the end page), with an end page, with a prefix of more than 12 bytes (a tail in the same object).
+func runNodeFill(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
+	if _, err := fmt.Fprintln(w, "| case | node | a 1,000 keys | slots used 1 / 2 / 3 / 4 / 5 (N12: 6 / 7 / 8 / 9-12) | with end page | with prefix tail |\n|---|---|--:|---|--:|--:|"); err != nil {
+		return err
+	}
+	for _, ks := range strings.Split(kindsF, ",") {
+		kind := keys.Kind(ks)
+		if !keys.Available(kind) {
+			continue
+		}
+		for _, profile := range strings.Split(valuesF, ",") {
+			for _, ns := range strings.Split(sizesF, ",") {
+				n, err := strconv.Atoi(ns)
+				if err != nil {
+					return err
+				}
+				m := &model{limit: page.Largest, str: str}
+				for _, it := range corpusItems(kind, n, profile, str) {
+					m.insert(it)
+				}
+				var f [2]fillCount
+				nodeFill(m.root, &f)
+				for i, name := range []string{"N5", "N12"} {
+					c := f[i]
+					pc := func(x int) float64 { return 100 * float64(x) / float64(max(c.nodes, 1)) }
+					u := c.used
+					hist := fmt.Sprintf("%.0f / %.0f / %.0f / %.0f / %.0f %%", pc(u[1]), pc(u[2]), pc(u[3]), pc(u[4]), pc(u[5]))
+					if i == 1 {
+						hist = fmt.Sprintf("%.0f / %.0f / %.0f / %.0f %%", pc(u[6]), pc(u[7]), pc(u[8]), pc(u[9]+u[10]+u[11]+u[12]))
+					}
+					if _, err := fmt.Fprintf(w, "| %s %s %d | %s | %.1f | %s | %.0f %% | %.0f %% |\n", kind, profile, n, name,
+						1000*float64(c.nodes)/float64(n), hist, pc(c.end), pc(c.tail)); err != nil {
+						return err
+					}
 				}
 			}
 		}
