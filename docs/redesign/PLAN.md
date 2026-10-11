@@ -298,6 +298,9 @@ Not part of a step yet; each gets a design note with a prediction before any cod
   (the order of the values does not matter; their share is reading many values, as expected for keys with ~50 values). The
   packed "bundle" with fixed compartments (cheap splits by copying, proposed in the session) did not convince the user and is not
   pursued.
+- **Decision paper of 2026-10-11:** [candidates-2026-10.md](candidates-2026-10.md) gathers the counts of 2026-10-10 into candidates
+  (cheaper merge tries, pairs in place, free list, a node step without the type switch, the child pointer in the first line, the
+  page search, fewer objects a lookup), with a recommended order and the prediction for the first; open for the user's decision.
 
 ## Feature: autotune of the keys per page (user, 2026-10-07; from the review, review-2026-10.md) — measured and dropped 2026-10-10
 
