@@ -64,55 +64,37 @@ func BuildFixed[T comparable](rests [][]byte, vals []T) *Fixed {
 // BuildFixedOf is BuildFixed for a T that is known to be Supported, and ptr says whether it holds a pointer:
 // the checks are reflection of the type, too slow for a tree that builds a page for every burst.
 func BuildFixedOf[T comparable](rests [][]byte, vals []T, ptr bool) *Fixed {
-	one, l, e, ok := fixedLayout(rests, len(vals))
-	if !ok {
-		return nil
-	}
-	c := classFor(e + len(rests)*size[T]())
-	if c < 0 {
-		return nil
-	}
-	p := newFixed[T](!one, c, len(rests), l, e, ptr)
-	fillFixed(p, rests, vals, one, l)
-	return p
-}
-
-// fixedLayout returns the layout of the page of BuildFixedOf for the keys rests and nv values: whether it holds one
-// key, the length of its key part and the bytes up to the end of the remainders; false if they do not fit a page (no
-// value, more than MaxEntries, a remainder beyond MaxRemainder).
-func fixedLayout(rests [][]byte, nv int) (one bool, l, e int, ok bool) {
 	n := len(rests)
-	if n == 0 || n > MaxEntries || nv != n {
-		return false, 0, 0, false
+	if n == 0 || n > MaxEntries || len(vals) != n {
+		return nil
 	}
-	one = string(rests[0]) == string(rests[n-1])
-	l = min(lcp(rests[0], rests[n-1]), MaxKeyPart)
-	e = Header
+	one := string(rests[0]) == string(rests[n-1])
+	l := min(lcp(rests[0], rests[n-1]), MaxKeyPart)
+	e := Header
 	if one {
 		l = len(rests[0])
 		e += l
-		return one, l, e, true
-	}
-	e += l + n
-	for i, r := range rests {
-		if !further(rests, i) {
-			if len(r)-l > MaxRemainder {
-				return false, 0, 0, false
+	} else {
+		e += l + n
+		for i, r := range rests {
+			if !further(rests, i) {
+				if len(r)-l > MaxRemainder {
+					return nil
+				}
+				e += len(r) - l
 			}
-			e += len(r) - l
 		}
 	}
-	return one, l, e, true
-}
-
-// fillFixed writes the entries of rests and vals into page p, whose head is set for them (newFixed or setHead), in the
-// layout fixedLayout returned.
-func fillFixed[T comparable](p *Fixed, rests [][]byte, vals []T, one bool, l int) {
+	c := classFor(e + n*size[T]())
+	if c < 0 {
+		return nil
+	}
+	p := newFixed[T](!one, c, n, l, e, ptr)
 	m := p.mem()
 	copy(m[Header:], rests[0][:l])
 	la := p.lay(false)
 	off := la.rem
-	nv := valuesIn[T](m, len(rests))
+	nv := valuesIn[T](m, n)
 	for i, r := range rests {
 		if !one {
 			if further(rests, i) {
@@ -124,6 +106,7 @@ func fillFixed[T comparable](p *Fixed, rests [][]byte, vals []T, one bool, l int
 		}
 		nv[i] = vals[i]
 	}
+	return p
 }
 
 // NewFixed returns the one-key page of the key part rest (the key from the end of the path on) with the one value v,
@@ -305,13 +288,10 @@ func (p *Fixed) Add[T comparable](rest []byte, v T, ptr bool) (*Fixed, Result) {
 }
 
 // pairWithFixed makes the page of the two keys that a one-key page and a new key rest make, in the many-key
-// form. If they fit the object of p and T holds no pointer, it makes them there, in place: no new object
-// (candidates-2026-10.md, W2; an object with pointers keeps the split of words its type got when it was made).
-// It returns the page, or p and Full if they do not fit.
+// form. It returns the page, or p and Full if they do not fit.
 func pairWithFixed[T comparable](p *Fixed, rest []byte, v T, ptr bool) (*Fixed, Result) {
 	m := p.mem()
 	la := p.lay(false)
-	var old [Largest]byte
 	key := m[Header : Header+la.l]
 	var rb [9][]byte
 	var vb [9]T
@@ -326,32 +306,10 @@ func pairWithFixed[T comparable](p *Fixed, rest []byte, v T, ptr bool) (*Fixed, 
 	if !first {
 		rests, vals = append(rests, rest), append(vals, v)
 	}
-	one, l, e, ok := fixedLayout(rests, len(vals))
-	if !ok {
-		return p, Full
-	}
-	n := len(rests)
-	c := classFor(e + n*size[T]())
-	if c < 0 {
-		return p, Full
-	}
-	if ptr || c > p.class() {
-		q := newFixed[T](!one, c, n, l, e, ptr)
-		fillFixed(q, rests, vals, one, l)
+	if q := BuildFixedOf(rests, vals, ptr); q != nil {
 		return q, Added
 	}
-	k := copy(old[:], key) // the key part of p, which the clear below takes: every entry but the new key
-	for i := range rests {
-		if first && i == 0 || !first && i == n-1 {
-			continue
-		}
-		rests[i] = old[:k]
-	}
-	c = p.class()
-	clear(m)
-	p.setHead(!one, c, n, l, 0)
-	fillFixed(p, rests, vals, one, l)
-	return p, Added
+	return p, Full
 }
 
 // Remove removes the value v of the key rest and says whether it was there (Removed) and whether the key

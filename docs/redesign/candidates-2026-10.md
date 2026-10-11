@@ -116,3 +116,6 @@ work before the next step).
 1.02 at every size; build 0.99 to 1.01; lookups and ranges 0.99 to 1.04; memory unchanged. Natural churn at 65,536 keys lower but
 not precise: street 0.94*, dirs 0.91*, links 0.83*, url 0.87* (links 16,384 0.91*); on the PC natural churn at 65,536 was 0.96* to
 1.00. Whether that is W2 (pairs of keys with many values, the zeroed buffer) or noise of the large intervals is open.
+
+**Decision (user, 2026-10-11 evening):** W2 is taken back (`internal/page` as of `df110e6`); W1 stays for now (the same decisions,
+2 to 4 points less merge cost). D1: the user wants to see the layouts of N5 and N12 first (d1-node-step-design.md).
