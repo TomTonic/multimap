@@ -28,7 +28,7 @@ remove at best.
 | | candidate | evidence | gain at most | touches | risk |
 |---|---|---|---|---|---|
 | **W1** | **Cheaper merge tries.** Keep the merge decisions exactly as they are, but (a) decide the clear refusals from the page heads (`Used`, O(1) a child) before walking every entry with `Each` and a closure; (b) remember the path of the removal instead of a second descent from the root; (c) no closures in this path. | tries in 5 to 22 % of the writes, 0 to 1 a 1,000 done; `mergeUp` 11 to 16 % of a churn for url, path, street, dirs, links (str 6, email 1, natural 1 to 9); of it `mergeFits` 6 to 10 %, the rest 2 to 8 %; refusals by size at 2.1 to 2.3 times the limit in the median | 11 to 16 % of a churn of path-like keys, a few % of a build | writes only | low: same decisions, so the same tree; a test can compare the shapes |
-| **W2** | **Pair in place.** When a new key meets a single-key page and the two fit its object, turn the object into the many-key form in place instead of building a new page. | pairs 20 to 90 a 1,000 writes (182 for email at 16K); they fit the old object in 70 to 99 %; most of the object traffic of churn; `toOneKey` + `pairWithFixed` 1 to 6.5 % of a churn plus the allocations | 2 to 8 % of a churn | writes only; memory: the pair keeps its object's class (may be one class larger than today's new page; to be counted) | low |
+| **W2** | **Pair in place.** When a new key meets a single-key page and the two fit its object, turn the object into the many-key form in place instead of building a new page. | pairs 20 to 90 a 1,000 writes (182 for email at 16K); they fit the old object in 43 to 63 % for most single-value cases (corrected 2026-10-11; first counted as 70 to 99 %); `toOneKey` + `pairWithFixed` 1 to 6.5 % of a churn plus the allocations | 1 to 4 % of a churn | writes only; memory: the pair keeps its object's class (may be one class larger than today's new page; to be counted) | low |
 | **W3** | **Free list, LIFO, bounded.** | 0.06 to 0.34 objects made a churn write; 69 to 87 % could come from the list, a few hundred bytes after the drop; allocation and GC about 5 % of a churn, 14 % of a build; fresh-object warmth only 2 to 3 % | about 5 % of a churn, 14 % of a build (less after W2) | writes; memory held by the list (needs a bound: up to 1.7 MB seen) | medium: per map state, the bound |
 | **D1** | **A node step without the switch on the node type** (one search for the small nodes, the type deciding by arithmetic or a table rather than by branches). | M1: the switch and the key byte 24 to 26 % of `find` (by line); PC: within the rest of 21 to 36 % (by instruction); `find` is 40 to 57 % of a lookup and 22 to 40 % of a write | up to a quarter of the descent on the M1, less on the PC | every operation | medium: needs a design note first; the gain on the PC is uncertain |
 | **D2** | **The child pointer in the node's first line** (N12 from the fifth child, N26, N58). | PC: 16 to 19 % of `find`, the model 1.5 to 5.5 second lines a lookup; **M1: 0.4 to 1 %** | PC only | every operation | medium: a new node layout; helps one machine |
@@ -58,7 +58,7 @@ alongside: `-keys street,dirs,links,url -values natural,single-value -sizes 4096
 -vs baseline,btree-sets,btree-map`, memory included. All four operations, so that a gain in writes cannot hide a loss in lookups or
 ranges. Then u64 and uuid once, only to see that they stay in the band.
 
-**Prediction for W1 + W2** (ordered against baseline): churn single-value at 4,096 keys +8 to +15 % for url, path and dirs, +5 to
+**Prediction for W1 + W2** (ordered against baseline; written before W2's count was corrected, kept as written): churn single-value at 4,096 keys +8 to +15 % for url, path and dirs, +5 to
 +12 % for street and links; churn natural +2 to +8 %; build +2 to +6 %; lookups and ranges within noise (±2 %); memory within ±2 %. On
 the M1 the same direction; dirs and url churn single-value at 4,096 keys from 0.86 and 0.79 of `btree-map` to about 0.95 and 0.88:
 better, still below 1. A result outside these ranges stops the work for a look before the next step.
@@ -68,3 +68,21 @@ better, still below 1. A result outside these ranges stops the work for a look b
 1. The order above, or another.
 2. W1 and W2 measured together (recommended) or apart.
 3. D1: a design note next, while W1 + W2 are measured.
+
+## Decision (user, 2026-10-11 morning) and what was built
+
+The order as recommended; W1 and W2 measured together; D1's note depending on the time.
+
+Built on `cacheline` in `e8d370e` (its parent `df110e6` is the baseline of the measurement):
+- **W1** (`internal/art/mkkey.go`): `mergeFits` first takes `mergeBound`, a lower bound of the merged page's need from the heads of
+  the child pages (`Used`, `Len`, `PrefixLen`: every value's bytes and every key's own bytes); only a bound within `mergeFill` is
+  checked exactly (`mergeNeed`, the old walk). The bound is never above the need (`TestMergeBoundNeverAboveNeed`, every node of maps
+  of fixed, string and pointer values), so the decisions are the same: the probe counts the same bursts (27,542), merges (429) and
+  pairs (159,361) over the 28 cases as before. The second descent of `mergeUp` (the path of the removal) is not changed yet.
+- **W2** (`internal/page`): a one-key page that meets a new key makes the page of the two in its own object when they fit its
+  class and the page holds no pointer (`pairWithFixed`, `Str.pairWith`): the old content goes to a buffer on the stack (at most 512
+  bytes), the object is cleared and written in the many-key form. `BuildFixedOf` and `BuildStrings` are split into the layout
+  (`fixedLayout`, `strLayout`) and the writing (`fillFixed`, `Str.fill`) for it. Pages of pointers keep the old path (their object's
+  type fixes its split of words). A pair in place keeps the class of the old object, which may be one class above what a new page
+  would take: the memory check of the run tells whether it matters.
+- Tests: 100 % of both packages, `-race`, fuzz 60 s each of `FuzzPage` and `FuzzOperations`, lint 0.

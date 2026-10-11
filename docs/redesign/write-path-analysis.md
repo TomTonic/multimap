@@ -146,15 +146,15 @@ summary `merge-pair-summary.md` (`evsum.py`).
 
 | kind | merge ups a 1,000 writes | from 1 entry left | refused: >12 children / a child no page / too big | too big: median need, share under 1.5x | pairs a 1,000 writes | pair fits the old object | single-key pages one class larger, B a key |
 |---|--:|--:|---|---|--:|--:|--:|
-| str | 54 / 58 | 37 / 39 % | 8/0/92 / 0/32/58 % | 1.8x, 8 % | 20 / 23 | 88 / 95 % | 1.5 / 17.9 |
-| email (16,384) | 28 (462) / 47 | 23 (39) % | 73/0/27 (94/0/6) % | 1.6x, 33 % | 6 (182) / 11 | 93 (93) / 97 % | 0.9 (23.1) / 31.1 |
-| url | 280 / 70 | 32 / 30 % | 23/28/49 / 16/40/41 % | 2.2x, 12 % | 89 / 21 | 70 / 83 % | 25.0 / 40.0 |
-| path | 232 / 60 | 31 / 32 % | 28/35/37 / 20/44/35 % | 2.2x, 10 % | 70 / 19 | 79 / 88 % | 15.2 / 28.8 |
-| street | 113 / 57 | 34 / 35 % | 28/22/50 / 23/33/35 % | 2.1x, 3 % | 39 / 20 | 97 / 98 % | 3.4 / 5.9 |
-| dirs | 201 / 76 | 33 / 32 % | 35/28/37 / 29/36/34 % | 2.1x, 9 % | 66 / 24 | 84 / 92 % | 9.0 / 15.1 |
-| links | 168 / 6 | 34 / 27 % | 51/11/38 / 18/60/15 % | 2.3x, 4 % | 57 / 2 | 91 / 97 % | 5.6 / 49.7 |
+| str | 54 / 58 | 37 / 39 % | 8/0/92 / 0/32/58 % | 1.8x, 8 % | 20 / 23 | 86 / 84 % | 1.5 / 17.9 |
+| email (16,384) | 28 (462) / 47 | 23 (39) % | 73/0/27 (94/0/6) % | 1.6x, 33 % | 6 (182) / 11 | 26 (31) / 50 % | 0.9 (23.1) / 31.1 |
+| url | 280 / 70 | 32 / 30 % | 23/28/49 / 16/40/41 % | 2.2x, 12 % | 89 / 21 | 51 / 63 % | 25.0 / 40.0 |
+| path | 232 / 60 | 31 / 32 % | 28/35/37 / 20/44/35 % | 2.2x, 10 % | 70 / 19 | 60 / 71 % | 15.2 / 28.8 |
+| street | 113 / 57 | 34 / 35 % | 28/22/50 / 23/33/35 % | 2.1x, 3 % | 39 / 20 | 43 / 55 % | 3.4 / 5.9 |
+| dirs | 201 / 76 | 33 / 32 % | 35/28/37 / 29/36/34 % | 2.1x, 9 % | 66 / 24 | 58 / 69 % | 9.0 / 15.1 |
+| links | 168 / 6 | 34 / 27 % | 51/11/38 / 18/60/15 % | 2.3x, 4 % | 57 / 2 | 55 / 77 % | 5.6 / 49.7 |
 
-(The rest of the refusals, more than 64 values, is 0 to 13 %.) Every `mergeUp` tries exactly one node (1.00 tries a merge up): the
+(The rest of the refusals, more than 64 values, is 0 to 13 %. The column "pair fits the old object" as corrected 2026-10-11, see 3 below.) Every `mergeUp` tries exactly one node (1.00 tries a merge up): the
 lowest one refuses and the ones above are not tried. Where the time of a try goes (CPU profiles above, single-value 4,096): the
 size check `mergeFits` 6 to 10 % of a churn, the second descent from the root and the rest of `mergeUp` 2 to 8 %.
 
@@ -165,7 +165,10 @@ size check `mergeFits` 6 to 10 % of a churn, the second descent from the root an
 2. At least 80 % of the refusals by size: missed (6 to 92 %; the node with more than 12 children and the child that is a node are
    as frequent). Not near misses, at least twice `mergeFill` in the median: about hit (1.6 to 4.0 times, 2.1 to 2.3 for most;
    under 1.5 times only 1 to 12 %, links natural and email 4K about 30 %).
-3. The page of two keys fits the single-key page's object in 30 to 60 % of the pairs: missed, far more: 70 to 99 %.
+3. The page of two keys fits the single-key page's object in 30 to 60 % of the pairs: first counted as missed (70 to 99 %), but that
+   count compared the bytes up to the end of the remainders, without the values at the end of the object. **Corrected 2026-10-11**
+   (the class of the new page against the class of the old object): 43 to 63 % for most single-value cases (str 86 to 89, email 26
+   to 31), 48 to 78 % natural: about hit.
 4. Keeping every single-key page one class larger costs at most 10 bytes a key: missed for url, path, email at 16,384 and all
    natural (12 to 50 bytes a key); hit for str, street, dirs, links single-value (0.7 to 9).
 
@@ -174,8 +177,9 @@ size check `mergeFits` 6 to 10 % of a churn, the second descent from the root an
   only after the second descent from the root), a child that is a node (found while walking the children); the walk over all
   sibling pages (`mergeFits`, 6 to 10 % of a churn) is spent on a size that is twice the limit in the median. Which trigger could
   go is counted in the second count below; remembering the path of the removal would take away the second descent;
-- the pair could be made in place, in the object the single-key page already has, in 70 to 99 % of the cases: that takes away most
-  of the pendulum's objects without any memory, unlike keeping single-key pages one class larger (up to 50 bytes a key).
+- the pair could be made in place, in the object the single-key page already has, in about half of the cases (43 to 63 % for most
+  single-value cases after the correction in 3; first written as 70 to 99 %): that takes away about half of the pendulum's objects
+  without more memory than the object already has, unlike keeping single-key pages one class larger (up to 50 bytes a key).
 
 **Second count (2026-10-10, 17:45):** the merges done by what started their merge up, and how often the layout of a page is computed
 (`head.lay`, a counter in `internal/page` under mkstats). `bench/results-layout/write-2026-10/events-2.txt`.
