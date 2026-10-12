@@ -735,6 +735,7 @@ func run(w io.Writer, args []string) error {
 	limitsF := fs.String("limits", "512,384,256", "page sizes above which a page of a range splits (the proposal)")
 	str := fs.Bool("str", false, "string values (the names of the corpus) instead of uint64")
 	packF := fs.String("pack", "", "instead of the table of the trees: the byte nodes packed into objects of at most these bytes (0: as today), for today's pages and for ranges split above 512")
+	nodeDump := fs.Bool("nodedump", false, "instead of the table of the trees: every byte node of today's tree, for node-classes-analysis.md (a line \"case kind values n keys\" a case, then \"node plen end k0 k1 ...\" a node: its prefix length, 1 if it has an end page, the keys below each byte child in order and below the end page last)")
 	nodeFill := fs.Bool("nodefill", false, "instead of the table of the trees: how full the N5 and N12 of today's tree are (slots used, end pages, prefix tails)")
 	nodeLines := fs.Bool("nodelines", false, "instead of the table of the trees: the byte nodes a lookup passes by class, and how many of them read the child slot from a second line (64- and 128-byte lines), today's tree")
 	if err := fs.Parse(args); err != nil {
@@ -748,6 +749,9 @@ func run(w io.Writer, args []string) error {
 	}
 	if *nodeFill {
 		return runNodeFill(w, *kindsF, *valuesF, *sizesF, *str)
+	}
+	if *nodeDump {
+		return runNodeDump(w, *kindsF, *valuesF, *sizesF, *str)
 	}
 	var limits []int
 	for _, s := range strings.Split(*limitsF, ",") {
@@ -975,6 +979,67 @@ func runNodeFill(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
 						1000*float64(c.nodes)/float64(n), hist, pc(c.end), pc(c.tail)); err != nil {
 						return err
 					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// runNodeDump writes every byte node of today's tree of every case: its prefix length, whether it has an end page, and the
+// keys below each slot (the byte children in order, the end page last), for the analysis of node classes outside the model.
+func runNodeDump(w io.Writer, kindsF, valuesF, sizesF string, str bool) error {
+	for _, ks := range strings.Split(kindsF, ",") {
+		kind := keys.Kind(ks)
+		if !keys.Available(kind) {
+			continue
+		}
+		for _, profile := range strings.Split(valuesF, ",") {
+			for _, ns := range strings.Split(sizesF, ",") {
+				n, err := strconv.Atoi(ns)
+				if err != nil {
+					return err
+				}
+				m := &model{limit: page.Largest, str: str}
+				for _, it := range corpusItems(kind, n, profile, str) {
+					m.insert(it)
+				}
+				if _, err := fmt.Fprintf(w, "case %s %s %d %d\n", kind, profile, n, n); err != nil {
+					return err
+				}
+				memo := map[*mnode]int{}
+				var dump func(o obj) error
+				dump = func(o obj) error {
+					if o.k != kNode {
+						return nil
+					}
+					nd := o.n
+					end := 0
+					if nd.end.k != kNil {
+						end = 1
+					}
+					line := fmt.Sprintf("node %d %d", len(nd.prefix), end)
+					for _, k := range nd.kids {
+						line += " " + strconv.Itoa(keysBelow(k, memo))
+					}
+					if end == 1 {
+						line += " " + strconv.Itoa(keysBelow(nd.end, memo))
+					}
+					if _, err := fmt.Fprintln(w, line); err != nil {
+						return err
+					}
+					if err := dump(nd.end); err != nil {
+						return err
+					}
+					for _, k := range nd.kids {
+						if err := dump(k); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+				if err := dump(m.root); err != nil {
+					return err
 				}
 			}
 		}

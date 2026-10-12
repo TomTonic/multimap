@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -155,5 +156,33 @@ func TestNodeFillPrintsBothSmallNodes(t *testing.T) {
 	}
 	if n := strings.Count(out.String(), "| street single-value 4096 |"); n != 2 {
 		t.Fatalf("%d rows, want 2:\n%s", n, out.String())
+	}
+}
+
+// TestNodeDumpCountsEveryKey makes sure the dump of the byte nodes is complete enough for the analysis of node classes: the
+// keys below the slots of the root add up to all keys of the case.
+//
+// The analysis weighs every slot by its keys (node-classes-analysis.md); a slot left out would shift every result.
+//
+// Expected: one case line, node lines, and the slots of the first node (the root) hold 4,096 keys together.
+func TestNodeDumpCountsEveryKey(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(&out, []string{"-nodedump", "-keys", "street", "-values", "single-value", "-sizes", "4096"}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) < 3 || !strings.HasPrefix(lines[0], "case street single-value 4096") || !strings.HasPrefix(lines[1], "node ") {
+		t.Fatalf("dump starts with %q", lines[:min(3, len(lines))])
+	}
+	sum := 0
+	for _, f := range strings.Fields(lines[1])[3:] {
+		k, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum += k
+	}
+	if sum != 4096 {
+		t.Fatalf("the root's slots hold %d keys, want 4096", sum)
 	}
 }

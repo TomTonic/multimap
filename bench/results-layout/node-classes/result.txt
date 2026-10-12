@@ -1,0 +1,78 @@
+
+## single-value: today (P=12, 64/128/256/512): routing bytes a key and lines a lookup (64 / 128 B), by case
+  str       4096:    1.4 B/key   3.96 /  3.08 lines
+  str      16384:    3.1 B/key   5.32 /  4.00 lines
+  str      65536:    1.9 B/key   5.77 /  4.41 lines
+  email     4096:    1.7 B/key   3.85 /  3.24 lines
+  email    16384:   10.3 B/key   5.68 /  4.58 lines
+  email    65536:    2.7 B/key   5.77 /  4.84 lines
+  url       4096:    8.4 B/key   8.71 /  7.76 lines
+  url      16384:    8.3 B/key  10.45 /  9.51 lines
+  url      65536:    7.8 B/key  12.71 / 11.11 lines
+  path      4096:    8.1 B/key  11.58 /  9.47 lines
+  path     16384:    7.3 B/key  15.60 / 12.07 lines
+  path     65536:    6.7 B/key  17.57 / 13.90 lines
+  street    4096:    3.4 B/key   5.06 /  3.69 lines
+  street   16384:    3.8 B/key   6.69 /  5.19 lines
+  street   65536:    3.5 B/key   8.39 /  6.66 lines
+  dirs      4096:    6.6 B/key  10.75 /  8.84 lines
+  dirs     16384:    5.6 B/key  13.70 / 11.42 lines
+  dirs     65536:    5.4 B/key  16.11 / 13.97 lines
+  links     4096:    4.6 B/key   5.11 /  4.11 lines
+  links    16384:    4.0 B/key   6.26 /  5.64 lines
+  links    65536:    4.1 B/key   7.64 /  6.84 lines
+
+### Pareto front (memory and 64-B lines, mean ratio to today over the 21 cases)
+| P | sizes | memory | lines 64 B | lines 128 B |
+|--:|---|--:|--:|--:|
+| 4 | 64/128/192/256/512 | 0.909 | 0.990 | 1.003 |
+| 4 | 64/128/192/256/384 | 0.914 | 0.990 | 1.005 |
+| 8 | 64/96/192/256/512 | 0.941 | 0.985 | 0.992 |
+| 8 | 64/128/192/256/512 | 0.945 | 0.980 | 0.994 |
+| 8 | 64/128/192/256/384 | 0.951 | 0.979 | 0.994 |
+| 8 | 64/96/128/192/256 | 1.018 | 0.978 | 1.007 |
+
+### best by P (lowest memory with lines 64 B at most today's)
+  P= 4: 64/128/192/256/512       memory 0.909  lines 0.990 / 1.003
+  P= 8: 64/96/192/256/512        memory 0.941  lines 0.985 / 0.992
+  P=12: 64/128/192/256/512       memory 0.944  lines 0.997 / 0.995
+  P=16: 64/96/128/192/256        memory 1.989  lines 0.999 / 1.047
+  today: memory 1.000 lines 1.000 / 1.000
+
+## natural: today (P=12, 64/128/256/512): routing bytes a key and lines a lookup (64 / 128 B), by case
+  str       4096:    7.8 B/key   4.76 /  3.68 lines
+  str      16384:    6.3 B/key   5.64 /  4.28 lines
+  str      65536:   11.5 B/key   7.18 /  5.35 lines
+  email     4096:    6.4 B/key   4.28 /  3.55 lines
+  email    16384:   11.5 B/key   5.75 /  4.63 lines
+  email    65536:    5.2 B/key   5.94 /  4.98 lines
+  url       4096:   12.1 B/key   9.01 /  8.04 lines
+  url      16384:   12.0 B/key  10.78 /  9.81 lines
+  url      65536:   11.8 B/key  13.07 / 11.43 lines
+  path      4096:   12.6 B/key  12.00 /  9.83 lines
+  path     16384:   11.9 B/key  16.08 / 12.48 lines
+  path     65536:   11.5 B/key  18.12 / 14.37 lines
+  street    4096:    4.9 B/key   5.34 /  3.91 lines
+  street   16384:    5.4 B/key   6.99 /  5.43 lines
+  street   65536:    5.3 B/key   8.72 /  6.93 lines
+  dirs      4096:    8.6 B/key  11.00 /  9.05 lines
+  dirs     16384:    7.8 B/key  14.02 / 11.69 lines
+  dirs     65536:    7.5 B/key  16.43 / 14.25 lines
+  links     4096:   21.0 B/key   6.44 /  5.30 lines
+  links    16384:   22.0 B/key   7.82 /  7.03 lines
+  links    65536:   21.8 B/key   9.20 /  8.26 lines
+
+### Pareto front (memory and 64-B lines, mean ratio to today over the 21 cases)
+| P | sizes | memory | lines 64 B | lines 128 B |
+|--:|---|--:|--:|--:|
+| 4 | 64/96/128/256/384 | 0.919 | 0.995 | 1.006 |
+| 4 | 64/96/128/192/384 | 0.920 | 0.992 | 1.003 |
+| 8 | 64/96/128/192/384 | 0.936 | 0.979 | 0.992 |
+| 8 | 64/96/128/192/256 | 0.968 | 0.977 | 1.007 |
+
+### best by P (lowest memory with lines 64 B at most today's)
+  P= 4: 64/96/128/256/384        memory 0.919  lines 0.995 / 1.006
+  P= 8: 64/96/128/192/384        memory 0.936  lines 0.979 / 0.992
+  P=12: 64/96/128/192/384        memory 0.945  lines 0.983 / 0.994
+  P=16: 64/96/128/192/256        memory 1.301  lines 0.999 / 1.043
+  today: memory 1.000 lines 1.000 / 1.000
