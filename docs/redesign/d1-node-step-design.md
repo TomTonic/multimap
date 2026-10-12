@@ -27,6 +27,13 @@ sees a sequence it can learn only per path.
 **D1a: one case for N26 and N58.** Their layouts are the same up to the length of the child array (bitmap at 0x10, children at
 0x30); one case serves both. Nothing else changes; the switch has four targets instead of five.
 
+**Correction (2026-10-12): D1b as written below does not fit.** With the children from 0x18, twelve child slots take 0x18 to 0x77
+and the last slot 0x78 to 0x7f: there is no room for key bytes 8 to 11 in 128 bytes. A shared shape of N5 and N12 holds 11 children
+(16 + 8 key bytes + 11 slots + 8 key bytes = 128): it costs the middle node a slot. The key arrays are not waste of a choice but the
+alignment of the child pointers (N5: 16 + 5 = 21 rounded to 24; N12: 16 + 12 = 28 rounded to 32), byte-exact since the first ART
+(`bb4bc0e`: N4/N11 with a 24-byte header; `a47414f`: the 16-byte header, one slot more each). Which prefix length and which node
+classes would serve best is analysed in node-classes-analysis.md.
+
 **D1b: N5 and N12 of the same shape.** (First written as "no N5"; withdrawn after the user's objection of 2026-10-11: the N5 is kept
 on purpose for the degenerate trees of path-like keys, where nodes are sparse and the routing layer is already too thin; making each
 of them 128 bytes would go against that. PLAN.md's point "remove the smallest byte node" is to be read with that exception.) Today
